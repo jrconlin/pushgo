@@ -1,0 +1,2 @@
+#! /bin/bash
+GOROOT=$HOME/src/go GOPATH=`pwd` go run main.go
