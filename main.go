@@ -6,6 +6,7 @@ import (
 //    "encoding/json"
 //    "io/ioutil"
     "code.google.com/p/go.net/websocket"
+    "mozilla.org/simplepush"
     "fmt"
     "bufio"
     "io"
@@ -13,6 +14,7 @@ import (
     "strings"
     "os"
     "net/http"
+    "time"
 )
 
 // -- utils
@@ -55,40 +57,49 @@ func get(ma map[string]string, key string, def string) (string) {
 //-- Handlers
 // -- Websocket
 
+const (
+    UNREG = iota
+    REGIS
+    HELLO
+    ACK
+    FLUSH
+    RETRN
+)
+
 type PushCommand struct {
-    // TODO: Enum?
-    // 0 unregister
-    // 1 register
-    // 2 ack
-    // 3 flush
-    //99 return
-    command int
-    arguments interface {}
+    // Use mutable int value
+    command int            //command type (UNREG, REGIS, ACK, etc)
+    arguments interface {} //command arguments
 }
 
 type PushWS struct {
-    uaid []byte
-    socket *websocket.Conn
-    done chan bool
-    cmd chan PushCommand
+    uaid []byte             // id
+    socket *websocket.Conn  // Remote connection
+    done chan bool          // thread close flag
+    cmd chan PushCommand    // internal command channel
 }
+
+type jsMap map[string]interface{}
 
 //   -- goproc funcs
 
 func (sock PushWS) Close() error {
     log.Printf("INFO: Closing socket %s \n", sock.uaid)
-    sock.cmd <- PushCommand{0, sock.uaid}
+    sock.cmd <- PushCommand{UNREG, sock.uaid}
     sock.done <- true
     // remove from the map registry
     return nil
 }
 
 //    -- Workers
+//      these write back to the websocket.
 
-func sniffer(socket *websocket.Conn, in chan map[string]interface{}) {
-    var buffer map[string]interface{}
+func sniffer(socket *websocket.Conn, in chan jsMap) {
+    // Sniff the websocket for incoming data.
+    var buffer jsMap
     for {
         websocket.JSON.Receive(socket, &buffer)
+        log.Printf("Sniffed:", buffer)
         in<- buffer
     }
 }
@@ -98,11 +109,12 @@ func PS_Run(sock PushWS) {
     // This is the socket
     // read the incoming json
     for {
-        in := make(chan map[string]interface{})
+        in := make(chan jsMap)
         go sniffer(sock.socket, in)
         select {
             case cmd := <-sock.cmd:
-                if cmd.command == 3 {
+                if cmd.command == FLUSH {
+                    log.Printf("Flushing...");
                     websocket.JSON.Send(sock.socket, cmd.arguments)
                 }
             case buffer := <-in:
@@ -119,7 +131,7 @@ func PS_Run(sock PushWS) {
                         PS_unregister(sock, buffer)
                     default:
                         websocket.JSON.Send(sock.socket,
-                            map[string]interface{}{
+                            jsMap{
                                 "messageType": buffer["messageType"],
                                 "status": 401})
                 }
@@ -130,18 +142,21 @@ func PS_Run(sock PushWS) {
 
 func PS_hello(sock PushWS, buffer interface{}) (err error) {
     // register the UAID
-    data := buffer.(map[string]interface{})
-    sock.uaid = data["uaid"].([]byte)
+    data := buffer.(jsMap)
+    if data["uaid"] == nil {
+        data["uaid"], _ = simplepush.GenUUID4()
+    }
+    sock.uaid = []byte(data["uaid"].(string))
     // register the sockets
     // register any proprietary connection requirements
     // alert the master of the new UAID.
-    cmd := PushCommand{1, map[string]interface{}{
-         "id": data["uaid"],
+    cmd := PushCommand{HELLO, jsMap{
+         "uaid": data["uaid"],
          "chids": data["channelIDs"]}}
     // blocking call back to the boss.
-    sock.cmd<-cmd
+    sock.cmd<- cmd
     result := <-sock.cmd
-    websocket.JSON.Send(sock.socket, map[string]interface{}{
+    websocket.JSON.Send(sock.socket, jsMap{
                     "messageType": data["messageType"],
                     "status": result.command,
                     "uaid": data["uaid"]})
@@ -166,16 +181,97 @@ func PS_unregister(sock PushWS, buffer interface{}) (err error) {
 
 
 func PS_flush(sock PushWS) {
-    log.Printf("INFO: Flushing data to socket\n")
+    // flush pending data back to Client
+    outBuffer := make(jsMap)
+    outBuffer["messageType"] = "notification"
+    // Fetch the pending updates from #storage
+    outBuffer["updates"] = []jsMap{{
+            "channelID": "abc",
+            "version": 123}}
+    outBuffer["expired"] = [][]byte{}
+    websocket.JSON.Send(sock.socket, outBuffer)
+}
+
+//    -- Master
+
+type ClientProprietary struct {
+    //-- socket proprietary information
+    Ip          string              `json:"ip"`
+    Port        string              `json:"port"`
+    LastContact time.Time           `json:"-"`
 }
 
 
-//    -- Master
-func handleMasterCommand(cmd PushCommand, sock PushWS) (result int){
-    log.Printf("Handling command %s")
+type Client struct {
+    Websocket   *websocket.Conn     `json:"-"`
+    UAID        string              `json:"uaid"`
+    Prop        ClientProprietary   `json:"-"`
+    }
+
+var Clients map[string]*Client
+
+
+func srv_set_proprietary_info(args jsMap) (cp *ClientProprietary){
+    ip := ""
+    port := ""
+    lastContact := time.Now()
+
+    if args["ip"] != nil {
+        ip = args["ip"].(string)
+    }
+    if args["port"] != nil {
+        port = args["port"].(string)
+    }
+
+    return &ClientProprietary{ip, port, lastContact}
+}
+
+func srv_hello(cmd PushCommand, sock PushWS) (result int, arguments jsMap) {
+    args := cmd.arguments.(jsMap)
+    log.Printf("INFO: handling 'hello'", args)
+
+    // overwrite previously registered UAIDs
+    // Raw client
+    var uaid string
+    if args["uaid"] == nil {
+        uaid, _ = simplepush.GenUUID4()
+        log.Printf("Generating new UAID %s", uaid)
+    } else {
+        uaid = args["uaid"].(string)
+        log.Printf("Using existing UAID '%s'", uaid)
+        delete (args, "uaid")
+    }
+
+    prop := srv_set_proprietary_info(args)
+
+    // Add the ChannelIDs?
+    // We don't really care, since we report back all channelIDs for
+    //  a given UAID.
+    log.Printf("INFO: Do something with these %s %s", uaid, prop)
+    args["uaid"] = uaid
+    arguments = args
+    result = 200
+    return result, arguments
+}
+
+func handleMasterCommand(cmd PushCommand, sock PushWS) (result int, args jsMap){
+    log.Printf("Handling command %s", cmd)
+//    chids := cmd.arguments.(jsMap)["chids"].([]interface{})
+//    for key := range chids {
+//        log.Printf("\t %s", chids[key].(string))
+//    }
+    switch int(cmd.command) {
+        case HELLO:
+            log.Printf("INFO: Handling HELLO event...");
+            var ret jsMap
+            result, ret = srv_hello(cmd, sock)
+            args = cmd.arguments.(jsMap)
+            args["uaid"] = ret["uaid"]
+    }
+
     // hello: add to the map registry
     // delete: remove from the map registry
-    return 200
+    return result, args
 }
 
 
@@ -186,9 +282,10 @@ func PushSocketHandler(ws *websocket.Conn) {
         select {
             case <-s.done:
                 return
-            case cmd:=<-s.cmd:
-                result := handleMasterCommand(cmd, s)
-                s.cmd<- PushCommand{result, nil}
+            case cmd:= <-s.cmd:
+                result, args := handleMasterCommand(cmd, s)
+                log.Printf("DEBUG: Returning Result", result)
+                s.cmd<- PushCommand{result, args}
 
         }
     }
@@ -198,6 +295,7 @@ func PushSocketHandler(ws *websocket.Conn) {
 // -- Rest
 func UpdateHandler(resp http.ResponseWriter, req *http.Request) {
     // Handle the version updates.
+    log.Printf("A wild update appears")
 }
 
 // -- main
@@ -205,10 +303,15 @@ func main(){
     config := getConfig("config.ini")
     fmt.Println(config)
 
+    // Register the handlers
     http.Handle("/ws", websocket.Handler(PushSocketHandler))
-    http.HandleFunc("/update", UpdateHandler)
+    http.Handle("/update/", http.HandlerFunc(UpdateHandler))
+
+    // Config the server
     host := get(config, "host", "localhost")
     port := get(config, "port", "8080")
+
+    // Hoist the main sail
     err := http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
     if err != nil {
         panic ("ListenAndServe: " + err.Error())
