@@ -7,6 +7,7 @@ import (
 //    "io/ioutil"
     "code.google.com/p/go.net/websocket"
     "mozilla.org/simplepush"
+    "mozilla.org/simplepush/storage"
     "fmt"
     "bufio"
     "io"
@@ -77,6 +78,7 @@ type PushWS struct {
     socket *websocket.Conn  // Remote connection
     done chan bool          // thread close flag
     cmd chan PushCommand    // internal command channel
+    store *storage.Storage
 }
 
 type jsMap map[string]interface{}
@@ -105,10 +107,19 @@ func sniffer(socket *websocket.Conn, in chan jsMap) {
 }
 
 
+func handleErr(sock PushWS, err error) {
+    websocket.JSON.Send(sock.socket,
+        jsMap {
+            "messageType": err.Error(),
+            "status": 500})
+}
+
+
 func PS_Run(sock PushWS) {
     // This is the socket
     // read the incoming json
     for {
+        var err error
         in := make(chan jsMap)
         go sniffer(sock.socket, in)
         select {
@@ -122,18 +133,21 @@ func PS_Run(sock PushWS) {
                 // process the commands
                 switch buffer["messageType"] {
                     case "hello":
-                        PS_hello(sock, buffer)
+                        err = PS_hello(sock, buffer)
                     case "ack":
-                        PS_ack(sock, buffer)
+                        err = PS_ack(sock, buffer)
                     case "register":
-                        PS_register(sock, buffer)
+                        err = PS_register(sock, buffer)
                     case "unregister":
-                        PS_unregister(sock, buffer)
+                        err = PS_unregister(sock, buffer)
                     default:
                         websocket.JSON.Send(sock.socket,
                             jsMap{
                                 "messageType": buffer["messageType"],
                                 "status": 401})
+                }
+                if err != nil {
+                    handleErr(sock, err)
                 }
        }
     }
@@ -160,27 +174,37 @@ func PS_hello(sock PushWS, buffer interface{}) (err error) {
                     "messageType": data["messageType"],
                     "status": result.command,
                     "uaid": data["uaid"]})
-    PS_flush(sock)
+    if (err == nil) {
+        PS_flush(sock, time.Now().Unix())
+    }
     return err
 }
 
 
 func PS_ack(sock PushWS, buffer interface{}) (err error) {
+    err = sock.store.Ack(string(sock.uaid), buffer.(jsMap))
+    if err == nil {
+        PS_flush(sock, time.Now().Unix())
+    }
     return err
 }
 
 
 func PS_register(sock PushWS, buffer interface{}) (err error) {
+    appid := buffer.(jsMap)["channelID"].(string)
+    err = sock.store.RegisterAppID(string(sock.uaid), appid, "")
     return err
 }
 
 
 func PS_unregister(sock PushWS, buffer interface{}) (err error) {
+    appid := buffer.(jsMap)["channelID"].(string)
+    err = sock.store.DeleteAppID(string(sock.uaid), appid, false)
     return err
 }
 
 
-func PS_flush(sock PushWS) {
+func PS_flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
     outBuffer := make(jsMap)
     outBuffer["messageType"] = "notification"
@@ -276,7 +300,14 @@ func handleMasterCommand(cmd PushCommand, sock PushWS) (result int, args jsMap){
 
 
 func PushSocketHandler(ws *websocket.Conn) {
-    s := PushWS{nil, ws, make(chan bool), make(chan PushCommand)}
+    // can we pass this in somehow?
+    config := getConfig("config.ini")
+    store := storage.New(config)
+    s := PushWS{uaid:nil,
+                    socket:ws,
+                    done: make(chan bool),
+                    cmd: make(chan PushCommand),
+                    store: store}
     go PS_Run(s)
     for {
         select {
@@ -296,7 +327,14 @@ func PushSocketHandler(ws *websocket.Conn) {
 func UpdateHandler(resp http.ResponseWriter, req *http.Request) {
     // Handle the version updates.
     log.Printf("A wild update appears")
+    resp.Header().Set("Content-Type", "application/json")
+    resp.Write([]byte("{}"))
 }
+
+func StatusHandler(resp http.ResponseWriter, req *http.Request) {
+    resp.Write([]byte("OK"))
+}
+
 
 // -- main
 func main(){
@@ -306,6 +344,7 @@ func main(){
     // Register the handlers
     http.Handle("/ws", websocket.Handler(PushSocketHandler))
     http.Handle("/update/", http.HandlerFunc(UpdateHandler))
+    http.Handle("/status/", http.HandlerFunc(StatusHandler))
 
     // Config the server
     host := get(config, "host", "localhost")

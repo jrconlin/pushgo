@@ -5,10 +5,13 @@ package storage
 import (
     "github.com/bradfitz/gomemcache/memcache"
 
+    "errors"
     "log"
     "fmt"
     "encoding/json"
+    "sort"
     "strings"
+    "strconv"
     "time"
 )
 
@@ -18,14 +21,18 @@ const (
     REGISTERED
 )
 
-var mc memcache
 var config map[string]string
 
 type record map[string]interface{}
 
+type Storage struct {
+    config map[string]string
+    mc *memcache.Client
+}
+
 func indexOf(list []string, val string) (index int) {
     for index, v := range list {
-        if (v == string) {
+        if (v == val) {
             return index
         }
     }
@@ -33,57 +40,56 @@ func indexOf(list []string, val string) (index int) {
 }
 
 func resolvePK(pk string) (uaid, appid string) {
-    uaid, appid = strings.SplitN(pk, ".", 2)
-    return uaid, appid
+    items := strings.SplitN(pk, ".", 2)
+    return items[0], items[1]
 }
 
 func genPK(uaid, appid string) (pk string){
-    pk = fmt.Sprintf("%s.%s", uaid, appid
+    pk = fmt.Sprintf("%s.%s", uaid, appid)
     return pk
 }
 
-func fetchRec(pk string) (result record, err error){
+func (self *Storage) fetchRec(pk string) (result record, err error){
     result = nil
-    if pk == nil {
-        err = error("Invalid Primary Key Value")
+    if pk == "" {
+        err = errors.New("Invalid Primary Key Value")
         return result, err
     }
 
-    raw, err := mc.Get(pk)
+    raw, err := self.mc.Get(pk)
 
-    err = json.NewDecoder(string(raw.Value)).Decoder(&result)
-        if err == nil {
-            return nil, err
-        }
+    err = json.Unmarshal(raw.Value, result)
+    if err == nil {
+        return nil, err
     }
 
     return result, err
 }
 
-func fetchAppIDArray(uaid string) (result []string, err error) {
-    raw, err := mc.Get(uaid)
+func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
+    raw, err := self.mc.Get(uaid)
     if err != nil {
         return nil, err
     }
-    result = strings.Split(",", raw)
+    result = strings.Split(",", string(raw.Value))
     return result, err
 }
 
-func storeAppIDArray(uaid string, arr []string) (err error) {
-    sorted := arr.Sort()
-    err = mc.Set(Key: uaid,
-        Value: []byte(sorted.Join(arr, ",")))
+func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
+    arr.Sort()
+    err = self.mc.Set(&memcache.Item{Key: uaid,
+        Value: []byte(strings.Join(arr, ","))})
     return err
 }
 
-func storeRec(pk string, rec record) (err error) {
-    if pk == nil {
-        err = error("Invalid Primary Key Value")
+func (self *Storage) storeRec(pk string, rec record) (err error) {
+    if pk == "" {
+        err = errors.New("Invalid Primary Key Value")
         return err
     }
 
     if rec == nil {
-        err = error("No data to store")
+        err = errors.New("No data to store")
         return err
     }
 
@@ -96,94 +102,89 @@ func storeRec(pk string, rec record) (err error) {
     var ttls string
     switch rec["s"] {
         case DELETED:
-            ttls := config["db.timeout_del"]
+            ttls = config["db.timeout_del"]
         case REGISTERED:
-            ttls := config["db.timeout_reg"]
+            ttls = config["db.timeout_reg"]
         default:
-            ttls := config["db.timeout_live"]
+            ttls = config["db.timeout_live"]
     }
     rec["l"] = time.Now()
 
-    ttl := int(ttls)
-    err = mc.Set(Key: pk,
+    ttl, err := strconv.ParseInt(ttls, 0, 0)
+    err = self.mc.Set(&memcache.Item{Key: pk,
                  Value: []byte(raw),
-                 Expiration: ttl)
+                 Expiration: int32(ttl)})
     return err
 }
 
 
-func New(opts map[string]string) (err error) {
-
-    type servers []string
+func New(opts map[string]string) *Storage {
 
     config = opts
-    _, ok := config["memcache.servers"]
+    var ok bool
+
+    _, ok = config["memcache.servers"]
     if !ok {
         config["memcache.servers"] = "[\"localhost:11211\"]"
     }
 
-    _, ok := config["db.timeout_live"]
+    _, ok = config["db.timeout_live"]
     if !ok {
         config["db.timeout_live"] = "259200"
     }
 
-    _, ok := config["db.timeout_reg"]
+    _, ok = config["db.timeout_reg"]
     if !ok {
         config["db.timeout_reg"] = "10800"
     }
 
-    _, ok := config["db.timeout_del"]
+    _, ok = config["db.timeout_del"]
     if !ok {
         config["db.timeout_del"] = "86400"
     }
 
-    err := json.NewDecoder(val).Decode(&servers)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    mc = memCache.New(servers)
-    return err
+    log.Printf("Creating new memcache handler")
+    return &Storage{mc: memcache.New(config["memcache.servers"])}
 }
 
-func UpdateChannel(pk, vers string) (err error) {
+func (self *Storage) UpdateChannel(pk, vers string) (err error) {
     var rec record
 
-    if pk == nil || len(pk) == 0 {
-        return error("Invalid Primary Key Value")
+    if len(pk) == 0 {
+        return errors.New("Invalid Primary Key Value")
     }
 
-    rec, err := fetchRec(pk)
+    rec, err = self.fetchRec(pk)
 
     if rec != nil {
        if rec["s"] != DELETED {
-          newRecord = make(map[string]string)
-          newRecord["v"] = vers.(string)
-          newRecord["s"] = LIVE
-          newRecord["l"] = time.Now()
-          err := storeRec(pk, newRecord)
-          return err
+           newRecord := make(record)
+           newRecord["v"] = vers
+           newRecord["s"] = LIVE
+           newRecord["l"] = time.Now()
+           err := self.storeRec(pk, newRecord)
+           return err
         }
     }
     // No record found or the record setting was DELETED
-    return RegisterAppID(pk, vers)
+    uaid, appid := resolvePK(pk)
+    return self.RegisterAppID(uaid, appid, vers)
 }
 
 
-func RegisterAppID(pk, vers string) (err error) {
+func (self *Storage) RegisterAppID(uaid, appid, vers string) (err error) {
 
     var rec record
 
-    uaid, appid := resolvePK(pk)
-    appIDArray, err := fetchAppIDArray(uaid)
+    appIDArray, err := self.fetchAppIDArray(uaid)
     // Yep, this should eventually be optimized to a faster scan.
     if appIDArray != nil {
         if indexOf(appIDArray, appid) >= 0 {
-                return error("Already registered")
+                return errors.New("Already registered")
         }
     }
 
-    err := storeAppIDArray(uaid, append(appIDArray, appid))
+    err = self.storeAppIDArray(uaid, append(appIDArray, appid))
     if err != nil {
         return err
     }
@@ -191,65 +192,64 @@ func RegisterAppID(pk, vers string) (err error) {
     rec = make(record)
     rec["s"] = REGISTERED
     rec["l"] = time.Now()
-    if vers != nil {
+    if vers != "" {
         rec["v"] = vers
         rec["s"] = LIVE
     }
 
-    return storeRec(pk, rec)
-
+    return self.storeRec(genPK(uaid, appid), rec)
 }
 
-func DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
+func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
-    appIDArray, err := fetchAppIDArray(uaid)
-    pos := appIDArray.Search(appid)
+    appIDArray, err := self.fetchAppIDArray(uaid)
+    pos := sort.SearchStrings(appIDArray, appid)
     if pos > -1 {
-        storeAppIDArray(uaid, append(appIDArray[:pos], appIDArray[pos+1:]))
+        self.storeAppIDArray(uaid, append(appIDArray[:pos], appIDArray[pos+1:]...))
         pk := genPK(uaid, appid)
-        rec, err := fetchRec(pk)
+        rec, err := self.fetchRec(pk)
         if err != nil {
             rec["s"] = DELETED
-            err = storeRec(pk, rec)
+            err = self.storeRec(pk, rec)
         }
     }
     return err
 }
 
 
-func GetUpdates(uaid, lastAccessed int) (results map[string]interface{}, err error) {
-    appIDArray, err := fetchAppIDArray(uaid)
+func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results map[string]interface{}, err error) {
+    appIDArray, err := self.fetchAppIDArray(uaid)
 
-    var keys []string
-    var updates []map(string)interface{}
+    var updates []map[string]interface{}
     var expired []string
+    var items []string
 
-    for p, appid := range appIDArray {
-        keys := append(items, genPK(uaid, appid))
+    for _, appid := range appIDArray {
+        items = append(items, genPK(uaid, appid))
     }
 
-    recs, err = mc.GetMulti(items)
+    recs, err := self.mc.GetMulti(items)
     if err != nil {
         return nil, err
     }
 
     var update record
-    for p, rec := range recs {
+    for _, rec := range recs {
         uaid, appid := resolvePK(rec.Key)
-        err = json.NewDecoder(string(rec.Value)).Decoder(&update)
+        err = json.Unmarshal(rec.Value, update)
         if err != nil {
-            return err
+            return nil, err
         }
-        if rec["l"] < last_accessed {
+        if update["l"].(int64) < lastAccessed {
             continue
         }
-        if rec["s"] == LIVE {
+        if update["s"] == LIVE {
             newRec := make(map[string]interface{})
             newRec["channelID"] = appid
-            newRec["version"] = rec["v"]
+            newRec["version"] = update["v"]
             updates = append(updates, newRec)
         }
-        if rec["s"] == DELETED {
+        if update["s"] == DELETED {
             expired = append(expired, uaid)
         }
     }
@@ -258,25 +258,29 @@ func GetUpdates(uaid, lastAccessed int) (results map[string]interface{}, err err
     return results, err
 }
 
-func Ack(uaid string, ackPacket map[string]interface{}) (err error) {
+func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
     //TODO, go through the results and nuke what's there, then call flush
 
-
     if _, ok := ackPacket["expired"]; ok {
-        for p, appid := range ackPacket["expired"] {
-            err = mc.Delete(genPK(uaid, appid)
+        expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
+        json.Unmarshal(ackPacket["expired"].([]byte), expired)
+        for _, appid := range expired {
+            err = self.mc.Delete(genPK(uaid, appid))
         }
     }
-    if _, ok = ackPacket["updates"]; ok {
-        for p, update := range ackPacket["updates"] {
-            err = mc.Delete(genPK(uaid, update.Key))
+    if _, ok := ackPacket["updates"]; ok {
+        type update map[string]interface{}
+        rcnt := strings.Count(ackPacket["updates"].(string), "}") + 1
+        updates := make([]update,rcnt)
+        for _, rec := range updates {
+            err = self.mc.Delete(genPK(uaid, rec["channelID"].(string)))
         }
     }
 
     return err
 }
 
-func ReloadData(uaid string, updates []string) (err error){
+func (self *Storage) ReloadData(uaid string, updates []string) (err error){
     //TODO: This is not really required.
     _, _ = uaid, updates
     return nil
