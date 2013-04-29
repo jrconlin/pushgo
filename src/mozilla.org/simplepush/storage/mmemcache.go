@@ -13,6 +13,7 @@ import (
     "strings"
     "strconv"
     "time"
+    "net/http"
 )
 
 const (
@@ -21,12 +22,19 @@ const (
     REGISTERED
 )
 
-var config map[string]string
+var config JsMap
 
-type record map[string]interface{}
+
+type Result struct {
+    Success bool
+    Err error
+    Status int
+}
+
+type JsMap map[string]interface{}
 
 type Storage struct {
-    config map[string]string
+    config JsMap
     mc *memcache.Client
 }
 
@@ -41,6 +49,9 @@ func indexOf(list []string, val string) (index int) {
 
 func resolvePK(pk string) (uaid, appid string) {
     items := strings.SplitN(pk, ".", 2)
+    if len(items) < 2 {
+        return pk, ""
+    }
     return items[0], items[1]
 }
 
@@ -49,20 +60,30 @@ func genPK(uaid, appid string) (pk string){
     return pk
 }
 
-func (self *Storage) fetchRec(pk string) (result record, err error){
+func (self *Storage) fetchRec(pk string) (result JsMap, err error){
     result = nil
     if pk == "" {
         err = errors.New("Invalid Primary Key Value")
         return result, err
     }
 
-    raw, err := self.mc.Get(pk)
+    defer func () {
+        if err := recover(); err != nil {
+            log.Printf("ERROR: could not fetch record for %s: %s", pk, err)
+        }
+    }()
 
-    err = json.Unmarshal(raw.Value, result)
-    if err == nil {
+    item, err := self.mc.Get(pk)
+
+    log.Printf("DEBUG: Fetch item:: %s, item.Value: %s", item, item.Value)
+
+    json.Unmarshal(item.Value, &result)
+
+    if result == nil {
         return nil, err
     }
 
+    log.Printf("%s => %s", pk, result)
     return result, err
 }
 
@@ -71,7 +92,7 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
     if err != nil {
         return nil, err
     }
-    result = strings.Split(",", string(raw.Value))
+    result = strings.Split(string(raw.Value), ",")
     return result, err
 }
 
@@ -82,7 +103,7 @@ func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err err
     return err
 }
 
-func (self *Storage) storeRec(pk string, rec record) (err error) {
+func (self *Storage) storeRec(pk string, rec JsMap) (err error) {
     if pk == "" {
         err = errors.New("Invalid Primary Key Value")
         return err
@@ -102,15 +123,16 @@ func (self *Storage) storeRec(pk string, rec record) (err error) {
     var ttls string
     switch rec["s"] {
         case DELETED:
-            ttls = config["db.timeout_del"]
+            ttls = config["db.timeout_del"].(string)
         case REGISTERED:
-            ttls = config["db.timeout_reg"]
+            ttls = config["db.timeout_reg"].(string)
         default:
-            ttls = config["db.timeout_live"]
+            ttls = config["db.timeout_live"].(string)
     }
-    rec["l"] = time.Now()
+    rec["l"] = time.Now().UTC().Unix()
 
     ttl, err := strconv.ParseInt(ttls, 0, 0)
+    log.Printf("INFO: Storing record %s => %s", pk, raw)
     err = self.mc.Set(&memcache.Item{Key: pk,
                  Value: []byte(raw),
                  Expiration: int32(ttl)})
@@ -118,52 +140,67 @@ func (self *Storage) storeRec(pk string, rec record) (err error) {
 }
 
 
-func New(opts map[string]string) *Storage {
+func New(opts JsMap) *Storage {
 
     config = opts
     var ok bool
 
-    _, ok = config["memcache.servers"]
-    if !ok {
-        config["memcache.servers"] = "[\"localhost:11211\"]"
+    if _, ok = config["memcache.server"]; !ok {
+        config["memcache.server"] = "127.0.0.1:11211"
     }
 
-    _, ok = config["db.timeout_live"]
-    if !ok {
+    if _, ok = config["db.timeout_live"]; !ok {
         config["db.timeout_live"] = "259200"
     }
 
-    _, ok = config["db.timeout_reg"]
-    if !ok {
+    if _, ok = config["db.timeout_reg"]; !ok {
         config["db.timeout_reg"] = "10800"
     }
 
-    _, ok = config["db.timeout_del"]
-    if !ok {
+    if _, ok = config["db.timeout_del"]; !ok {
         config["db.timeout_del"] = "86400"
     }
 
-    log.Printf("Creating new memcache handler")
-    return &Storage{mc: memcache.New(config["memcache.servers"])}
+    log.Printf("INFO: Creating new memcache handler")
+    // (...)(strings.Split(config["memcache.servers"].(string), ","))
+    return &Storage{mc: memcache.New(config["memcache.server"].(string))}
 }
 
-func (self *Storage) UpdateChannel(pk, vers string) (err error) {
-    var rec record
+func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
+    var rec JsMap
 
     if len(pk) == 0 {
-        return errors.New("Invalid Primary Key Value")
+        return &Result{
+            Success: false,
+            Err: errors.New("Invalid Primary Key Value"),
+            Status: http.StatusServiceUnavailable}
     }
 
-    rec, err = self.fetchRec(pk)
+    rec, err := self.fetchRec(pk)
+
+    if err != nil {
+        return &Result {
+            Success: false,
+            Err: errors.New(fmt.Sprintf("Cannot fetch record %s", err.Error())),
+            Status: http.StatusServiceUnavailable }
+    }
+
 
     if rec != nil {
-       if rec["s"] != DELETED {
-           newRecord := make(record)
-           newRecord["v"] = vers
-           newRecord["s"] = LIVE
-           newRecord["l"] = time.Now()
-           err := self.storeRec(pk, newRecord)
-           return err
+        log.Printf("DEBUG: Found record for %s", pk)
+        if rec["s"] != DELETED {
+            newRecord := make(JsMap)
+            newRecord["v"] = vers
+            newRecord["s"] = LIVE
+            newRecord["l"] = time.Now().UTC().Unix()
+            err := self.storeRec(pk, newRecord)
+            if err != nil {
+                return &Result {
+                    Success: false,
+                    Err: err,
+                    Status: http.StatusServiceUnavailable }
+            }
+            return &Result{Success: true, Err: nil, Status: 200}
         }
     }
     // No record found or the record setting was DELETED
@@ -172,35 +209,58 @@ func (self *Storage) UpdateChannel(pk, vers string) (err error) {
 }
 
 
-func (self *Storage) RegisterAppID(uaid, appid, vers string) (err error) {
+func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
 
-    var rec record
+    var rec JsMap
+
+    if len(appid) == 0 {
+        return &Result {
+            Success: false,
+            Err: errors.New("No Channel Specified"),
+            Status: http.StatusServiceUnavailable }
+    }
 
     appIDArray, err := self.fetchAppIDArray(uaid)
     // Yep, this should eventually be optimized to a faster scan.
     if appIDArray != nil {
         if indexOf(appIDArray, appid) >= 0 {
-                return errors.New("Already registered")
+                return &Result {
+                    Success: false,
+                    Err: errors.New("Already registered"),
+                    Status: http.StatusServiceUnavailable }
         }
     }
 
     err = self.storeAppIDArray(uaid, append(appIDArray, appid))
     if err != nil {
-        return err
+        return &Result{
+            Success: false,
+            Err: err,
+            Status: http.StatusServiceUnavailable }
     }
 
-    rec = make(record)
+    rec = make(JsMap)
     rec["s"] = REGISTERED
-    rec["l"] = time.Now()
+    rec["l"] = time.Now().UTC().Unix()
     if vers != "" {
         rec["v"] = vers
         rec["s"] = LIVE
     }
 
-    return self.storeRec(genPK(uaid, appid), rec)
+    err = self.storeRec(genPK(uaid, appid), rec)
+    if (err != nil) {
+        return &Result {
+            Success: false,
+            Err: err,
+            Status: http.StatusServiceUnavailable}
+    }
+    return &Result {
+        Success: true,
+        Err: err,
+        Status: http.StatusOK}
 }
 
-func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
+func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (res *Result) {
 
     appIDArray, err := self.fetchAppIDArray(uaid)
     pos := sort.SearchStrings(appIDArray, appid)
@@ -213,11 +273,20 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
             err = self.storeRec(pk, rec)
         }
     }
-    return err
+    if err != nil {
+        return &Result {
+            Success: false,
+            Err: err,
+            Status: http.StatusServiceUnavailable }
+        }
+    return &Result {
+        Success: true,
+        Err: nil,
+        Status: http.StatusOK }
 }
 
 
-func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results map[string]interface{}, err error) {
+func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap, err error) {
     appIDArray, err := self.fetchAppIDArray(uaid)
 
     var updates []map[string]interface{}
@@ -227,43 +296,60 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results map[st
     for _, appid := range appIDArray {
         items = append(items, genPK(uaid, appid))
     }
+    log.Printf("Fetching items %s", items)
 
     recs, err := self.mc.GetMulti(items)
     if err != nil {
+        log.Printf("ERROR: %s", err)
         return nil, err
     }
 
-    var update record
+    var update JsMap
+    if len(recs) == 0 {
+        log.Printf("INFO: No records found for %s", uaid)
+    }
     for _, rec := range recs {
         uaid, appid := resolvePK(rec.Key)
-        err = json.Unmarshal(rec.Value, update)
+        log.Printf("INFO: Fetched %s record %s", uaid, rec.Value)
+        err = json.Unmarshal(rec.Value, &update)
         if err != nil {
             return nil, err
         }
-        if update["l"].(int64) < lastAccessed {
+        if int64(update["l"].(float64)) < lastAccessed {
+            log.Printf("Skipping record...")
             continue
         }
-        if update["s"] == LIVE {
-            newRec := make(map[string]interface{})
+        // Yay! Go translates numeric interface values as float64s
+        // Apparently float64(1) != int(1).
+        switch update["s"] {
+        case float64(LIVE):
+            log.Printf("INFO: Adding record... %s", appid)
+            newRec := make(JsMap)
             newRec["channelID"] = appid
             newRec["version"] = update["v"]
             updates = append(updates, newRec)
+        case float64(DELETED):
+            log.Printf("INFO: Deleting record... %s", appid)
+            expired = append(expired, appid)
+        default:
+            log.Printf("INFO: UNknown state %d", update["s"])
         }
-        if update["s"] == DELETED {
-            expired = append(expired, uaid)
-        }
+
     }
+    results = make(JsMap)
     results["expired"] = expired
     results["updates"] = updates
     return results, err
 }
 
-func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
+func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Result) {
     //TODO, go through the results and nuke what's there, then call flush
+
+    var err error
 
     if _, ok := ackPacket["expired"]; ok {
         expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
-        json.Unmarshal(ackPacket["expired"].([]byte), expired)
+        json.Unmarshal(ackPacket["expired"].([]byte), &expired)
         for _, appid := range expired {
             err = self.mc.Delete(genPK(uaid, appid))
         }
@@ -277,7 +363,16 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
         }
     }
 
-    return err
+    if err != nil {
+        return &Result {
+            Success: false,
+            Err: err,
+            Status: http.StatusServiceUnavailable }
+    }
+    return &Result {
+        Success: true,
+        Err: nil,
+        Status: http.StatusOK }
 }
 
 func (self *Storage) ReloadData(uaid string, updates []string) (err error){

@@ -8,19 +8,19 @@ import (
     "code.google.com/p/go.net/websocket"
     "mozilla.org/simplepush"
     "mozilla.org/simplepush/storage"
-    "fmt"
     "bufio"
+    "fmt"
     "io"
     "log"
-    "strings"
-    "os"
     "net/http"
+    "os"
+    "strings"
     "time"
 )
 
 // -- utils
-func getConfig(filename string) (map[string]string) {
-    config := make(map[string]string)
+func getConfig(filename string) (storage.JsMap) {
+    config := make(storage.JsMap)
     // Yay for no equivalent to readln
     file, err := os.Open(filename)
     if err != nil {
@@ -36,7 +36,6 @@ func getConfig(filename string) (map[string]string) {
         }
         kv := strings.SplitN(line, "=", 2)
         if len(kv) < 2 {
-            log.Printf("Ignoring invalid line %s", line)
             continue
         }
         config[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
@@ -47,8 +46,8 @@ func getConfig(filename string) (map[string]string) {
     return config
 }
 
-func get(ma map[string]string, key string, def string) (string) {
-    val, ok := ma[key]
+func get(ma storage.JsMap, key string, def string) (string) {
+    val, ok := ma[key].(string)
     if ! ok {
         val = def
     }
@@ -81,8 +80,6 @@ type PushWS struct {
     store *storage.Storage
 }
 
-type jsMap map[string]interface{}
-
 //   -- goproc funcs
 
 func (sock PushWS) Close() error {
@@ -96,12 +93,12 @@ func (sock PushWS) Close() error {
 //    -- Workers
 //      these write back to the websocket.
 
-func sniffer(socket *websocket.Conn, in chan jsMap) {
+func sniffer(socket *websocket.Conn, in chan storage.JsMap) {
     // Sniff the websocket for incoming data.
-    var buffer jsMap
+    var buffer storage.JsMap
     for {
         websocket.JSON.Receive(socket, &buffer)
-        log.Printf("Sniffed:", buffer)
+        log.Printf("DEBUG: Socket Client sent: %s", buffer)
         in<- buffer
     }
 }
@@ -109,7 +106,7 @@ func sniffer(socket *websocket.Conn, in chan jsMap) {
 
 func handleErr(sock PushWS, err error) {
     websocket.JSON.Send(sock.socket,
-        jsMap {
+        storage.JsMap {
             "messageType": err.Error(),
             "status": 500})
 }
@@ -120,7 +117,7 @@ func PS_Run(sock PushWS) {
     // read the incoming json
     for {
         var err error
-        in := make(chan jsMap)
+        in := make(chan storage.JsMap)
         go sniffer(sock.socket, in)
         select {
             case cmd := <-sock.cmd:
@@ -142,7 +139,7 @@ func PS_Run(sock PushWS) {
                         err = PS_unregister(sock, buffer)
                     default:
                         websocket.JSON.Send(sock.socket,
-                            jsMap{
+                            storage.JsMap{
                                 "messageType": buffer["messageType"],
                                 "status": 401})
                 }
@@ -156,7 +153,7 @@ func PS_Run(sock PushWS) {
 
 func PS_hello(sock PushWS, buffer interface{}) (err error) {
     // register the UAID
-    data := buffer.(jsMap)
+    data := buffer.(storage.JsMap)
     if data["uaid"] == nil {
         data["uaid"], _ = simplepush.GenUUID4()
     }
@@ -164,56 +161,62 @@ func PS_hello(sock PushWS, buffer interface{}) (err error) {
     // register the sockets
     // register any proprietary connection requirements
     // alert the master of the new UAID.
-    cmd := PushCommand{HELLO, jsMap{
+    cmd := PushCommand{HELLO, storage.JsMap{
          "uaid": data["uaid"],
          "chids": data["channelIDs"]}}
     // blocking call back to the boss.
     sock.cmd<- cmd
     result := <-sock.cmd
-    websocket.JSON.Send(sock.socket, jsMap{
+    websocket.JSON.Send(sock.socket, storage.JsMap{
                     "messageType": data["messageType"],
                     "status": result.command,
                     "uaid": data["uaid"]})
     if (err == nil) {
-        PS_flush(sock, time.Now().Unix())
+        // Get the lastAccessed time from wherever
+        PS_flush(sock, 0)
     }
     return err
 }
 
 
 func PS_ack(sock PushWS, buffer interface{}) (err error) {
-    err = sock.store.Ack(string(sock.uaid), buffer.(jsMap))
-    if err == nil {
-        PS_flush(sock, time.Now().Unix())
+    res := sock.store.Ack(string(sock.uaid), buffer.(storage.JsMap))
+    // Get the lastAccessed time from wherever.
+    if res.Success {
+        PS_flush(sock, 0)
     }
-    return err
+    return res.Err
 }
 
 
 func PS_register(sock PushWS, buffer interface{}) (err error) {
-    appid := buffer.(jsMap)["channelID"].(string)
-    err = sock.store.RegisterAppID(string(sock.uaid), appid, "")
-    return err
+    appid := buffer.(storage.JsMap)["channelID"].(string)
+    res := sock.store.RegisterAppID(string(sock.uaid), appid, "")
+    return res.Err
 }
 
 
 func PS_unregister(sock PushWS, buffer interface{}) (err error) {
-    appid := buffer.(jsMap)["channelID"].(string)
-    err = sock.store.DeleteAppID(string(sock.uaid), appid, false)
-    return err
+    appid := buffer.(storage.JsMap)["channelID"].(string)
+    res := sock.store.DeleteAppID(string(sock.uaid), appid, false)
+    return res.Err
 }
 
 
 func PS_flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
-    outBuffer := make(jsMap)
+    outBuffer := make(storage.JsMap)
     outBuffer["messageType"] = "notification"
     // Fetch the pending updates from #storage
-    outBuffer["updates"] = []jsMap{{
-            "channelID": "abc",
-            "version": 123}}
-    outBuffer["expired"] = [][]byte{}
-    websocket.JSON.Send(sock.socket, outBuffer)
+    updates, err := sock.store.GetUpdates(string(sock.uaid), lastAccessed)
+    if err != nil {
+        handleErr(sock, err)
+        return
+    }
+
+    log.Printf("INFO: Flushing data back to socket", updates)
+
+    websocket.JSON.Send(sock.socket, updates)
 }
 
 //    -- Master
@@ -235,7 +238,7 @@ type Client struct {
 var Clients map[string]*Client
 
 
-func srv_set_proprietary_info(args jsMap) (cp *ClientProprietary){
+func srv_set_proprietary_info(args storage.JsMap) (cp *ClientProprietary){
     ip := ""
     port := ""
     lastContact := time.Now()
@@ -250,8 +253,8 @@ func srv_set_proprietary_info(args jsMap) (cp *ClientProprietary){
     return &ClientProprietary{ip, port, lastContact}
 }
 
-func srv_hello(cmd PushCommand, sock PushWS) (result int, arguments jsMap) {
-    args := cmd.arguments.(jsMap)
+func srv_hello(cmd PushCommand, sock PushWS) (result int, arguments storage.JsMap) {
+    args := cmd.arguments.(storage.JsMap)
     log.Printf("INFO: handling 'hello'", args)
 
     // overwrite previously registered UAIDs
@@ -278,18 +281,18 @@ func srv_hello(cmd PushCommand, sock PushWS) (result int, arguments jsMap) {
     return result, arguments
 }
 
-func handleMasterCommand(cmd PushCommand, sock PushWS) (result int, args jsMap){
-    log.Printf("Handling command %s", cmd)
-//    chids := cmd.arguments.(jsMap)["chids"].([]interface{})
+func handleMasterCommand(cmd PushCommand, sock PushWS) (result int, args storage.JsMap){
+    log.Printf("INFO: Server Handling command %s", cmd)
+//    chids := cmd.arguments.(storage.JsMap)["chids"].([]interface{})
 //    for key := range chids {
 //        log.Printf("\t %s", chids[key].(string))
 //    }
     switch int(cmd.command) {
         case HELLO:
-            log.Printf("INFO: Handling HELLO event...");
-            var ret jsMap
+            log.Printf("INFO: Server Handling HELLO event...");
+            var ret storage.JsMap
             result, ret = srv_hello(cmd, sock)
-            args = cmd.arguments.(jsMap)
+            args = cmd.arguments.(storage.JsMap)
             args["uaid"] = ret["uaid"]
     }
 
@@ -324,27 +327,57 @@ func PushSocketHandler(ws *websocket.Conn) {
 
     // do stuff
 // -- Rest
-func UpdateHandler(resp http.ResponseWriter, req *http.Request) {
+func UpdateHandler(resp http.ResponseWriter, req *http.Request, config storage.JsMap) {
     // Handle the version updates.
-    log.Printf("A wild update appears")
+    log.Printf("DEBUG: A wild update appears")
+    /*
+    if (req.Method != "PUT") {
+        http.Error(resp, "", http.StatusMethodNotAllowed)
+        return
+    }
+    */
+    vers := fmt.Sprintf("%d", time.Now().UTC().Unix())
+
+    elements := strings.Split(req.URL.Path, "/")
+    pk := elements[len(elements)-1]
+    if len(pk) == 0 {
+        http.Error(resp, "Token not found", http.StatusNotFound)
+        return
+    }
+
+    log.Printf("INFO: setting version for %s to %s", pk, vers)
+    store := storage.New(config)
+    res := store.UpdateChannel(pk, vers)
+
+    if !res.Success {
+        log.Printf("%s", res.Err)
+        http.Error(resp, res.Err.Error(), res.Status)
+        return
+    }
     resp.Header().Set("Content-Type", "application/json")
     resp.Write([]byte("{}"))
+    return
 }
 
-func StatusHandler(resp http.ResponseWriter, req *http.Request) {
+func StatusHandler(resp http.ResponseWriter, req *http.Request, config storage.JsMap) {
     resp.Write([]byte("OK"))
 }
 
+func makeHandler(fn func (http.ResponseWriter, *http.Request, storage.JsMap)) http.HandlerFunc {
+    config := getConfig("config.ini")
+    return func(resp http.ResponseWriter, req *http.Request) {
+        fn(resp, req, config)
+    }
+}
 
 // -- main
 func main(){
     config := getConfig("config.ini")
-    fmt.Println(config)
 
     // Register the handlers
     http.Handle("/ws", websocket.Handler(PushSocketHandler))
-    http.Handle("/update/", http.HandlerFunc(UpdateHandler))
-    http.Handle("/status/", http.HandlerFunc(StatusHandler))
+    http.HandleFunc("/update/", makeHandler(UpdateHandler))
+    http.HandleFunc("/status/", makeHandler(StatusHandler))
 
     // Config the server
     host := get(config, "host", "localhost")
