@@ -162,6 +162,12 @@ func New(opts JsMap) *Storage {
     }
 
     log.Printf("INFO: Creating new memcache handler")
+
+    if _, ok = config["db.timeout_del"]; !ok {
+        config["db.timeout_del"] = "86400"
+    }
+
+    log.Printf("INFO: Creating new memcache handler")
     // (...)(strings.Split(config["memcache.servers"].(string), ","))
     return &Storage{mc: memcache.New(config["memcache.server"].(string))}
 }
@@ -178,7 +184,7 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
 
     rec, err := self.fetchRec(pk)
 
-    if err != nil {
+    if err != nil && err != memcache.ErrCacheMiss {
         return &Result {
             Success: false,
             Err: errors.New(fmt.Sprintf("Cannot fetch record %s", err.Error())),
@@ -260,7 +266,7 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
         Status: http.StatusOK}
 }
 
-func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (res *Result) {
+func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
     appIDArray, err := self.fetchAppIDArray(uaid)
     pos := sort.SearchStrings(appIDArray, appid)
@@ -273,18 +279,8 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (res *Resul
             err = self.storeRec(pk, rec)
         }
     }
-    if err != nil {
-        return &Result {
-            Success: false,
-            Err: err,
-            Status: http.StatusServiceUnavailable }
-        }
-    return &Result {
-        Success: true,
-        Err: nil,
-        Status: http.StatusOK }
+    return err
 }
-
 
 func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap, err error) {
     appIDArray, err := self.fetchAppIDArray(uaid)
