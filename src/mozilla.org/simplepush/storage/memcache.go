@@ -83,7 +83,7 @@ func (self *Storage) fetchRec(pk string) (result JsMap, err error){
         return nil, err
     }
 
-    log.Printf("%s => %s", pk, result)
+    log.Printf("INFO : %s => %s", pk, result)
     return result, err
 }
 
@@ -117,6 +117,7 @@ func (self *Storage) storeRec(pk string, rec JsMap) (err error) {
     raw, err := json.Marshal(rec)
 
     if err != nil {
+        log.Printf("ERROR: cannot marshal record [%s], %s", rec, err)
         return err
     }
 
@@ -132,10 +133,14 @@ func (self *Storage) storeRec(pk string, rec JsMap) (err error) {
     rec["l"] = time.Now().UTC().Unix()
 
     ttl, err := strconv.ParseInt(ttls, 0, 0)
-    log.Printf("INFO: Storing record %s => %s", pk, raw)
-    err = self.mc.Set(&memcache.Item{Key: pk,
+    log.Printf("INFO : Storing record %s => %s", pk, raw)
+    item := &memcache.Item{Key: pk,
                  Value: []byte(raw),
-                 Expiration: int32(ttl)})
+                 Expiration: int32(ttl)}
+    err = self.mc.Set(item)
+    if err != nil {
+        log.Printf("ERROR: Failure to set item %s {%s}", pk, item)
+    }
     return err
 }
 
@@ -161,14 +166,7 @@ func New(opts JsMap) *Storage {
         config["db.timeout_del"] = "86400"
     }
 
-    log.Printf("INFO: Creating new memcache handler")
-
-    if _, ok = config["db.timeout_del"]; !ok {
-        config["db.timeout_del"] = "86400"
-    }
-
-    log.Printf("INFO: Creating new memcache handler")
-    // (...)(strings.Split(config["memcache.servers"].(string), ","))
+    log.Printf("INFO : Creating new memcache handler")
     return &Storage{mc: memcache.New(config["memcache.server"].(string))}
 }
 
@@ -271,7 +269,11 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
     appIDArray, err := self.fetchAppIDArray(uaid)
     pos := sort.SearchStrings(appIDArray, appid)
     if pos > -1 {
-        self.storeAppIDArray(uaid, append(appIDArray[:pos], appIDArray[pos+1:]...))
+        if pos == len(appIDArray) {
+            self.storeAppIDArray(uaid, appIDArray[:pos])
+        } else {
+            self.storeAppIDArray(uaid, append(appIDArray[:pos], appIDArray[pos+1:]...))
+        }
         pk := GenPK(uaid, appid)
         rec, err := self.fetchRec(pk)
         if err != nil {
@@ -292,7 +294,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap,
     for _, appid := range appIDArray {
         items = append(items, GenPK(uaid, appid))
     }
-    log.Printf("Fetching items %s", items)
+    log.Printf("INFO : Fetching items %s", items)
 
     recs, err := self.mc.GetMulti(items)
     if err != nil {
@@ -302,33 +304,34 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap,
 
     var update JsMap
     if len(recs) == 0 {
-        log.Printf("INFO: No records found for %s", uaid)
+        log.Printf("INFO : No records found for %s", uaid)
+        return nil, err
     }
     for _, rec := range recs {
         uaid, appid := ResolvePK(rec.Key)
-        log.Printf("INFO: Fetched %s record %s", uaid, rec.Value)
+        log.Printf("INFO : Fetched %s record %s", uaid, rec.Value)
         err = json.Unmarshal(rec.Value, &update)
         if err != nil {
             return nil, err
         }
         if int64(update["l"].(float64)) < lastAccessed {
-            log.Printf("Skipping record...")
+            log.Printf("INFO : Skipping record...")
             continue
         }
         // Yay! Go translates numeric interface values as float64s
         // Apparently float64(1) != int(1).
         switch update["s"] {
         case float64(LIVE):
-            log.Printf("INFO: Adding record... %s", appid)
+            // log.Printf("INFO : Adding record... %s", appid)
             newRec := make(JsMap)
             newRec["channelID"] = appid
             newRec["version"] = update["v"]
             updates = append(updates, newRec)
         case float64(DELETED):
-            log.Printf("INFO: Deleting record... %s", appid)
+            log.Printf("INFO : Deleting record... %s", appid)
             expired = append(expired, appid)
         default:
-            log.Printf("INFO: UNknown state %d", update["s"])
+            log.Printf("WARN : Unknown state %d", update["s"])
         }
 
     }
