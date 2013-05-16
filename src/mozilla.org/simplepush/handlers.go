@@ -1,7 +1,6 @@
 package simplepush
 
 import (
-
     "mozilla.org/simplepush/storage"
     "mozilla.org/util"
     "code.google.com/p/go.net/websocket"
@@ -15,21 +14,21 @@ import (
 )
 
 // VIP response
-func StatusHandler(resp http.ResponseWriter, req *http.Request, config storage. JsMap) {
+func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap) {
         resp.Write([]byte("OK"))
-    }
+}
 
 
-// -- Rest
-func UpdateHandler(resp http.ResponseWriter, req *http.Request, config storage.JsMap) {
+// -- REST
+func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap) {
     // Handle the version updates.
     log.Printf("DEBUG: A wild update appears")
     if false {
-    if (req.Method != "PUT") {
-        http.Error(resp, "", http.StatusMethodNotAllowed)
-        return
+        if (req.Method != "PUT") {
+            http.Error(resp, "", http.StatusMethodNotAllowed)
+            return
+        }
     }
-}
     vers := fmt.Sprintf("%d", time.Now().UTC().Unix())
 
     elements := strings.Split(req.URL.Path, "/")
@@ -53,32 +52,34 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config storage.J
     resp.Write([]byte("{}"))
     // Ping the appropriate server
     if client, ok := Clients[uaid]; ok {
-        Srv_requestFlush(client)
+        Flush(client)
     }
     return
 }
 
+
+// -- Socket
 func PushSocketHandler(ws *websocket.Conn) {
     // can we pass this in somehow?
     config := util.MzGetConfig("config.ini")
     store := storage.New(config)
-    s := PushWS{Uaid:"",
-                    Socket:ws,
+    sock := PushWS{Uaid: "",
+                    Socket: ws,
                     Done: make(chan bool),
                     Scmd: make(chan PushCommand),
                     Ccmd: make(chan PushCommand),
                     Store: store}
-    go PS_Run(s)
+    go NewWorker(config).Run(sock)
     for {
         select {
-            case <-s.Done:
-                log.Printf("DEBUG: Killing handler for %s", s.Uaid)
-                delete(Clients, string(s.Uaid))
+            case <-sock.Done:
+                log.Printf("DEBUG: Killing handler for %s", sock.Uaid)
+                delete(Clients, string(sock.Uaid))
                 return
-            case serv_cmd:= <-s.Scmd:
-                result, args := Srv_handleMasterCommand(serv_cmd, s, config)
+            case serv_cmd:= <-sock.Scmd:
+                result, args := HandleServerCommand(serv_cmd, sock, config)
                 log.Printf("DEBUG: Returning Result", result)
-                s.Scmd<- PushCommand{result, args}
+                sock.Scmd<- PushCommand{result, args}
         }
     }
 }

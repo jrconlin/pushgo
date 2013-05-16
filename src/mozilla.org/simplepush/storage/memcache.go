@@ -3,6 +3,7 @@ package storage
 // thin memcache wrapper
 
 import (
+    "mozilla.org/util"
     "github.com/bradfitz/gomemcache/memcache"
 
     "errors"
@@ -22,7 +23,7 @@ const (
     REGISTERED
 )
 
-var config JsMap
+var config util.JsMap
 
 
 type Result struct {
@@ -31,10 +32,8 @@ type Result struct {
     Status int
 }
 
-type JsMap map[string]interface{}
-
 type Storage struct {
-    config JsMap
+    config util.JsMap
     mc *memcache.Client
 }
 
@@ -60,7 +59,7 @@ func GenPK(uaid, appid string) (pk string){
     return pk
 }
 
-func (self *Storage) fetchRec(pk string) (result JsMap, err error){
+func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
     result = nil
     if pk == "" {
         err = errors.New("Invalid Primary Key Value")
@@ -103,7 +102,7 @@ func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err err
     return err
 }
 
-func (self *Storage) storeRec(pk string, rec JsMap) (err error) {
+func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
     if pk == "" {
         err = errors.New("Invalid Primary Key Value")
         return err
@@ -145,7 +144,7 @@ func (self *Storage) storeRec(pk string, rec JsMap) (err error) {
 }
 
 
-func New(opts JsMap) *Storage {
+func New(opts util.JsMap) *Storage {
 
     config = opts
     var ok bool
@@ -171,7 +170,7 @@ func New(opts JsMap) *Storage {
 }
 
 func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
-    var rec JsMap
+    var rec util.JsMap
 
     if len(pk) == 0 {
         return &Result{
@@ -193,7 +192,7 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
     if rec != nil {
         log.Printf("DEBUG: Found record for %s", pk)
         if rec["s"] != DELETED {
-            newRecord := make(JsMap)
+            newRecord := make(util.JsMap)
             newRecord["v"] = vers
             newRecord["s"] = LIVE
             newRecord["l"] = time.Now().UTC().Unix()
@@ -215,7 +214,7 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
 
 func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
 
-    var rec JsMap
+    var rec util.JsMap
 
     if len(appid) == 0 {
         return &Result {
@@ -243,7 +242,7 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
             Status: http.StatusServiceUnavailable }
     }
 
-    rec = make(JsMap)
+    rec = make(util.JsMap)
     rec["s"] = REGISTERED
     rec["l"] = time.Now().UTC().Unix()
     if vers != "" {
@@ -284,7 +283,7 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
     return err
 }
 
-func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap, err error) {
+func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.JsMap, err error) {
     appIDArray, err := self.fetchAppIDArray(uaid)
 
     var updates []map[string]interface{}
@@ -302,7 +301,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap,
         return nil, err
     }
 
-    var update JsMap
+    var update util.JsMap
     if len(recs) == 0 {
         log.Printf("INFO : No records found for %s", uaid)
         return nil, err
@@ -323,7 +322,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap,
         switch update["s"] {
         case float64(LIVE):
             // log.Printf("INFO : Adding record... %s", appid)
-            newRec := make(JsMap)
+            newRec := make(util.JsMap)
             newRec["channelID"] = appid
             newRec["version"] = update["v"]
             updates = append(updates, newRec)
@@ -335,7 +334,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results JsMap,
         }
 
     }
-    results = make(JsMap)
+    results = make(util.JsMap)
     results["expired"] = expired
     results["updates"] = updates
     return results, err

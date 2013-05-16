@@ -1,7 +1,5 @@
 package main
 
-//#TODO: refactor
-
 import (
 //    "mozilla.org/simplepush"
 //    "encoding/json"
@@ -9,7 +7,6 @@ import (
     "code.google.com/p/go.net/websocket"
     "mozilla.org/simplepush"
     "mozilla.org/util"
-    "mozilla.org/simplepush/storage"
 
     "fmt"
     "log"
@@ -17,7 +14,7 @@ import (
 )
 
 // -- utils
-func makeHandler(fn func (http.ResponseWriter, *http.Request, storage.JsMap)) http.HandlerFunc {
+func makeHandler(fn func (http.ResponseWriter, *http.Request, util.JsMap)) http.HandlerFunc {
     config := util.MzGetConfig("config.ini")
     return func(resp http.ResponseWriter, req *http.Request) {
         fn(resp, req, config)
@@ -30,7 +27,11 @@ func main(){
 
     simplepush.Clients = make(map[string]*simplepush.Client)
 
+    // Initialize the common server.
+    simplepush.InitServer(config)
+
     // Register the handlers
+    // each websocket gets it's own handler.
     http.Handle("/ws", websocket.Handler(simplepush.PushSocketHandler))
     http.HandleFunc("/update/", makeHandler(simplepush.UpdateHandler))
     http.HandleFunc("/status/", makeHandler(simplepush.StatusHandler))

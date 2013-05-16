@@ -8,6 +8,8 @@ import (
 )
 
 func GenUUID4() (string, error) {
+    // Generate a non-hyphenated UUID4 string.
+    // (this makes for smaller URLs)
     uuid := make([]byte, 16)
     n, err := rand.Read(uuid)
     if n != len(uuid) || err != nil {

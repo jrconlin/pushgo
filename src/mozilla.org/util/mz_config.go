@@ -1,7 +1,6 @@
 package util
 
 import (
-    "mozilla.org/simplepush/storage"
     "log"
     "io"
     "os"
@@ -10,8 +9,13 @@ import (
 )
 
 
-func MzGetConfig(filename string) (storage.JsMap) {
-    config := make(storage.JsMap)
+/* Craptastic typeless parser to read config values (use until things
+    settle and you can use something more efficent like TOML
+*/
+
+
+func MzGetConfig(filename string) (JsMap) {
+    config := make(JsMap)
     // Yay for no equivalent to readln
     file, err := os.Open(filename)
     if err != nil {
@@ -37,7 +41,7 @@ func MzGetConfig(filename string) (storage.JsMap) {
     return config
 }
 
-func MzGet(ma storage.JsMap, key string, def string) (string) {
+func MzGet(ma JsMap, key string, def string) (string) {
     val, ok := ma[key].(string)
     if ! ok {
         val = def

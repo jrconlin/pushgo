@@ -2,9 +2,10 @@ package simplepush
 
 import (
     "code.google.com/p/go.net/websocket"
-    "mozilla.org/simplepush/storage"
+    "mozilla.org/util"
 
     "encoding/json"
+    "fmt"
     "errors"
     "log"
     "strings"
@@ -14,10 +15,19 @@ import (
 //    -- Workers
 //      these write back to the websocket.
 
-func sniffer(socket *websocket.Conn, in chan storage.JsMap) {
+type Worker struct {
+    log *util.HekaLogger
+}
+
+
+func NewWorker(config util.JsMap) *Worker {
+    return &Worker{log: util.NewHekaLogger(config)}
+}
+
+func (self *Worker) sniffer(socket *websocket.Conn, in chan util.JsMap) {
     // Sniff the websocket for incoming data.
     var raw []byte
-    var buffer storage.JsMap
+    var buffer util.JsMap
     for {
         websocket.Message.Receive(socket, &raw)
         if len(raw) > 0 {
@@ -32,64 +42,68 @@ func sniffer(socket *websocket.Conn, in chan storage.JsMap) {
     }
 }
 
-func handleErr(sock PushWS, err error) (ret error){
-    return handleError(sock, err, 500)
+func (self *Worker) handleErr(sock PushWS, err error) (ret error){
+    return self.handleError(sock, err, 500)
 }
 
-func handleError(sock PushWS, err error, status int) (ret error){
-    log.Printf("INFO : Sending error %s", err)
+func (self *Worker) handleError(sock PushWS, err error, status int) (ret error){
+    self.log.Info("worker", fmt.Sprintf("Sending error %s", err), nil)
     websocket.JSON.Send(sock.Socket,
-        storage.JsMap {
+        util.JsMap {
             "messageType": err.Error(),
             "status": status})
     return nil
 }
 
 
-func PS_Run(sock PushWS) {
+func (self *Worker) Run(sock PushWS) {
     // This is the socket
     // read the incoming json
     var err error
-    in := make(chan storage.JsMap)
-    go sniffer(sock.Socket, in)
+
+    in := make(chan util.JsMap)
+    go self.sniffer(sock.Socket, in)
     for {
         select {
             case cmd := <-sock.Ccmd:
                 log.Printf("INFO : Client Run cmd: %s", cmd)
                 if cmd.Command == FLUSH {
-                    log.Printf("INFO : Flushing... %s", sock.Uaid);
-                    PS_flush(sock, time.Now().UTC().Unix())
+                    self.log.Info("worker",
+                        fmt.Sprintf("Flushing... %s", sock.Uaid), nil);
+                    self.Flush(sock, time.Now().UTC().Unix())
                 }
             case buffer := <-in:
-                log.Printf("INFO : Client Read buffer, %s \n", buffer)
+                self.log.Info("worker", fmt.Sprintf("INFO : Client Read buffer, %s \n", buffer), nil)
                 // process the commands
                 switch strings.ToLower(buffer["messageType"].(string)) {
                     case "hello":
-                        err = PS_hello(&sock, buffer)
+                        err = self.Hello(&sock, buffer)
                     case "ack":
-                        err = PS_ack(sock, buffer)
+                        err = self.Ack(sock, buffer)
                     case "register":
-                        err = PS_register(sock, buffer)
+                        err = self.Register(sock, buffer)
                     case "unregister":
-                        err = PS_unregister(sock, buffer)
+                        err = self.Unregister(sock, buffer)
                     default:
-                        log.Printf("WARN : I have no idea what [%s] is.", buffer)
+                        self.log.Warn("worker",
+                            fmt.Sprintf("I have no idea what [%s] is.", buffer),
+                            nil)
                         websocket.JSON.Send(sock.Socket,
-                            storage.JsMap{
+                            util.JsMap{
                                 "messageType": buffer["messageType"],
                                 "status": 401})
                 }
                 if err != nil {
-                    handleErr(sock, err)
+                    self.handleErr(sock, err)
                 }
        }
    }
 }
 
 
-func PS_hello(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
     // register the UAID
-    data := buffer.(storage.JsMap)
+    data := buffer.(util.JsMap)
     if data["uaid"] == nil {
         data["uaid"], _ = GenUUID4()
     }
@@ -97,42 +111,44 @@ func PS_hello(sock *PushWS, buffer interface{}) (err error) {
     // register the sockets
     // register any proprietary connection requirements
     // alert the master of the new UAID.
-    cmd := PushCommand{HELLO, storage.JsMap{
+    cmd := PushCommand{HELLO, util.JsMap{
          "uaid": data["uaid"],
          "chids": data["channelIDs"]}}
     // blocking call back to the boss.
     sock.Scmd<- cmd
     result := <-sock.Scmd
-    log.Printf("INFO : sending HELLO response....")
-    websocket.JSON.Send(sock.Socket, storage.JsMap{
+    self.log.Info("worker", "sending HELLO response....", nil)
+    websocket.JSON.Send(sock.Socket, util.JsMap{
                     "messageType": data["messageType"],
                     "status": result.Command,
                     "uaid": data["uaid"]})
     if (err == nil) {
         // Get the lastAccessed time from wherever
-        PS_flush(*sock, 0)
+        self.Flush(*sock, 0)
     }
     return err
 }
 
 
-func PS_ack(sock PushWS, buffer interface{}) (err error) {
-    res := sock.Store.Ack(sock.Uaid, buffer.(storage.JsMap))
+func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
+    res := sock.Store.Ack(sock.Uaid, buffer.(util.JsMap))
     // Get the lastAccessed time from wherever.
     if res.Success {
-        PS_flush(sock, 0)
+        self.Flush(sock, 0)
     }
     return res.Err
 }
 
 
-func PS_register(sock PushWS, buffer interface{}) (err error) {
-    data := buffer.(storage.JsMap)
+func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
+    data := buffer.(util.JsMap)
     appid := data["channelID"].(string)
     res := sock.Store.RegisterAppID(sock.Uaid, appid, "")
     if !res.Success {
-        log.Printf("ERROR: RegisterAppID failed %s", res.Err)
-        handleError(sock, res.Err, res.Status)
+        self.handleError(sock, res.Err, res.Status)
+        self.log.Error("worker",
+                       fmt.Sprintf("ERROR: RegisterAppID failed %s", res.Err),
+                       nil)
         return err
     }
     // have the server generate the callback URL.
@@ -140,11 +156,11 @@ func PS_register(sock PushWS, buffer interface{}) (err error) {
                        Arguments: data}
     sock.Scmd<- cmd
     result := <-sock.Scmd
-    log.Printf("DEBUG: Server returned %s", result)
-    endpoint := result.Arguments.(storage.JsMap)["pushEndpoint"].(string)
+    self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
+    endpoint := result.Arguments.(util.JsMap)["pushEndpoint"].(string)
     // return the info back to the socket
-    log.Printf("INFO : Sending REGIS response....")
-    websocket.JSON.Send(sock.Socket, storage.JsMap{
+    self.log.Info("worker", "Sending REGIS response....", nil)
+    websocket.JSON.Send(sock.Socket, util.JsMap{
         "messageType": data["messageType"],
         "status": result.Command,
         "pushEndpoint": endpoint})
@@ -152,19 +168,19 @@ func PS_register(sock PushWS, buffer interface{}) (err error) {
 }
 
 
-func PS_unregister(sock PushWS, buffer interface{}) (err error) {
-    data := buffer.(storage.JsMap)
+func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
+    data := buffer.(util.JsMap)
     if _, ok := data["channelID"]; !ok {
         err = errors.New("Missing channelID")
-        return handleError(sock, err, 400)
+        return self.handleError(sock, err, 400)
     }
     appid := data["channelID"].(string)
     err = sock.Store.DeleteAppID(sock.Uaid, appid, false)
     if err != nil {
-        return handleErr(sock, err)
+        return self.handleErr(sock, err)
     }
-    log.Printf("INFO : Sending UNREG response ..")
-    websocket.JSON.Send(sock.Socket, storage.JsMap{
+    self.log.Info("worker", "Sending UNREG response ..", nil)
+    websocket.JSON.Send(sock.Socket, util.JsMap{
         "messageType": data["messageType"],
         "status":200,
         "channelID": appid})
@@ -172,24 +188,24 @@ func PS_unregister(sock PushWS, buffer interface{}) (err error) {
 }
 
 
-func PS_flush(sock PushWS, lastAccessed int64) {
+func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
-    outBuffer := make(storage.JsMap)
+    outBuffer := make(util.JsMap)
     outBuffer["messageType"] = "notification"
     if sock.Uaid == "" {
-        log.Printf("ERROR: Undefined UAID for socket. Aborting.")
+        self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
         sock.Done <- true
     }
     // Fetch the pending updates from #storage
     updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
     if err != nil {
-        handleErr(sock, err)
+        self.handleErr(sock, err)
         return
     }
     if updates == nil {
         return
     }
-    log.Printf("INFO : Flushing data back to socket", updates)
+    self.log.Info("worker", "Flushing data back to socket", updates)
     websocket.JSON.Send(sock.Socket, updates)
 }
 

@@ -2,10 +2,11 @@ package simplepush
 
 import (
     "mozilla.org/simplepush/storage"
+    "mozilla.org/util"
 
-    "log"
     "strings"
     "time"
+    "fmt"
 )
 
 type ClientProprietary struct {
@@ -24,8 +25,23 @@ type Client struct {
 
 var Clients map[string]*Client
 
+var serverSingleton *Serv
 
-func Srv_set_proprietary_info(args storage.JsMap) (cp *ClientProprietary){
+
+type Serv struct {
+    log *util.HekaLogger
+}
+
+func NewServer(config util.JsMap) *Serv {
+    return &Serv{log: util.NewHekaLogger(config)}
+}
+
+func InitServer(config util.JsMap) (err error) {
+    serverSingleton = NewServer(config)
+    return nil
+}
+
+func (self *Serv) Set_proprietary_info(args util.JsMap) (cp *ClientProprietary){
     ip := ""
     port := ""
     lastContact := time.Now()
@@ -40,24 +56,24 @@ func Srv_set_proprietary_info(args storage.JsMap) (cp *ClientProprietary){
     return &ClientProprietary{ip, port, lastContact}
 }
 
-func Srv_hello(cmd PushCommand, sock *PushWS) (result int, arguments storage.JsMap) {
-    args := cmd.Arguments.(storage.JsMap)
-    log.Printf("INFO : handling 'hello'", args)
+func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+    args := cmd.Arguments.(util.JsMap)
+    self.log.Info("server", "handling 'hello'", args)
 
     // overwrite previously registered UAIDs
     // Raw client
     var uaid string
     if args["uaid"] == "" {
         uaid, _ = GenUUID4()
-        log.Printf("INFO : Generating new UAID %s", uaid)
+        self.log.Info("server", fmt.Sprintf("Generating new UAID %s", uaid), nil)
     } else {
         uaid = args["uaid"].(string)
-        log.Printf("INFO :Using existing UAID '%s'", uaid)
+        self.log.Info("server", fmt.Sprintf("Using existing UAID '%s'", uaid), nil)
         delete (args, "uaid")
     }
 
-    prop := Srv_set_proprietary_info(args)
-    log.Printf("INFO : New prop %s", prop)
+    prop := self.Set_proprietary_info(args)
+    self.log.Info("server", fmt.Sprintf("INFO : New prop %s", prop), nil)
 
     // Add the ChannelIDs?
     sock.Uaid = uaid
@@ -74,44 +90,44 @@ func Srv_hello(cmd PushCommand, sock *PushWS) (result int, arguments storage.JsM
     return result, arguments
 }
 
-func Srv_unreg(cmd PushCommand, sock PushWS) (result int, arguments storage.JsMap) {
+func (self *Serv) Unreg(cmd PushCommand, sock PushWS) (result int, arguments util.JsMap) {
     // This is effectively a no-op, since we don't hold client session info
-    args := cmd.Arguments.(storage.JsMap)
+    args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
     return 200, args
 }
 
-func Srv_regis(cmd PushCommand, sock PushWS, config storage.JsMap) (result int, arguments storage.JsMap) {
-    args := cmd.Arguments.(storage.JsMap)
+func (self *Serv) Regis(cmd PushCommand, sock PushWS, config util.JsMap) (result int, arguments util.JsMap) {
+    args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
     if _, ok := config["pushEndpoint"]; !ok {
         config["pushEndpoint"] = "http://localhost/update/<token>"
     }
     // Generate the call back URL
     token := storage.GenPK(sock.Uaid, args["channelID"].(string))
-    log.Printf("INFO : UAID %s, channel %s", sock.Uaid,
-               args["channelID"].(string))
+    self.log.Info("server", fmt.Sprintf("UAID %s, channel %s", sock.Uaid,
+               args["channelID"].(string)), nil)
     // cheezy variable replacement.
     args["pushEndpoint"] = strings.Replace(config["pushEndpoint"].(string),
         "<token>", token, -1)
-    log.Printf("INFO : regis generated callback %s", args["pushEndpoint"])
+    self.log.Info("server", fmt.Sprintf("regis generated callback %s", args["pushEndpoint"]), nil)
     return 200, args
 }
 
-func Srv_clientPing(prop *ClientProprietary) (err error) {
+func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
     // Perform whatever steps are needed to remotely wake the client.
 
     return nil
 }
 
 
-func Srv_requestFlush(client *Client) (err error) {
+func (self *Serv) RequestFlush(client *Client) (err error) {
     defer func(client *Client) {
         r :=recover()
         if r != nil {
-            log.Printf("ERROR: requestFlush failed  %s", r)
+            self.log.Error("server", fmt.Sprintf("requestFlush failed  %s", r), nil)
             if client != nil {
-                Srv_clientPing(client.Prop)
+                self.ClientPing(client.Prop)
             }
         }
         return
@@ -119,35 +135,43 @@ func Srv_requestFlush(client *Client) (err error) {
 
     if client != nil {
 
-        log.Printf("INFO : Requesting flush for %s", client.UAID, client.Pushws)
+        self.log.Info("server", fmt.Sprintf("Requesting flush for %s", client.UAID, client.Pushws), nil)
         client.Pushws.Ccmd <- PushCommand{Command: FLUSH,
-                              Arguments: &storage.JsMap{"uaid": client.UAID}}
+                              Arguments: &util.JsMap{"uaid": client.UAID}}
     }
     return nil
 }
 
-func Srv_handleMasterCommand(cmd PushCommand, sock PushWS, config storage.JsMap) (result int, args storage.JsMap){
-    log.Printf("INFO : Server Handling command %s", cmd)
-    var ret storage.JsMap
+func Flush(client *Client) (err error) {
+    return serverSingleton.RequestFlush(client)
+}
+
+
+func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS, config util.JsMap) (result int, args util.JsMap){
+    self.log.Info("server", fmt.Sprintf("Server Handling command %s", cmd), nil)
+    var ret util.JsMap
     if cmd.Arguments != nil {
-        args = cmd.Arguments.(storage.JsMap)
+        args = cmd.Arguments.(util.JsMap)
     } else {
-        args = make(storage.JsMap)
+        args = make(util.JsMap)
     }
 
     switch int(cmd.Command) {
         case HELLO:
-            log.Printf("INFO : Server Handling HELLO event...");
-            result, ret = Srv_hello(cmd, &sock)
+            self.log.Info("server", "Server Handling HELLO event...", nil);
+            result, ret = self.Hello(cmd, &sock)
         case UNREG:
-            log.Printf("INFO : Server Handling UNREG event...");
-            result, ret = Srv_unreg(cmd, sock)
+            self.log.Info("server", "Server Handling UNREG event...", nil);
+            result, ret = self.Unreg(cmd, sock)
         case REGIS:
-            log.Printf("INFO : Server handling REGIS event...")
-            result, ret = Srv_regis(cmd, sock, config)
+            self.log.Info("server", "Server handling REGIS event...", nil)
+            result, ret = self.Regis(cmd, sock, config)
     }
 
     args["uaid"] = ret["uaid"]
     return result, args
 }
 
+func HandleServerCommand(cmd PushCommand, sock PushWS, config util.JsMap) (result int, args util.JsMap){
+    return serverSingleton.HandleCommand(cmd, sock, config)
+}
