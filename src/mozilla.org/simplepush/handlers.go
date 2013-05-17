@@ -14,15 +14,15 @@ import (
 )
 
 // VIP response
-func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap) {
+func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
         resp.Write([]byte("OK"))
 }
 
 
 // -- REST
-func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap) {
+func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
     // Handle the version updates.
-    log.Printf("DEBUG: A wild update appears")
+    logger.Debug("main","A wild update appears", nil)
     if false {
         if (req.Method != "PUT") {
             http.Error(resp, "", http.StatusMethodNotAllowed)
@@ -38,8 +38,8 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
         return
     }
 
-    log.Printf("INFO : setting version for %s to %s", pk, vers)
-    store := storage.New(config)
+    logger.Info("main", fmt.Sprintf("setting version for %s to %s", pk, vers), nil)
+    store := storage.New(config, logger)
     res := store.UpdateChannel(pk, vers)
     uaid, _ := storage.ResolvePK(pk)
 
@@ -62,23 +62,29 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 func PushSocketHandler(ws *websocket.Conn) {
     // can we pass this in somehow?
     config := util.MzGetConfig("config.ini")
-    store := storage.New(config)
+    logger:= util.NewHekaLogger(config)
+    store := storage.New(config, logger)
     sock := PushWS{Uaid: "",
                     Socket: ws,
                     Done: make(chan bool),
                     Scmd: make(chan PushCommand),
                     Ccmd: make(chan PushCommand),
-                    Store: store}
+                    Store: store,
+                    Logger: logger}
     go NewWorker(config).Run(sock)
     for {
         select {
             case <-sock.Done:
-                log.Printf("DEBUG: Killing handler for %s", sock.Uaid)
+                sock.Logger.Debug("main",
+                                  fmt.Sprintf("DEBUG: Killing handler for %s", sock.Uaid),
+                                  nil)
                 delete(Clients, string(sock.Uaid))
                 return
             case serv_cmd:= <-sock.Scmd:
-                result, args := HandleServerCommand(serv_cmd, sock, config)
-                log.Printf("DEBUG: Returning Result", result)
+                result, args := HandleServerCommand(serv_cmd, sock)
+                sock.Logger.Debug("main",
+                                 fmt.Sprintf("Returning Result %s", result),
+                                 nil)
                 sock.Scmd<- PushCommand{result, args}
         }
     }

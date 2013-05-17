@@ -7,7 +7,6 @@ import (
     "encoding/json"
     "fmt"
     "errors"
-    "log"
     "strings"
     "time"
 )
@@ -31,7 +30,7 @@ func (self *Worker) sniffer(socket *websocket.Conn, in chan util.JsMap) {
     for {
         websocket.Message.Receive(socket, &raw)
         if len(raw) > 0 {
-            log.Printf("INFO :Socket received %s", raw)
+            self.log.Info("Socket received %s", string(raw), nil)
             err := json.Unmarshal(raw, &buffer)
             if err != nil {
                 panic(err)
@@ -66,7 +65,9 @@ func (self *Worker) Run(sock PushWS) {
     for {
         select {
             case cmd := <-sock.Ccmd:
-                log.Printf("INFO : Client Run cmd: %s", cmd)
+                self.log.Info("worker",
+                              fmt.Sprintf("Client Run cmd: %d", cmd.Command),
+                              nil)
                 if cmd.Command == FLUSH {
                     self.log.Info("worker",
                         fmt.Sprintf("Flushing... %s", sock.Uaid), nil);

@@ -9,26 +9,28 @@ import (
     "mozilla.org/util"
 
     "fmt"
-    "log"
     "net/http"
 )
 
+var logger *util.HekaLogger
+
 // -- utils
-func makeHandler(fn func (http.ResponseWriter, *http.Request, util.JsMap)) http.HandlerFunc {
+func makeHandler(fn func (http.ResponseWriter, *http.Request, util.JsMap, *util.HekaLogger)) http.HandlerFunc {
     config := util.MzGetConfig("config.ini")
     return func(resp http.ResponseWriter, req *http.Request) {
-        fn(resp, req, config)
+        fn(resp, req, config, logger)
     }
 }
 
 // -- main
 func main(){
     config := util.MzGetConfig("config.ini")
+    logger = util.NewHekaLogger(config)
 
     simplepush.Clients = make(map[string]*simplepush.Client)
 
     // Initialize the common server.
-    simplepush.InitServer(config)
+    simplepush.InitServer(config, logger)
 
     // Register the handlers
     // each websocket gets it's own handler.
@@ -41,7 +43,8 @@ func main(){
     port := util.MzGet(config, "port", "8080")
 
     // Hoist the main sail
-    log.Printf("INFO : listening on %s:%s", host, port)
+    logger.Info("main",
+                fmt.Sprintf("listening on %s:%s", host, port), nil)
     err := http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
     if err != nil {
         panic ("ListenAndServe: " + err.Error())

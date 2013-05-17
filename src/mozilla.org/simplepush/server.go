@@ -29,15 +29,17 @@ var serverSingleton *Serv
 
 
 type Serv struct {
+    config util.JsMap
     log *util.HekaLogger
 }
 
-func NewServer(config util.JsMap) *Serv {
-    return &Serv{log: util.NewHekaLogger(config)}
+func NewServer(config util.JsMap, logger *util.HekaLogger) *Serv {
+    return &Serv{config: config,
+                 log: logger}
 }
 
-func InitServer(config util.JsMap) (err error) {
-    serverSingleton = NewServer(config)
+func InitServer(config util.JsMap, logger *util.HekaLogger) (err error) {
+    serverSingleton = NewServer(config, logger)
     return nil
 }
 
@@ -97,18 +99,18 @@ func (self *Serv) Unreg(cmd PushCommand, sock PushWS) (result int, arguments uti
     return 200, args
 }
 
-func (self *Serv) Regis(cmd PushCommand, sock PushWS, config util.JsMap) (result int, arguments util.JsMap) {
+func (self *Serv) Regis(cmd PushCommand, sock PushWS) (result int, arguments util.JsMap) {
     args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
-    if _, ok := config["pushEndpoint"]; !ok {
-        config["pushEndpoint"] = "http://localhost/update/<token>"
+    if _, ok := self.config["pushEndpoint"]; !ok {
+        self.config["pushEndpoint"] = "http://localhost/update/<token>"
     }
     // Generate the call back URL
     token := storage.GenPK(sock.Uaid, args["channelID"].(string))
     self.log.Info("server", fmt.Sprintf("UAID %s, channel %s", sock.Uaid,
                args["channelID"].(string)), nil)
     // cheezy variable replacement.
-    args["pushEndpoint"] = strings.Replace(config["pushEndpoint"].(string),
+    args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
         "<token>", token, -1)
     self.log.Info("server", fmt.Sprintf("regis generated callback %s", args["pushEndpoint"]), nil)
     return 200, args
@@ -147,7 +149,7 @@ func Flush(client *Client) (err error) {
 }
 
 
-func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS, config util.JsMap) (result int, args util.JsMap){
+func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS) (result int, args util.JsMap){
     self.log.Info("server", fmt.Sprintf("Server Handling command %s", cmd), nil)
     var ret util.JsMap
     if cmd.Arguments != nil {
@@ -165,13 +167,13 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS, config util.JsMap)
             result, ret = self.Unreg(cmd, sock)
         case REGIS:
             self.log.Info("server", "Server handling REGIS event...", nil)
-            result, ret = self.Regis(cmd, sock, config)
+            result, ret = self.Regis(cmd, sock)
     }
 
     args["uaid"] = ret["uaid"]
     return result, args
 }
 
-func HandleServerCommand(cmd PushCommand, sock PushWS, config util.JsMap) (result int, args util.JsMap){
-    return serverSingleton.HandleCommand(cmd, sock, config)
+func HandleServerCommand(cmd PushCommand, sock PushWS) (result int, args util.JsMap){
+    return serverSingleton.HandleCommand(cmd, sock)
 }

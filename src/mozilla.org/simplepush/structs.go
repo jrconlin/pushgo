@@ -3,8 +3,9 @@ package simplepush
 import (
     "code.google.com/p/go.net/websocket"
     "mozilla.org/simplepush/storage"
+    "mozilla.org/util"
 
-    "log"
+    "fmt"
 )
 
 const (
@@ -29,10 +30,11 @@ type PushWS struct {
     Scmd chan PushCommand   // server command channel
     Ccmd chan PushCommand   // client command channel
     Store *storage.Storage
+    Logger *util.HekaLogger
 }
 
 func (sock PushWS) Close() error {
-    log.Printf("INFO : Closing socket %s \n", sock.Uaid)
+    sock.Logger.Info("main",fmt.Sprintf("Closing socket %s \n", sock.Uaid), nil)
     sock.Scmd <- PushCommand{UNREG, sock.Uaid}
     sock.Done <- true
     // remove from the map registry

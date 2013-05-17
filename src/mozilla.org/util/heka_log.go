@@ -57,6 +57,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger{
                        hostname:hostname}
 }
 
+//TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
 
     var stream []byte
@@ -73,6 +74,12 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
         msg.SetPayload(payload)
     }
     for key, ival := range fields {
+        if ival == nil {
+            continue
+        }
+        if key == "" {
+            continue
+        }
         field, err := message.NewField(key, ival, message.Field_RAW)
         if err != nil {
             log.Fatal("ERROR: Could not log field %s:%s (%s)", field,
@@ -91,6 +98,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
         log.Fatal("ERROR: Could not send message (%s)", err)
         return err
     }
+    log.Printf("[%d]% 7s: %s",level, mtype, payload)
     return nil
 }
 
