@@ -18,7 +18,7 @@ type ClientProprietary struct {
 
 
 type Client struct {
-    Pushws      PushWS              `json:"-"`
+    PushWS      PushWS              `json:"-"`
     UAID        string              `json:"uaid"`
     Prop        *ClientProprietary   `json:"-"`
     }
@@ -79,7 +79,7 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
 
     // Add the ChannelIDs?
     sock.Uaid = uaid
-    client := &Client{Pushws: *sock,
+    client := &Client{PushWS: *sock,
                       UAID: uaid,
                       Prop: prop}
     Clients[uaid] = client
@@ -92,14 +92,20 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
     return result, arguments
 }
 
-func (self *Serv) Unreg(cmd PushCommand, sock PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Bye(sock *PushWS) {
+    uaid := sock.Uaid
+    self.log.Info("server", fmt.Sprintf("Cleaning up socket %s", uaid), nil)
+    delete(Clients, uaid)
+}
+
+func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
     // This is effectively a no-op, since we don't hold client session info
     args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
     return 200, args
 }
 
-func (self *Serv) Regis(cmd PushCommand, sock PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
     args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
     if _, ok := self.config["pushEndpoint"]; !ok {
@@ -137,8 +143,8 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 
     if client != nil {
 
-        self.log.Info("server", fmt.Sprintf("Requesting flush for %s", client.UAID, client.Pushws), nil)
-        client.Pushws.Ccmd <- PushCommand{Command: FLUSH,
+        self.log.Info("server", fmt.Sprintf("Requesting flush for %s", client.UAID, client.PushWS), nil)
+        client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
                               Arguments: &util.JsMap{"uaid": client.UAID}}
     }
     return nil
@@ -149,7 +155,7 @@ func Flush(client *Client) (err error) {
 }
 
 
-func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS) (result int, args util.JsMap){
+func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap){
     self.log.Info("server", fmt.Sprintf("Server Handling command %s", cmd), nil)
     var ret util.JsMap
     if cmd.Arguments != nil {
@@ -161,19 +167,23 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock PushWS) (result int, args 
     switch int(cmd.Command) {
         case HELLO:
             self.log.Info("server", "Server Handling HELLO event...", nil);
-            result, ret = self.Hello(cmd, &sock)
+            result, ret = self.Hello(cmd, sock)
         case UNREG:
             self.log.Info("server", "Server Handling UNREG event...", nil);
             result, ret = self.Unreg(cmd, sock)
         case REGIS:
             self.log.Info("server", "Server handling REGIS event...", nil)
             result, ret = self.Regis(cmd, sock)
+        case DIE:
+            self.log.Info("server", "Server cleanup...", nil)
+            self.Bye(sock)
+            return 0, nil
     }
 
     args["uaid"] = ret["uaid"]
     return result, args
 }
 
-func HandleServerCommand(cmd PushCommand, sock PushWS) (result int, args util.JsMap){
+func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap){
     return serverSingleton.HandleCommand(cmd, sock)
 }

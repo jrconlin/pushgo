@@ -66,7 +66,6 @@ func PushSocketHandler(ws *websocket.Conn) {
     store := storage.New(config, logger)
     sock := PushWS{Uaid: "",
                     Socket: ws,
-                    Done: make(chan bool),
                     Scmd: make(chan PushCommand),
                     Ccmd: make(chan PushCommand),
                     Store: store,
@@ -74,14 +73,8 @@ func PushSocketHandler(ws *websocket.Conn) {
     go NewWorker(config).Run(sock)
     for {
         select {
-            case <-sock.Done:
-                sock.Logger.Debug("main",
-                                  fmt.Sprintf("DEBUG: Killing handler for %s", sock.Uaid),
-                                  nil)
-                delete(Clients, string(sock.Uaid))
-                return
             case serv_cmd:= <-sock.Scmd:
-                result, args := HandleServerCommand(serv_cmd, sock)
+                result, args := HandleServerCommand(serv_cmd, &sock)
                 sock.Logger.Debug("main",
                                  fmt.Sprintf("Returning Result %s", result),
                                  nil)

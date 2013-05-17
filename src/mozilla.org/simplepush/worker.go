@@ -23,14 +23,29 @@ func NewWorker(config util.JsMap) *Worker {
     return &Worker{log: util.NewHekaLogger(config)}
 }
 
-func (self *Worker) sniffer(socket *websocket.Conn, in chan util.JsMap) {
+
+func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
     // Sniff the websocket for incoming data.
     var raw []byte
     var buffer util.JsMap
+    var loop int
+    var socket = sock.Socket
+    loop = 1
     for {
-        websocket.Message.Receive(socket, &raw)
+        if loop > 5 {
+            socket.Close()
+            break
+        }
+        loop = loop + 1
+        err := websocket.Message.Receive(socket, &raw)
+        if err != nil {
+            self.log.Error("worker", fmt.Sprintf("Websocket Error %s", err),nil)
+            sock.Scmd <- PushCommand{Command: DIE, Arguments: nil }
+            socket.Close()
+            break
+        }
         if len(raw) > 0 {
-            self.log.Info("Socket received %s", string(raw), nil)
+            self.log.Info("worker", fmt.Sprintf("Socket received %s", string(raw)), nil)
             err := json.Unmarshal(raw, &buffer)
             if err != nil {
                 panic(err)
@@ -61,7 +76,7 @@ func (self *Worker) Run(sock PushWS) {
     var err error
 
     in := make(chan util.JsMap)
-    go self.sniffer(sock.Socket, in)
+    go self.sniffer(sock, in)
     for {
         select {
             case cmd := <-sock.Ccmd:
@@ -112,9 +127,10 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
     // register the sockets
     // register any proprietary connection requirements
     // alert the master of the new UAID.
-    cmd := PushCommand{HELLO, util.JsMap{
-         "uaid": data["uaid"],
-         "chids": data["channelIDs"]}}
+    cmd := PushCommand{Command: HELLO,
+                       Arguments: util.JsMap{
+                                     "uaid": data["uaid"],
+                                     "chids": data["channelIDs"]}}
     // blocking call back to the boss.
     sock.Scmd<- cmd
     result := <-sock.Scmd
@@ -195,7 +211,8 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     outBuffer["messageType"] = "notification"
     if sock.Uaid == "" {
         self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
-        sock.Done <- true
+        sock.Scmd <- PushCommand{Command: DIE, Arguments: nil }
+        sock.Socket.Close()
     }
     // Fetch the pending updates from #storage
     updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
