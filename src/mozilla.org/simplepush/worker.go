@@ -207,8 +207,6 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 
 func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
-    outBuffer := make(util.JsMap)
-    outBuffer["messageType"] = "notification"
     if sock.Uaid == "" {
         self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
         sock.Scmd <- PushCommand{Command: DIE, Arguments: nil }
@@ -223,6 +221,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     if updates == nil {
         return
     }
+    updates["messageType"] = "notification"
     self.log.Info("worker", "Flushing data back to socket", updates)
     websocket.JSON.Send(sock.Socket, updates)
 }

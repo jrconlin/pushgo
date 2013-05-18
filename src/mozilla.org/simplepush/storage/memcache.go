@@ -363,18 +363,21 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Re
     var err error
 
     if _, ok := ackPacket["expired"]; ok {
-        expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
-        json.Unmarshal(ackPacket["expired"].([]byte), &expired)
-        for _, appid := range expired {
-            err = self.mc.Delete(GenPK(uaid, appid))
+        if ackPacket["expired"] != nil {
+            expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
+            json.Unmarshal(ackPacket["expired"].([]byte), &expired)
+            for _, appid := range expired {
+                err = self.mc.Delete(GenPK(uaid, appid))
+            }
         }
     }
     if _, ok := ackPacket["updates"]; ok {
-        type update map[string]interface{}
-        rcnt := strings.Count(ackPacket["updates"].(string), "}") + 1
-        updates := make([]update,rcnt)
-        for _, rec := range updates {
-            err = self.mc.Delete(GenPK(uaid, rec["channelID"].(string)))
+        if ackPacket["updates"] != nil {
+            // unspool the loaded records.
+            for _, rec := range ackPacket["updates"].([]interface{}) {
+                recmap := rec.(map[string]interface{})
+                err = self.mc.Delete(GenPK(uaid, recmap["channelID"].(string)))
+            }
         }
     }
 
