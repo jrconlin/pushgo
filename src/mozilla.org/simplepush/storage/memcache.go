@@ -24,6 +24,11 @@ const (
 
 var config util.JsMap
 
+var InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
+var NoDataToStoreError = errors.New("No Data to Store")
+var NoChannelError = errors.New("No Channel ID Specified")
+var ChannelExistsError = errors.New("Channel Already Exists")
+
 
 type Result struct {
     Success bool
@@ -60,10 +65,9 @@ func GenPK(uaid, appid string) (pk string){
 }
 
 func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
-    result = nil
     if pk == "" {
-        err = errors.New("Invalid Primary Key Value")
-        return result, err
+        err = InvalidPrimaryKeyError
+        return nil, err
     }
 
     defer func () {
@@ -75,6 +79,12 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
     }()
 
     item, err := self.mc.Get(pk)
+    if err != nil {
+        self.log.Error("storage",
+                        fmt.Sprintf("Fetch item:: %s Error: %s", pk, err),
+                        nil)
+        return nil, err
+    }
 
     self.log.Debug("storage",
                    fmt.Sprintf("Fetch item:: %s, item.Value: %s", item, item.Value),
@@ -108,12 +118,11 @@ func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err err
 
 func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
     if pk == "" {
-        err = errors.New("Invalid Primary Key Value")
-        return err
+        return InvalidPrimaryKeyError
     }
 
     if rec == nil {
-        err = errors.New("No data to store")
+        err = NoDataToStoreError
         return err
     }
 
@@ -182,10 +191,12 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
     var rec util.JsMap
 
+    res = &Result{Success: true, Err: nil, Status: 200}
+
     if len(pk) == 0 {
         return &Result{
             Success: false,
-            Err: errors.New("Invalid Primary Key Value"),
+            Err: InvalidPrimaryKeyError,
             Status: http.StatusServiceUnavailable}
     }
 
@@ -213,12 +224,17 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
                     Err: err,
                     Status: http.StatusServiceUnavailable }
             }
-            return &Result{Success: true, Err: nil, Status: 200}
+            return res
         }
     }
     // No record found or the record setting was DELETED
     uaid, appid := ResolvePK(pk)
-    return self.RegisterAppID(uaid, appid, vers)
+    fmt.Printf("Registering %s %s %s\n", uaid, appid, vers)
+    regres := self.RegisterAppID(uaid, appid, vers)
+    if regres.Success == false && regres.Err == ChannelExistsError {
+        return self.UpdateChannel(GenPK(uaid, appid), vers)
+    }
+    return regres
 }
 
 
@@ -229,21 +245,15 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
     if len(appid) == 0 {
         return &Result {
             Success: false,
-            Err: errors.New("No Channel Specified"),
+            Err: NoChannelError,
             Status: http.StatusServiceUnavailable }
     }
 
     appIDArray, err := self.fetchAppIDArray(uaid)
     // Yep, this should eventually be optimized to a faster scan.
     if appIDArray != nil {
-        if indexOf(appIDArray, appid) >= 0 {
-                return &Result {
-                    Success: false,
-                    Err: errors.New("Already registered"),
-                    Status: http.StatusServiceUnavailable }
-        }
+       appIDArray = remove(appIDArray, indexOf(appIDArray, appid))
     }
-
     err = self.storeAppIDArray(uaid, append(appIDArray, appid))
     if err != nil {
         return &Result{
@@ -260,6 +270,7 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
         rec["s"] = LIVE
     }
 
+    fmt.Printf("attempting to store %s to %s", rec, GenPK(uaid, appid))
     err = self.storeRec(GenPK(uaid, appid), rec)
     if (err != nil) {
         return &Result {
@@ -273,21 +284,29 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
         Status: http.StatusOK}
 }
 
+func remove(list []string, pos int) (res []string) {
+    if(pos < 0) {
+        return list
+    }
+    if pos == len(list) {
+        return list[:pos]
+    }
+    return append(list[:pos], list[pos+1:]...)
+}
+
 func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
     appIDArray, err := self.fetchAppIDArray(uaid)
     pos := sort.SearchStrings(appIDArray, appid)
     if pos > -1 {
-        if pos == len(appIDArray) {
-            self.storeAppIDArray(uaid, appIDArray[:pos])
-        } else {
-            self.storeAppIDArray(uaid, append(appIDArray[:pos], appIDArray[pos+1:]...))
-        }
+        self.storeAppIDArray(uaid, remove(appIDArray, pos))
         pk := GenPK(uaid, appid)
         rec, err := self.fetchRec(pk)
-        if err != nil {
+        if err == nil {
             rec["s"] = DELETED
             err = self.storeRec(pk, rec)
+        } else {
+            self.log.Error("storage", fmt.Sprintf("Could not delete %s, %s", pk, err), nil)
         }
     }
     return err

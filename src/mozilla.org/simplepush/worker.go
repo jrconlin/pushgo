@@ -28,15 +28,8 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
     // Sniff the websocket for incoming data.
     var raw []byte
     var buffer util.JsMap
-    var loop int
     var socket = sock.Socket
-    loop = 1
     for {
-        if loop > 5 {
-            socket.Close()
-            break
-        }
-        loop = loop + 1
         err := websocket.Message.Receive(socket, &raw)
         if err != nil {
             self.log.Error("worker", fmt.Sprintf("Websocket Error %s", err),nil)
@@ -153,6 +146,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
     if res.Success {
         self.Flush(sock, 0)
     }
+    self.log.Info("worker",fmt.Sprintf("Flushed ACK returning %s", res.Err), nil)
     return res.Err
 }
 
