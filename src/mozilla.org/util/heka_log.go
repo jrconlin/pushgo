@@ -30,7 +30,16 @@ const (
 func NewHekaLogger(conf JsMap) *HekaLogger{
     //Preflight
     var ok bool
+    var encoder client.Encoder
+    var sender client.Sender
+    var logname string
     var err error
+    pid := int32(os.Getpid())
+    hostname, _:= os.Hostname()
+    encoder = nil
+    sender = nil
+    logname = ""
+
     if _,ok = conf["heka_sender"]; !ok {
         conf["heka_sender"] = "tcp"
     }
@@ -40,25 +49,31 @@ func NewHekaLogger(conf JsMap) *HekaLogger{
     if _,ok = conf["heka_logger_name"]; !ok {
         conf["heka_logger_name"] = "simplepush"
     }
-
-    encoder := client.NewJsonEncoder(nil)
-    sender, err := client.NewNetworkSender(conf["heka_sender"].(string),
+    if _,ok = conf["heka_no"]; !ok {
+        encoder = client.NewJsonEncoder(nil)
+        sender, err = client.NewNetworkSender(conf["heka_sender"].(string),
                                           conf["heka_server_addr"].(string))
-    if err != nil {
-        log.Panic("Could not create sender ", err)
+        if err != nil {
+            log.Panic("Could not create sender ", err)
+        }
+        logname = conf["heka_logger_name"].(string)
     }
-    logname := conf["heka_logger_name"].(string)
-    pid := int32(os.Getpid())
-    hostname, err := os.Hostname()
     return &HekaLogger{encoder: encoder,
                        sender: sender,
                        logname: logname,
                        pid: pid,
-                       hostname:hostname}
+                       hostname: hostname}
 }
 
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+
+    log.Printf("[%d]% 7s: %s",level, mtype, payload)
+
+    // Don't send an error if there's nothing to do
+    if self.sender == nil {
+        return nil
+    }
 
     var stream []byte
 
@@ -98,7 +113,6 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
         log.Fatal("ERROR: Could not send message (%s)", err)
         return err
     }
-    log.Printf("[%d]% 7s: %s",level, mtype, payload)
     return nil
 }
 
