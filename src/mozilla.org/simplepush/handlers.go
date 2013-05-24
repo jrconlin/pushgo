@@ -5,6 +5,7 @@ import (
     "mozilla.org/util"
     "code.google.com/p/go.net/websocket"
 
+    "encoding/base64"
     "net/http"
     "log"
     "fmt"
@@ -34,14 +35,32 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
     elements := strings.Split(req.URL.Path, "/")
     pk := elements[len(elements)-1]
     if len(pk) == 0 {
+        logger.Error("main", "No token, rejecting request", nil)
         http.Error(resp, "Token not found", http.StatusNotFound)
         return
     }
 
-    logger.Info("main", fmt.Sprintf("setting version for %s to %s", pk, vers), nil)
     store := storage.New(config, logger)
+    if token, ok := config["token_key"]; ok {
+        var err error
+        bpk, err := Decode(token.([]byte),
+                         pk)
+        if err != nil {
+            logger.Error("main",
+                         fmt.Sprintf("Could not decode token %s, %s", pk, err),
+                         nil)
+            http.Error(resp, "", http.StatusNotFound)
+            return
+        }
+
+        pk = strings.TrimSpace(string(bpk))
+    }
+
+    logger.Info("main",
+                fmt.Sprintf("setting version for %s to %s", pk, vers),
+                nil)
     res := store.UpdateChannel(pk, vers)
-    uaid, _ := storage.ResolvePK(pk)
+    uaid, _, _ := storage.ResolvePK(pk)
 
     if !res.Success {
         log.Printf("%s", res.Err)
@@ -62,6 +81,11 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 func PushSocketHandler(ws *websocket.Conn) {
     // can we pass this in somehow?
     config := util.MzGetConfig("config.ini")
+    // Convert the token_key from base64 (if present)
+    if k, ok := config["token_key"]; ok {
+        key, _ := base64.URLEncoding.DecodeString(k.(string))
+        config["token_key"] = key
+    }
     logger:= util.NewHekaLogger(config)
     store := storage.New(config, logger)
     sock := PushWS{Uaid: "",

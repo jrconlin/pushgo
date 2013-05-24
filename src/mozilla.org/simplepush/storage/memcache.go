@@ -51,17 +51,17 @@ func indexOf(list []string, val string) (index int) {
     return -1
 }
 
-func ResolvePK(pk string) (uaid, appid string) {
+func ResolvePK(pk string) (uaid, appid string, err error) {
     items := strings.SplitN(pk, ".", 2)
     if len(items) < 2 {
-        return pk, ""
+        return pk, "", nil
     }
-    return items[0], items[1]
+    return items[0], items[1], nil
 }
 
-func GenPK(uaid, appid string) (pk string){
+func GenPK(uaid, appid string) (pk string, err error){
     pk = fmt.Sprintf("%s.%s", uaid, appid)
-    return pk
+    return pk, nil
 }
 
 func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
@@ -78,10 +78,10 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
         }
     }()
 
-    item, err := self.mc.Get(pk)
+    item, err := self.mc.Get(string(pk))
     if err != nil {
         self.log.Error("storage",
-                        fmt.Sprintf("Fetch item:: %s Error: %s", pk, err),
+                        fmt.Sprintf("Fetch item:: [%s][%s] Error: %s", pk, item, err),
                         nil)
         return nil, err
     }
@@ -188,6 +188,8 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
                     log: log}
 }
 
+
+//TODO: Optimize this to decode the PK for updates
 func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
     var rec util.JsMap
 
@@ -228,11 +230,18 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
         }
     }
     // No record found or the record setting was DELETED
-    uaid, appid := ResolvePK(pk)
+    uaid, appid, err := ResolvePK(pk)
     fmt.Printf("Registering %s %s %s\n", uaid, appid, vers)
     regres := self.RegisterAppID(uaid, appid, vers)
     if regres.Success == false && regres.Err == ChannelExistsError {
-        return self.UpdateChannel(GenPK(uaid, appid), vers)
+        pk, err = GenPK(uaid, appid)
+        if err != nil {
+                return &Result {
+                    Success: false,
+                    Err: err,
+                    Status: http.StatusServiceUnavailable }
+        }
+        return self.UpdateChannel(pk, vers)
     }
     return regres
 }
@@ -270,8 +279,12 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
         rec["s"] = LIVE
     }
 
-    fmt.Printf("attempting to store %s to %s", rec, GenPK(uaid, appid))
-    err = self.storeRec(GenPK(uaid, appid), rec)
+    pk, err := GenPK(uaid, appid)
+    if err != nil {
+        // TODO: puke
+    }
+
+    err = self.storeRec(pk, rec)
     if (err != nil) {
         return &Result {
             Success: false,
@@ -300,7 +313,10 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
     pos := sort.SearchStrings(appIDArray, appid)
     if pos > -1 {
         self.storeAppIDArray(uaid, remove(appIDArray, pos))
-        pk := GenPK(uaid, appid)
+        pk, err := GenPK(uaid, appid)
+        if err != nil {
+            return err
+        }
         rec, err := self.fetchRec(pk)
         if err == nil {
             rec["s"] = DELETED
@@ -320,7 +336,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
     var items []string
 
     for _, appid := range appIDArray {
-        items = append(items, GenPK(uaid, appid))
+        pk,_ := GenPK(uaid, appid)
+        // TODO: Puke on error
+        items = append(items, pk)
     }
     self.log.Info("storage", fmt.Sprintf("Fetching items %s", items), nil)
 
@@ -338,7 +356,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
         return nil, err
     }
     for _, rec := range recs {
-        uaid, appid := ResolvePK(rec.Key)
+        uaid, appid, err := ResolvePK(rec.Key)
         self.log.Info("storage",
                       fmt.Sprintf("Fetched %s record %s", uaid, rec.Value),
                       nil)
@@ -386,7 +404,8 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Re
             expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
             json.Unmarshal(ackPacket["expired"].([]byte), &expired)
             for _, appid := range expired {
-                err = self.mc.Delete(GenPK(uaid, appid))
+                pk, _ := GenPK(uaid, appid)
+                err = self.mc.Delete(pk)
             }
         }
     }
@@ -395,7 +414,8 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Re
             // unspool the loaded records.
             for _, rec := range ackPacket["updates"].([]interface{}) {
                 recmap := rec.(map[string]interface{})
-                err = self.mc.Delete(GenPK(uaid, recmap["channelID"].(string)))
+                pk, _ := GenPK(uaid, recmap["channelID"].(string))
+                err = self.mc.Delete(pk)
             }
         }
     }

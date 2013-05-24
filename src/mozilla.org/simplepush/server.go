@@ -31,10 +31,16 @@ var serverSingleton *Serv
 type Serv struct {
     config util.JsMap
     log *util.HekaLogger
+    key []byte
 }
 
 func NewServer(config util.JsMap, logger *util.HekaLogger) *Serv {
+    var key []byte;
+    if k, ok := config["token_key"]; ok {
+        key = k.([]byte)
+    }
     return &Serv{config: config,
+                 key: key,
                  log: logger}
 }
 
@@ -106,15 +112,30 @@ func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments ut
 }
 
 func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+    var err error
     args := cmd.Arguments.(util.JsMap)
     args["status"] = 200
     if _, ok := self.config["pushEndpoint"]; !ok {
         self.config["pushEndpoint"] = "http://localhost/update/<token>"
     }
     // Generate the call back URL
-    token := storage.GenPK(sock.Uaid, args["channelID"].(string))
-    self.log.Info("server", fmt.Sprintf("UAID %s, channel %s", sock.Uaid,
-               args["channelID"].(string)), nil)
+    // TODO: Optimize this to encode the endpoint
+    token, _ := storage.GenPK(sock.Uaid,
+            args["channelID"].(string))
+    if self.key != nil {
+        btoken := []byte(token)
+        token, err = Encode(self.key, btoken)
+        if err != nil {
+            self.log.Error("server",
+                           fmt.Sprintf("Token Encoding error: %s", err),
+                           nil)
+            return 500, nil
+        }
+
+    }
+    self.log.Info("server", fmt.Sprintf("UAID %s, channel %s, Token %s", sock.Uaid,
+               args["channelID"].(string),
+           token), nil)
     // cheezy variable replacement.
     args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
         "<token>", token, -1)

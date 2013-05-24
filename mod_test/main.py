@@ -6,6 +6,7 @@ import httplib
 import urlparse
 import pprint
 
+appid = "test1"
 
 def on_close(ws):
     print "## Closed"
@@ -17,6 +18,8 @@ def on_error(ws, error):
 
 
 def on_message(ws, message):
+
+
     print "<<< Recv'd:: " + ws.state + ">> " + message
     msg = json.loads(message)
     print "<<< " + pprint.pformat(msg)
@@ -47,14 +50,14 @@ def on_message(ws, message):
     if ws.state == "helloagain":
         # retry the registration
         ws.state = "register"
-        ws.send(json.dumps({"messageType": ws.state, "channelID": "test1"}))
+        ws.send(json.dumps({"messageType": ws.state, "channelID": appid}))
         return
     if ws.state == "hello":
-        ## We're recognized, try to register the "test1" channel.
+        ## We're recognized, try to register the appid channel.
         ## NOTE: Normally, channelIDs are UUID4 type values.
         check_hello(msg)
         ws.state = "register"
-        ws.send(json.dumps({"messageType": ws.state, "channelID": "test1"}))
+        ws.send(json.dumps({"messageType": ws.state, "channelID": appid}))
         return
     if ws.state == "register":
         ## Endpoint is registered. Send an update via the REST interface.
@@ -86,7 +89,7 @@ def check_hello(msg):
 
 def check_update(msg):
     try:
-        assert(msg.get("updates")[0].get("channelID") == "test1",
+        assert(msg.get("updates")[0].get("channelID") == appid,
                "does not contain channelID")
     except AssertionError, e:
         print e
@@ -117,7 +120,7 @@ def send_rest_alert(ws):
 
 def send_unreg(ws):
     print ">>> Sending Unreg"
-    ws.send(json.dumps({"messageType": "unregister", "channelID": "test1"}))
+    ws.send(json.dumps({"messageType": "unregister", "channelID": appid}))
 
 
 def send_ack(ws, msg):
