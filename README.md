@@ -13,6 +13,7 @@ To install this server:
 3. You'll need the following servers running:
     * memcached
     * Hekad (optional)
+4. Modify the config.ini
 
 If you're not planning on doing development work (see previous notes about how this is pre-beta), you may want to build the executable with
 ''' go build main.go '''
