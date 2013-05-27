@@ -2,7 +2,7 @@
 set -e
 if [ '$GOROOT' == '' ]; then
     echo "GOROOT not defined. Is go installed?"
-
+    return
 fi
 if [ '$GOBIN' == '' ]; then
     echo "GOBIN not defined. Is go installed?"
