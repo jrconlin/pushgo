@@ -12,14 +12,13 @@ build:
 	$(VE) --no-site-packages .
 	bin/easy_install -U distribute
 	$(PI) install -r prod-reqs.txt
-	cp -n pushsrv-dist.ini pushsrv.ini
 	$(PY) setup.py develop
 
 test:
 	$(NO) $(APPNAME)
 
 run:
-	$(PY) pushsrv_ws/
+	$(PY) main.py
 
 #fl:
 #   	FL_CONF_DIR=./fl $(PY) fl/test_simple.py

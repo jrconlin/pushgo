@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package util
 
 import (
@@ -10,7 +14,7 @@ import (
 
 
 /* Craptastic typeless parser to read config values (use until things
-    settle and you can use something more efficent like TOML
+    settle and you can use something more efficent like TOML)
 */
 
 

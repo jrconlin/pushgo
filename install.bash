@@ -2,16 +2,18 @@
 set -e
 if [ '$GOROOT' == '' ]; then
     echo "GOROOT not defined. Is go installed?"
-    return
+    exit 1
 fi
 if [ '$GOBIN' == '' ]; then
     echo "GOBIN not defined. Is go installed?"
-    return
+    exit 1
 fi
 export GOPATH=`pwd`
 echo "Installing required go libraries..."
 for req in `cat go_deps.lst`; do
-    go get $req
+    echo -n "   $req..."
+    go get -v $req
+    echo " done"
 done
 echo "Libraries installed"
 echo "Please edit config.ini for local settings."
