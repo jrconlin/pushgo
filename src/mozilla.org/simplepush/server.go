@@ -154,8 +154,11 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 		self.config["pushEndpoint"] = "http://localhost/update/<token>"
 	}
 	// Generate the call back URL
-	token, _ := storage.GenPK(sock.Uaid,
+	token, err := storage.GenPK(sock.Uaid,
 		args["channelID"].(string))
+    if err != nil {
+        return 500, nil
+    }
 	if self.key != nil {
 		btoken := []byte(token)
 		token, err = Encode(self.key, btoken)

@@ -6,12 +6,12 @@ package simplepush
 
 import (
 	"code.google.com/p/go.net/websocket"
+	"mozilla.org/simplepush/sperrors"
 	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +27,7 @@ func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 // -- REST
 func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
 	// Handle the version updates.
+    var err error
 	logger.Debug("main", fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
@@ -67,11 +68,13 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	logger.Info("main",
 		fmt.Sprintf("setting version for %s.%s to %s", uaid, appid, vers),
 		nil)
-	res := store.UpdateChannel(pk, vers)
+	err = store.UpdateChannel(pk, vers)
 
-	if !res.Success {
-        log.Printf("Could not update channel %s.%s :: %s", uaid, appid, res.Err)
-		http.Error(resp, res.Err.Error(), res.Status)
+	if err != nil {
+        errstr := fmt.Sprintf("Could not update channel %s.%s :: %s", uaid, appid, err)
+        logger.Warn("main", errstr, nil)
+        status := sperrors.ErrToStatus(err)
+		http.Error(resp, errstr, status)
 		return
 	}
 	resp.Header().Set("Content-Type", "application/json")

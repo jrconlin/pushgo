@@ -8,16 +8,15 @@ package storage
 
 import (
     "mozilla.org/util"
+    "mozilla.org/simplepush/sperrors"
     "github.com/bradfitz/gomemcache/memcache"
 
-    "errors"
     "fmt"
     "encoding/json"
     "sort"
     "strings"
     "strconv"
     "time"
-    "net/http"
 )
 
 const (
@@ -27,18 +26,6 @@ const (
 )
 
 var config util.JsMap
-
-var InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
-var NoDataToStoreError = errors.New("No Data to Store")
-var NoChannelError = errors.New("No Channel ID Specified")
-var ChannelExistsError = errors.New("Channel Already Exists")
-
-
-type Result struct {
-    Success bool
-    Err error
-    Status int
-}
 
 type Storage struct {
     config util.JsMap
@@ -70,7 +57,7 @@ func GenPK(uaid, appid string) (pk string, err error){
 
 func (self *Storage) fetchRec(pk string) (result util.JsMap, err error){
     if pk == "" {
-        err = InvalidPrimaryKeyError
+        err = sperrors.InvalidPrimaryKeyError
         return nil, err
     }
 
@@ -122,11 +109,11 @@ func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err err
 
 func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
     if pk == "" {
-        return InvalidPrimaryKeyError
+        return sperrors.InvalidPrimaryKeyError
     }
 
     if rec == nil {
-        err = NoDataToStoreError
+        err = sperrors.NoDataToStoreError
         return err
     }
 
@@ -194,27 +181,18 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 
 
 //TODO: Optimize this to decode the PK for updates
-func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
+func (self *Storage) UpdateChannel(pk, vers string) (err error) {
     var rec util.JsMap
 
-    res = &Result{Success: true, Err: nil, Status: 200}
-
     if len(pk) == 0 {
-        return &Result{
-            Success: false,
-            Err: InvalidPrimaryKeyError,
-            Status: http.StatusServiceUnavailable}
+        return sperrors.InvalidPrimaryKeyError
     }
 
-    rec, err := self.fetchRec(pk)
+    rec, err = self.fetchRec(pk)
 
     if err != nil && err != memcache.ErrCacheMiss {
-        return &Result {
-            Success: false,
-            Err: errors.New(fmt.Sprintf("Cannot fetch record %s", err.Error())),
-            Status: http.StatusServiceUnavailable }
+        return err
     }
-
 
     if rec != nil {
         self.log.Debug("storage", fmt.Sprintf("Found record for %s", pk), nil)
@@ -223,43 +201,34 @@ func (self *Storage) UpdateChannel(pk, vers string) (res *Result) {
             newRecord["v"] = vers
             newRecord["s"] = LIVE
             newRecord["l"] = time.Now().UTC().Unix()
-            err := self.storeRec(pk, newRecord)
+            err = self.storeRec(pk, newRecord)
             if err != nil {
-                return &Result {
-                    Success: false,
-                    Err: err,
-                    Status: http.StatusServiceUnavailable }
+                return err
             }
-            return res
+            return nil
         }
     }
     // No record found or the record setting was DELETED
     uaid, appid, err := ResolvePK(pk)
     fmt.Printf("Registering %s %s %s\n", uaid, appid, vers)
-    regres := self.RegisterAppID(uaid, appid, vers)
-    if regres.Success == false && regres.Err == ChannelExistsError {
+    err = self.RegisterAppID(uaid, appid, vers)
+    if err == sperrors.ChannelExistsError {
         pk, err = GenPK(uaid, appid)
         if err != nil {
-                return &Result {
-                    Success: false,
-                    Err: err,
-                    Status: http.StatusServiceUnavailable }
+            return err
         }
         return self.UpdateChannel(pk, vers)
     }
-    return regres
+    return err
 }
 
 
-func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
+func (self *Storage) RegisterAppID(uaid, appid, vers string) (err error) {
 
     var rec util.JsMap
 
     if len(appid) == 0 {
-        return &Result {
-            Success: false,
-            Err: NoChannelError,
-            Status: http.StatusServiceUnavailable }
+        return sperrors.NoChannelError
     }
 
     appIDArray, err := self.fetchAppIDArray(uaid)
@@ -269,10 +238,7 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
     }
     err = self.storeAppIDArray(uaid, append(appIDArray, appid))
     if err != nil {
-        return &Result{
-            Success: false,
-            Err: err,
-            Status: http.StatusServiceUnavailable }
+        return err
     }
 
     rec = make(util.JsMap)
@@ -285,20 +251,14 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (res *Result) {
 
     pk, err := GenPK(uaid, appid)
     if err != nil {
-        // TODO: puke
+        return err
     }
 
     err = self.storeRec(pk, rec)
-    if (err != nil) {
-        return &Result {
-            Success: false,
-            Err: err,
-            Status: http.StatusServiceUnavailable}
+    if err != nil {
+        return err
     }
-    return &Result {
-        Success: true,
-        Err: err,
-        Status: http.StatusOK}
+    return nil
 }
 
 func remove(list []string, pos int) (res []string) {
@@ -398,10 +358,8 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
     return results, err
 }
 
-func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Result) {
+func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
     //TODO, go through the results and nuke what's there, then call flush
-
-    var err error
 
     if _, ok := ackPacket["expired"]; ok {
         if ackPacket["expired"] != nil {
@@ -425,15 +383,9 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (res *Re
     }
 
     if err != nil {
-        return &Result {
-            Success: false,
-            Err: err,
-            Status: http.StatusServiceUnavailable }
+        return err
     }
-    return &Result {
-        Success: true,
-        Err: nil,
-        Status: http.StatusOK }
+    return nil
 }
 
 func (self *Storage) ReloadData(uaid string, updates []string) (err error){
