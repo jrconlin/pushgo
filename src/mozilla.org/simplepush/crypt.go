@@ -2,6 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/*
+ * The default behavior is for the push endpoint to contain the UserID and
+ * ChannelID for a given device. This makes things delightfully stateless for
+ * any number of scaling reasons, but does raise the possiblity that user
+ * info could be easily correlated by endpoints.
+ *
+ * While this is by no means perfect, a simple bi-directional hash will allow
+ * endpoint processors to determine the right values, but will prevent casual
+ * correlation of user data.
+ *
+ * So, yeah, don't use this for anything else, since it will bite you.
+ */
+
 package simplepush
 
 import (
@@ -20,6 +33,8 @@ func genKey(strength int) ([]byte, error) {
 }
 
 func Encode(key, value []byte) (string, error) {
+    // Keys can be 16, 24 or 32 []byte strings of cryptographically random
+    // crap.
 	if key == nil {
 		return string(value), nil
 	}
@@ -27,7 +42,6 @@ func Encode(key, value []byte) (string, error) {
 	if len(value) == 0 {
 		return "", nil
 	}
-	// pad value to 4 byte bounds
 
 	iv, err := genKey(len(key))
 	if err != nil {

@@ -35,6 +35,8 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			self.log.Error("worker", fmt.Sprintf("Websocket Error %s", err), nil)
+            // Clean up the server side (This will delete records associated
+            // with the UAID.
 			sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
 			socket.Close()
 			break
@@ -199,6 +201,8 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	// flush pending data back to Client
 	if sock.Uaid == "" {
 		self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
+        // Have the server clean up records associated with this UAID.
+        // (Probably "none", but still good for housekeeping)
 		sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
 		sock.Socket.Close()
 	}

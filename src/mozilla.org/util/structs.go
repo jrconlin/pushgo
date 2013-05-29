@@ -4,4 +4,6 @@
 
 package util
 
+// JsMap is a generic key/value storage originally used to read in JSON.
+// It needs to be optimized away.
 type JsMap map[string]interface{}

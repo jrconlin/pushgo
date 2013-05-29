@@ -19,18 +19,18 @@ import (
 
 // VIP response
 func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
+    // return "OK" only if all is well.
+    // TODO: make sure all is well.
 	resp.Write([]byte("OK"))
 }
 
 // -- REST
 func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
 	// Handle the version updates.
-	logger.Debug("main", "A wild update appears", nil)
-	if false {
-		if req.Method != "PUT" {
-			http.Error(resp, "", http.StatusMethodNotAllowed)
-			return
-		}
+	logger.Debug("main", fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
+	if req.Method != "PUT" {
+		http.Error(resp, "", http.StatusMethodNotAllowed)
+		return
 	}
 	vers := fmt.Sprintf("%d", time.Now().UTC().Unix())
 
@@ -58,14 +58,19 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		pk = strings.TrimSpace(string(bpk))
 	}
 
+	uaid, appid, err := storage.ResolvePK(pk)
+    if err != nil {
+        logger.Error("main",
+            fmt.Sprintf("Could not resolve PK %s, %s", pk, err), nil)
+        return
+    }
 	logger.Info("main",
-		fmt.Sprintf("setting version for %s to %s", pk, vers),
+		fmt.Sprintf("setting version for %s.%s to %s", uaid, appid, vers),
 		nil)
 	res := store.UpdateChannel(pk, vers)
-	uaid, _, _ := storage.ResolvePK(pk)
 
 	if !res.Success {
-		log.Printf("%s", res.Err)
+        log.Printf("Could not update channel %s.%s :: %s", uaid, appid, res.Err)
 		http.Error(resp, res.Err.Error(), res.Status)
 		return
 	}
