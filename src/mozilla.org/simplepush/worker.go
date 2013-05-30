@@ -59,7 +59,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
     }
 }
 
-
+// standardize the error reporting back to the client.
 func (self *Worker) handleError(sock PushWS, messageType string, err error) (ret error) {
     self.log.Info("worker", fmt.Sprintf("Sending error %s", err), nil)
     status := sperrors.ErrToStatus(err)
@@ -67,12 +67,13 @@ func (self *Worker) handleError(sock PushWS, messageType string, err error) (ret
         util.JsMap{
             "messageType": messageType,
             "status":      status,
+            "error":       string(err)
             })
 }
 
+
+// General workhorse loop for the websocket handler.
 func (self *Worker) Run(sock PushWS) {
-    // This is the socket
-    // read the incoming json
     var err error
 
     // Instantiate a websocket reader, a blocking operation
@@ -93,10 +94,11 @@ func (self *Worker) Run(sock PushWS) {
                 self.log.Info("worker",
                     fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
                 self.Flush(sock, time.Now().UTC().Unix())
+            // additional non-client commands are TBD.
             }
         case buffer := <-in:
             self.log.Info("worker", fmt.Sprintf("INFO : Client Read buffer, %s \n", buffer), nil)
-            // process the commands
+            // process the client commands
             switch strings.ToLower(buffer["messageType"].(string)) {
             case "hello":
                 err = self.Hello(&sock, buffer)
@@ -110,10 +112,9 @@ func (self *Worker) Run(sock PushWS) {
                 self.log.Warn("worker",
                     fmt.Sprintf("I have no idea what [%s] is.", buffer),
                     nil)
-                websocket.JSON.Send(sock.Socket,
-                    util.JsMap{
-                        "messageType": buffer["messageType"],
-                        "status":      401})
+                self.handleError(sock,
+                                 buffer["messageType"],
+                                 sperrors.UnknownCommandError)
             }
             if err != nil {
                 self.handleError(sock, buffer["messageType"].(string), err)
@@ -123,6 +124,8 @@ func (self *Worker) Run(sock PushWS) {
     }
 }
 
+// Associate the UAID for this socket connection (and flush any data that
+// may be pending for the connection)
 func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
     // register the UAID
     data := buffer.(util.JsMap)
@@ -152,6 +155,8 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
     return err
 }
 
+// Clear the data that the client stated it received, then re-flush any
+// records (including new data)
 func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
     err = sock.Store.Ack(sock.Uaid, buffer.(util.JsMap))
     // Get the lastAccessed time from wherever.
@@ -163,6 +168,8 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
     return err
 }
 
+
+// Register a new ChannelID. Optionally, encrypt the endpoint.
 func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
     data := buffer.(util.JsMap)
     appid := data["channelID"].(string)
@@ -190,6 +197,8 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
     return err
 }
 
+
+// Unregister a ChannelID.
 func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
     data := buffer.(util.JsMap)
     if _, ok := data["channelID"]; !ok {
@@ -209,6 +218,8 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
     return err
 }
 
+
+// Dump any records associated with the UAID.
 func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
     messageType := "notification"
