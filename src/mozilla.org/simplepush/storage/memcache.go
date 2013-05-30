@@ -7,15 +7,15 @@ package storage
 // thin memcache wrapper
 
 import (
-    "mozilla.org/util"
-    "mozilla.org/simplepush/sperrors"
     "github.com/bradfitz/gomemcache/memcache"
+    "mozilla.org/simplepush/sperrors"
+    "mozilla.org/util"
 
-    "fmt"
     "encoding/json"
+    "fmt"
     "sort"
-    "strings"
     "strconv"
+    "strings"
     "time"
 )
 

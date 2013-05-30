@@ -5,63 +5,63 @@
 package main
 
 import (
-	"code.google.com/p/go.net/websocket"
-	"mozilla.org/simplepush"
-	"mozilla.org/util"
+    "code.google.com/p/go.net/websocket"
+    "mozilla.org/simplepush"
+    "mozilla.org/util"
 
-	"encoding/base64"
-	"fmt"
-	"net/http"
+    "encoding/base64"
+    "fmt"
+    "net/http"
 )
 
 var logger *util.HekaLogger
 
 // -- utils
 func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.HekaLogger)) http.HandlerFunc {
-	config := util.MzGetConfig("config.ini")
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
+    config := util.MzGetConfig("config.ini")
+    // Convert the token_key from base64 (if present)
+    if k, ok := config["token_key"]; ok {
+        key, _ := base64.URLEncoding.DecodeString(k.(string))
+        config["token_key"] = key
+    }
 
-	return func(resp http.ResponseWriter, req *http.Request) {
-		fn(resp, req, config, logger)
-	}
+    return func(resp http.ResponseWriter, req *http.Request) {
+        fn(resp, req, config, logger)
+    }
 }
 
 // -- main
 func main() {
-	config := util.MzGetConfig("config.ini")
+    config := util.MzGetConfig("config.ini")
 
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
+    // Convert the token_key from base64 (if present)
+    if k, ok := config["token_key"]; ok {
+        key, _ := base64.URLEncoding.DecodeString(k.(string))
+        config["token_key"] = key
+    }
 
-	logger = util.NewHekaLogger(config)
+    logger = util.NewHekaLogger(config)
 
-	simplepush.Clients = make(map[string]*simplepush.Client)
+    simplepush.Clients = make(map[string]*simplepush.Client)
 
-	// Initialize the common server.
-	simplepush.InitServer(config, logger)
+    // Initialize the common server.
+    simplepush.InitServer(config, logger)
 
-	// Register the handlers
-	// each websocket gets it's own handler.
-	http.Handle("/ws", websocket.Handler(simplepush.PushSocketHandler))
-	http.HandleFunc("/update/", makeHandler(simplepush.UpdateHandler))
-	http.HandleFunc("/status/", makeHandler(simplepush.StatusHandler))
+    // Register the handlers
+    // each websocket gets it's own handler.
+    http.Handle("/ws", websocket.Handler(simplepush.PushSocketHandler))
+    http.HandleFunc("/update/", makeHandler(simplepush.UpdateHandler))
+    http.HandleFunc("/status/", makeHandler(simplepush.StatusHandler))
 
-	// Config the server
-	host := util.MzGet(config, "host", "localhost")
-	port := util.MzGet(config, "port", "8080")
+    // Config the server
+    host := util.MzGet(config, "host", "localhost")
+    port := util.MzGet(config, "port", "8080")
 
-	// Hoist the main sail
-	logger.Info("main",
-		fmt.Sprintf("listening on %s:%s", host, port), nil)
-	err := http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
-	if err != nil {
-		panic("ListenAndServe: " + err.Error())
-	}
+    // Hoist the main sail
+    logger.Info("main",
+        fmt.Sprintf("listening on %s:%s", host, port), nil)
+    err := http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
+    if err != nil {
+        panic("ListenAndServe: " + err.Error())
+    }
 }
