@@ -1,13 +1,11 @@
 #! /bin/bash
 set -e
-if [ '$GOROOT' == '' ]; then
-    echo "GOROOT not defined. Is go installed?"
-    exit 1
-fi
-if [ '$GOBIN' == '' ]; then
-    echo "GOBIN not defined. Is go installed?"
-    exit 1
-fi
+for env in 'GOROOT' 'GOBIN' ; do
+    if [ -z '${$env}' ]; then
+        echo "$env not defined. Is go installed?"
+        exit 1
+    fi
+done
 export GOPATH=`pwd`
 echo "Installing required go libraries..."
 for req in `cat go_deps.lst`; do
