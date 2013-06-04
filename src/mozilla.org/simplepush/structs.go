@@ -8,6 +8,8 @@ import (
     "code.google.com/p/go.net/websocket"
     "mozilla.org/simplepush/storage"
     "mozilla.org/util"
+
+    "time"
 )
 
 const (
@@ -33,4 +35,5 @@ type PushWS struct {
     Ccmd   chan PushCommand // client command channel
     Store  *storage.Storage
     Logger *util.HekaLogger
+    Born   time.Time
 }

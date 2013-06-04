@@ -71,7 +71,11 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
 
-    log.Printf("[%d]% 7s: %s", level, mtype, payload)
+    if len(fields) > 0 {
+        log.Printf("[%d]% 7s: %s %s", level, mtype, payload, fields)
+    } else {
+        log.Printf("[%d]% 7s: %s", level, mtype, payload)
+    }
 
     // Don't send an error if there's nothing to do
     if self.sender == nil {

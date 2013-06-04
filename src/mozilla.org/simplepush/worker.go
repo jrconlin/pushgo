@@ -67,8 +67,7 @@ func (self *Worker) handleError(sock PushWS, messageType string, err error) (ret
         util.JsMap{
             "messageType": messageType,
             "status":      status,
-            "error":       string(err)
-            })
+            "error":       err.Error()})
 }
 
 
@@ -113,7 +112,7 @@ func (self *Worker) Run(sock PushWS) {
                     fmt.Sprintf("I have no idea what [%s] is.", buffer),
                     nil)
                 self.handleError(sock,
-                                 buffer["messageType"],
+                                 buffer["messageType"].(string),
                                  sperrors.UnknownCommandError)
             }
             if err != nil {
@@ -143,7 +142,8 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
     // blocking call back to the boss.
     sock.Scmd <- cmd
     result := <-sock.Scmd
-    self.log.Info("worker", "sending HELLO response....", nil)
+    self.log.Info("worker", "sending HELLO response....",
+        util.JsMap{"uaid": data["uaid"]})
     websocket.JSON.Send(sock.Socket, util.JsMap{
         "messageType": data["messageType"],
         "status":      result.Command,
@@ -223,6 +223,13 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
     // flush pending data back to Client
     messageType := "notification"
+    timer := time.Now()
+    defer func(timer time.Time, sock PushWS) {
+        sock.Logger.Info("timer",
+            "Client flush completed",
+            util.JsMap{"duration": time.Now().Sub(timer).Nanoseconds(),
+            "uaid": sock.Uaid})
+    }(timer, sock)
     if sock.Uaid == "" {
         self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
         // Have the server clean up records associated with this UAID.
