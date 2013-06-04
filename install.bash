@@ -14,4 +14,8 @@ for req in `cat go_deps.lst`; do
     echo " done"
 done
 echo "Libraries installed"
+if [ ! -e config.ini ]; then
+    echo "Copying sample ini file to config.ini"
+    cp config.sample.ini config.ini
+fi
 echo "Please edit config.ini for local settings."

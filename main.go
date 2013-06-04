@@ -10,6 +10,8 @@ import (
     "mozilla.org/util"
 
     "encoding/base64"
+    "flag"
+    "log"
     "fmt"
     "net/http"
 )
@@ -32,7 +34,13 @@ func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.H
 
 // -- main
 func main() {
-    config := util.MzGetConfig("config.ini")
+
+    var configFile string
+
+    flag.StringVar(&configFile, "config", "config.ini", "Configuration File")
+    flag.Parse()
+    log.Printf("Using config %s", configFile)
+    config := util.MzGetConfig(configFile)
 
     // Convert the token_key from base64 (if present)
     if k, ok := config["token_key"]; ok {
