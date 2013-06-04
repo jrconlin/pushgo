@@ -10,7 +10,7 @@ export GOPATH=`pwd`
 echo "Installing required go libraries..."
 for req in `cat go_deps.lst`; do
     echo -n "   $req..."
-    go get -v
+    go get -v $req
     echo " done"
 done
 echo "Libraries installed"
