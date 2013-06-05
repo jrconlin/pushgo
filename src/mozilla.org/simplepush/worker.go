@@ -99,14 +99,14 @@ func (self *Worker) Run(sock PushWS) {
 				// additional non-client commands are TBD.
 			}
 		case buffer := <-in:
-            defer func(sock PushWS) {
-                if r := recover(); r != nil {
-                    sock.Logger.Error("worker", r.(error).Error(), nil)
-                }
-                sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
+			defer func(sock PushWS) {
+				if r := recover(); r != nil {
+					sock.Logger.Error("worker", r.(error).Error(), nil)
+				}
+				sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
 				sock.Socket.Close()
-                return
-            }(sock)
+				return
+			}(sock)
 
 			self.log.Info("worker",
 				fmt.Sprintf("Client Read buffer, %s \n", buffer), nil)
@@ -136,12 +136,12 @@ func (self *Worker) Run(sock PushWS) {
 			}
 			if err != nil {
 				self.handleError(sock, buffer["messageType"].(string), err)
-                break
+				break
 			}
 		}
 	}
-    sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
-    sock.Socket.Close()
+	sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
+	sock.Socket.Close()
 }
 
 // Associate the UAID for this socket connection (and flush any data that
@@ -268,3 +268,5 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	self.log.Info("worker", "Flushing data back to socket", updates)
 	websocket.JSON.Send(sock.Socket, updates)
 }
+// o4fs
+// vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

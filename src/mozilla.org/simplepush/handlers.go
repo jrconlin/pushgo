@@ -120,14 +120,14 @@ func PushSocketHandler(ws *websocket.Conn) {
 		Ccmd:   make(chan PushCommand),
 		Store:  store,
 		Logger: logger,
-        Born:   timer}
+		Born:   timer}
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
-    defer func(log *util.HekaLogger) {
-        if r := recover(); r != nil {
-            log.Error("main", r.(error).Error(), nil)
-        }
-    }(sock.Logger)
+	defer func(log *util.HekaLogger) {
+		if r := recover(); r != nil {
+			log.Error("main", r.(error).Error(), nil)
+		}
+	}(sock.Logger)
 
 	go NewWorker(config).Run(sock)
 	for {
@@ -141,3 +141,5 @@ func PushSocketHandler(ws *websocket.Conn) {
 		}
 	}
 }
+// o4fs
+// vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

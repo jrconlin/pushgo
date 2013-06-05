@@ -255,3 +255,5 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
 	return serverSingleton.HandleCommand(cmd, sock)
 }
+// o4fs
+// vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
