@@ -123,6 +123,12 @@ func PushSocketHandler(ws *websocket.Conn) {
         Born:   timer}
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
+    defer func(log *util.HekaLogger) {
+        if r := recover(); r != nil {
+            log.Error("main", r.(error).Error(), nil)
+        }
+    }(sock.Logger)
+
 	go NewWorker(config).Run(sock)
 	for {
 		select {
