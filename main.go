@@ -57,9 +57,9 @@ func main() {
 
 	// Register the handlers
 	// each websocket gets it's own handler.
-	http.Handle("/ws", websocket.Handler(simplepush.PushSocketHandler))
 	http.HandleFunc("/update/", makeHandler(simplepush.UpdateHandler))
 	http.HandleFunc("/status/", makeHandler(simplepush.StatusHandler))
+	http.Handle("/", websocket.Handler(simplepush.PushSocketHandler))
 
 	// Config the server
 	host := util.MzGet(config, "host", "localhost")

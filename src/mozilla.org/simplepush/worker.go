@@ -23,10 +23,17 @@ var MissingChannelErr = errors.New("Missing channelID")
 
 type Worker struct {
 	log *util.HekaLogger
+    state int
 }
 
+const (
+    INACTIVE = 0
+    ACTIVE = 1
+)
+
+
 func NewWorker(config util.JsMap) *Worker {
-	return &Worker{log: util.NewHekaLogger(config)}
+    return &Worker{log: util.NewHekaLogger(config), state: INACTIVE}
 }
 
 func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
@@ -34,10 +41,10 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
-	var raw []byte
-	var buffer util.JsMap
 	var socket = sock.Socket
 	for {
+		var raw []byte
+		var buffer util.JsMap
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			self.log.Error("worker",
@@ -53,6 +60,8 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 					"Unparsable data", util.JsMap{"raw": raw})
 				break
 			}
+			self.log.Info("worker",
+				fmt.Sprintf("Socket sending %s", buffer), nil)
 			// Only do something if there's something to do.
 			in <- buffer
 		}
@@ -64,14 +73,11 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 }
 
 // standardize the error reporting back to the client.
-func (self *Worker) handleError(sock PushWS, messageType string, err error) (ret error) {
+func (self *Worker) handleError(sock PushWS, message util.JsMap, err error) (ret error) {
 	self.log.Info("worker", fmt.Sprintf("Sending error %s", err), nil)
-	status := sperrors.ErrToStatus(err)
-	return websocket.JSON.Send(sock.Socket,
-		util.JsMap{
-			"messageType": messageType,
-			"status":      status,
-			"error":       err.Error()})
+	message["status"] = sperrors.ErrToStatus(err)
+    message["error"] = err.Error()
+	return websocket.JSON.Send(sock.Socket, message)
 }
 
 // General workhorse loop for the websocket handler.
@@ -115,6 +121,9 @@ func (self *Worker) Run(sock PushWS) {
 				self.log.Info("worker", "Invalid message",
 					util.JsMap{"reason": "Missing messageType",
 						"data": buffer})
+                self.handleError(sock,
+                        util.JsMap{},
+                        sperrors.UnknownCommandError)
 				break
 			}
 			switch strings.ToLower(buffer["messageType"].(string)) {
@@ -126,16 +135,16 @@ func (self *Worker) Run(sock PushWS) {
 				err = self.Register(sock, buffer)
 			case "unregister":
 				err = self.Unregister(sock, buffer)
+            case "ping":
+                err = self.Ping(sock, buffer)
 			default:
 				self.log.Warn("worker",
 					fmt.Sprintf("I have no idea what [%s] is.", buffer),
 					nil)
-				self.handleError(sock,
-					buffer["messageType"].(string),
-					sperrors.UnknownCommandError)
+                err = sperrors.UnknownCommandError
 			}
 			if err != nil {
-				self.handleError(sock, buffer["messageType"].(string), err)
+				self.handleError(sock, buffer, err)
 				break
 			}
 		}
@@ -149,9 +158,13 @@ func (self *Worker) Run(sock PushWS) {
 func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// register the UAID
 	data := buffer.(util.JsMap)
-	if data["uaid"] == nil {
-		data["uaid"], _ = GenUUID4()
-	}
+    if self.state == ACTIVE {
+        // Flush?
+        return sperrors.InvalidCommandError
+    }
+    if data["channelIDs"] == nil || data["uaid"] == nil {
+        return sperrors.MissingDataError
+    }
 	sock.Uaid = data["uaid"].(string)
 	// register the sockets
 	// register any proprietary connection requirements
@@ -169,6 +182,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		"messageType": data["messageType"],
 		"status":      result.Command,
 		"uaid":        data["uaid"]})
+    self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
 		self.Flush(*sock, 0)
@@ -192,10 +206,12 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 // Register a new ChannelID. Optionally, encrypt the endpoint.
 func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	data := buffer.(util.JsMap)
+    if data["channelID"] == nil {
+        return sperrors.MissingDataError
+    }
 	appid := data["channelID"].(string)
 	err = sock.Store.RegisterAppID(sock.Uaid, appid, "")
 	if err != nil {
-		self.handleError(sock, data["messageType"].(string), err)
 		self.log.Error("worker",
 			fmt.Sprintf("ERROR: RegisterAppID failed %s", err),
 			nil)
@@ -220,14 +236,13 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 // Unregister a ChannelID.
 func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 	data := buffer.(util.JsMap)
-	if _, ok := data["channelID"]; !ok {
-		err = MissingChannelErr
-		return self.handleError(sock, data["messageType"].(string), err)
-	}
+    if data["channelID"] == nil {
+        return sperrors.MissingDataError
+    }
 	appid := data["channelID"].(string)
 	err = sock.Store.DeleteAppID(sock.Uaid, appid, false)
 	if err != nil {
-		return self.handleError(sock, data["messageType"].(string), err)
+		return err
 	}
 	self.log.Info("worker", "Sending UNREG response ..", nil)
 	websocket.JSON.Send(sock.Socket, util.JsMap{
@@ -258,7 +273,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	// Fetch the pending updates from #storage
 	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
 	if err != nil {
-		self.handleError(sock, messageType, err)
+        self.handleError(sock, util.JsMap{"messageType":messageType}, err)
 		return
 	}
 	if updates == nil {
@@ -268,5 +283,14 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	self.log.Info("worker", "Flushing data back to socket", updates)
 	websocket.JSON.Send(sock.Socket, updates)
 }
+
+func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
+    data := buffer.(util.JsMap)
+    websocket.JSON.Send(sock.Socket, util.JsMap{
+        "messageType": data["messageType"],
+        "status": 200})
+    return nil
+}
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

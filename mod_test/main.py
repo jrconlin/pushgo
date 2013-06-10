@@ -10,6 +10,9 @@ appid = "test1"
 
 def on_close(ws):
     print "## Closed"
+    if "fail" in ws.state:
+        ws.state = ws.state + "_success"
+        state_machine(ws)
 
 
 def on_error(ws, error):
@@ -18,9 +21,10 @@ def on_error(ws, error):
 
 
 def on_message(ws, message):
-
-
     print "<<< Recv'd:: " + ws.state + ">> " + message
+    if "fail" in ws.state:
+        ws.reply = message
+        return
     msg = json.loads(message)
     print "<<< " + pprint.pformat(msg)
     type = msg.get("messageType")
@@ -73,9 +77,44 @@ def on_message(ws, message):
 
 
 def on_open(ws):
-    ws.state = "hello"
+    print ws.state
+    state_machine(ws)
+
+
+def fail_invalid_string(ws):
+    ws.send("banana")
+
+def fail_bad_data_1(ws):
+    ws.send(json.dumps({"messageType": 1}))
+
+def fail_bad_data_2(ws):
+    ws.send(json.dumps({"messageType": "banana"}))
+
+
+def state_machine(ws):
+    # bad states:
+    if False:
+        if ws.state == "initialize":
+            # do bad states.
+            ws.state = "fail_is"
+            fail_invalid_string(ws)
+            return
+        if ws.state == "fail_is_success":
+            ws.state = "fail_bdata1"
+            fail_bad_data_1(ws)
+            return
+        if ws.state == "fail_bad_data_1_success":
+            ws.state = "fail_bad_data_2"
+            fail_bad_data_2(ws)
+            return
+        if "fail" in ws.state:
+            print "!!! Untrapped failure occurred"
+            exit(0)
+    # do successful
+    ws.state="hello"
     print ">>> Sending 'Hello'"
-    ws.send(json.dumps({"messageType": ws.state, "uaid": "test"}))
+    ws.send(json.dumps({"messageType": ws.state,
+            "uaid": "test", "channelIDs":[]}))
 
 
 def check_hello(msg):
@@ -100,6 +139,7 @@ def check_update(msg):
 def check_register(msg):
     try:
         assert(msg.get("pushEndpoint") is not None, "Missing pushEndpoint")
+        assert(msg.get("channelID") is not None, "Missing channelID")
     except AssertionError, e:
         print e
         exit("Register Failed")
@@ -142,7 +182,7 @@ def main():
                                 on_message=on_message,
                                 on_error=on_error,
                                 on_close=on_close)
-
+    ws.state = "initialize"
     ws.run_forever()
     print("leaving")
 

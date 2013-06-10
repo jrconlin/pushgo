@@ -270,7 +270,14 @@ func remove(list []string, pos int) (res []string) {
 
 func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
+    if appid == "" {
+        return sperrors.NoChannelError
+    }
+
 	appIDArray, err := self.fetchAppIDArray(uaid)
+    if err != nil {
+        return err
+    }
 	pos := sort.SearchStrings(appIDArray, appid)
 	if pos > -1 {
 		self.storeAppIDArray(uaid, remove(appIDArray, pos))
@@ -285,7 +292,9 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 		} else {
 			self.log.Error("storage", fmt.Sprintf("Could not delete %s, %s", pk, err), nil)
 		}
-	}
+	} else {
+        err = sperrors.InvalidChannelError
+    }
 	return err
 }
 
@@ -349,6 +358,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		}
 
 	}
+    if len(expired) == 0 && len(updates) == 0 {
+        return nil, nil
+    }
 	results = make(util.JsMap)
 	results["expired"] = expired
 	results["updates"] = updates
