@@ -162,26 +162,34 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
         // Flush?
         return sperrors.InvalidCommandError
     }
-    if data["channelIDs"] == nil || data["uaid"] == nil {
+    if _, ok := data["uaid"]; !ok {
+        self.log.Info("dbg", "here", nil)
+        return sperrors.MissingDataError
+    }
+    if data["channelIDs"] == nil {
+        self.log.Info("dbg", "there", nil)
         return sperrors.MissingDataError
     }
 	sock.Uaid = data["uaid"].(string)
+    if len(sock.Uaid) == 0 {
+        sock.Uaid,_ = GenUUID4()
+    }
 	// register the sockets
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
 	cmd := PushCommand{Command: HELLO,
 		Arguments: util.JsMap{
-			"uaid":  data["uaid"],
+			"uaid":  sock.Uaid,
 			"chids": data["channelIDs"]}}
 	// blocking call back to the boss.
 	sock.Scmd <- cmd
 	result := <-sock.Scmd
 	self.log.Info("worker", "sending HELLO response....",
-		util.JsMap{"uaid": data["uaid"]})
+		util.JsMap{"uaid": sock.Uaid})
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType": data["messageType"],
 		"status":      result.Command,
-		"uaid":        data["uaid"]})
+		"uaid":        sock.Uaid})
     self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
@@ -193,7 +201,14 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
 func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
-	err = sock.Store.Ack(sock.Uaid, buffer.(util.JsMap))
+    if sock.Uaid == "" {
+        return sperrors.InvalidCommandError
+    }
+	data := buffer.(util.JsMap)
+    if data["updates"] == nil {
+        return sperrors.MissingDataError
+    }
+	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
 		self.Flush(sock, 0)
@@ -205,6 +220,9 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
 func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
+    if sock.Uaid == "" {
+        return sperrors.InvalidCommandError
+    }
 	data := buffer.(util.JsMap)
     if data["channelID"] == nil {
         return sperrors.MissingDataError
@@ -235,6 +253,9 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 
 // Unregister a ChannelID.
 func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
+    if sock.Uaid == "" {
+        return sperrors.InvalidCommandError
+    }
 	data := buffer.(util.JsMap)
     if data["channelID"] == nil {
         return sperrors.MissingDataError
