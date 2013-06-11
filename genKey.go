@@ -31,10 +31,10 @@ func main() {
 	flag.IntVar(&keySize, "keysize", 16, "Crypt Key size (16, 24, 32 bytes)")
 	flag.IntVar(&keySize, "k", 16, "Crypt Key size (16, 24, 32 bytes)")
 	flag.Parse()
-	fmt.Printf("Using keySize: %d", keySize)
+	fmt.Printf("# Using keySize: %d", keySize)
 	for _, val := range validKeys {
 		if val == keySize {
-			fmt.Printf("\n%s\n",
+			fmt.Printf("\ntoken-key = %s\n",
 				base64.URLEncoding.EncodeToString(genKey(keySize)))
 			return
 		}

@@ -158,23 +158,26 @@ func (self *Worker) Run(sock PushWS) {
 func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// register the UAID
 	data := buffer.(util.JsMap)
-    if self.state == ACTIVE {
-        // Flush?
-        return sperrors.InvalidCommandError
-    }
     if _, ok := data["uaid"]; !ok {
-        self.log.Info("dbg", "here", nil)
+        // Must include "uaid" (even if blank)
         return sperrors.MissingDataError
     }
     if data["channelIDs"] == nil {
-        self.log.Info("dbg", "there", nil)
+        // Must include "channelIDs" (even if empty)
         return sperrors.MissingDataError
     }
-	sock.Uaid = data["uaid"].(string)
-    if len(sock.Uaid) == 0 {
-        sock.Uaid,_ = GenUUID4()
+    if len(sock.Uaid) > 0 && len(data["uaid"].(string)) > 0 {
+        // if there's already a Uaid for this channel, don't accept a new one
+        return sperrors.InvalidCommandError
     }
-	// register the sockets
+    if len(sock.Uaid) == 0 {
+        // if there's no UAID for the socket, accept or create a new one.
+	    sock.Uaid = data["uaid"].(string)
+        if len(sock.Uaid) == 0 {
+            sock.Uaid,_ = GenUUID4()
+        }
+    }
+	// register the sockets (NOOP)
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
 	cmd := PushCommand{Command: HELLO,
