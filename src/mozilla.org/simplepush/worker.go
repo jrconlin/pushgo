@@ -166,7 +166,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
         // Must include "channelIDs" (even if empty)
         return sperrors.MissingDataError
     }
-    if len(sock.Uaid) > 0 && len(data["uaid"].(string)) > 0 {
+    if len(sock.Uaid) > 0 && len(data["uaid"].(string)) > 0 && sock.Uaid != data["uaid"].(string) {
         // if there's already a Uaid for this channel, don't accept a new one
         return sperrors.InvalidCommandError
     }
