@@ -11,8 +11,11 @@ import (
 	"mozilla.org/util"
 
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -22,6 +25,25 @@ func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	resp.Write([]byte("OK"))
+}
+
+func proxyNotification(host, path string) (err error) {
+	req := &http.Request{Method: "PUT",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   host,
+			Path:   path}}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
+		return nil
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	return errors.New(fmt.Sprintf("Proxy failed. Returned (%d)\n %s",
+		resp.StatusCode, body))
 }
 
 // -- REST
@@ -66,6 +88,33 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	if err != nil {
 		logger.Error("main",
 			fmt.Sprintf("Could not resolve PK %s, %s", pk, err), nil)
+		return
+	}
+
+	currentHost := "localhost"
+	if val, ok := config["shard.currentHost"]; ok {
+		currentHost = val.(string)
+	}
+	host, err := store.GetUAIDHost(uaid)
+	if err != nil {
+		logger.Error("main",
+			fmt.Sprintf("Could not discover host for %s, %s (using default)",
+				uaid, err), nil)
+		if val, ok := config["shard.defaultHost"]; ok {
+			host = val.(string)
+		} else {
+			val = "localhost"
+		}
+	}
+
+	if host != currentHost || host != "localhost" {
+		logger.Info("main", fmt.Sprintf("Proxying request to %s", host), nil)
+		err = proxyNotification(host, req.URL.Path)
+		if err != nil {
+			logger.Error("main",
+				fmt.Sprintf("Proxy to %s failed: %s", host, err),
+				nil)
+		}
 		return
 	}
 
@@ -141,5 +190,6 @@ func PushSocketHandler(ws *websocket.Conn) {
 		}
 	}
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

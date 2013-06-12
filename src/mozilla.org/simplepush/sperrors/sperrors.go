@@ -8,6 +8,7 @@ import (
 var ChannelExistsError = errors.New("Channel Already Exists")
 var InvalidChannelError = errors.New("No Channel ID Specified")
 var InvalidCommandError = errors.New("Invalid command")
+var InvalidDataError = errors.New("An Invalid value was specified")
 var InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
 var MissingDataError = errors.New("Missing required fields for command")
 var NoChannelError = errors.New("No Channel ID Specified")
@@ -21,14 +22,15 @@ func ErrToStatus(err error) (status int) {
 	if err != nil {
 		switch err {
 		case ChannelExistsError,
-            InvalidChannelError,
+			InvalidChannelError,
 			NoDataToStoreError,
-            NoChannelError,
+			NoChannelError,
 			NoRecordWarning:
 			status = http.StatusServiceUnavailable
 		case UnknownCommandError,
-             MissingDataError,
-             InvalidCommandError:
+			MissingDataError,
+			InvalidCommandError,
+			InvalidDataError:
 			status = 401
 		default:
 			status = 500
@@ -36,5 +38,6 @@ func ErrToStatus(err error) (status int) {
 	}
 	return status
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

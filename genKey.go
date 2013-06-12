@@ -13,6 +13,8 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+    "os"
+    "net"
 )
 
 var validKeys = [3]int{16, 24, 32}

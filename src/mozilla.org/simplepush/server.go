@@ -162,6 +162,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	if err != nil {
 		return 500, nil
 	}
+	// if there is a key, encrypt the token
 	if self.key != nil {
 		btoken := []byte(token)
 		token, err = Encode(self.key, btoken)
@@ -255,5 +256,6 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
 	return serverSingleton.HandleCommand(cmd, sock)
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

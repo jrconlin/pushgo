@@ -172,10 +172,20 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 	if _, ok = config["db.timeout_del"]; !ok {
 		config["db.timeout_del"] = "86400"
 	}
+	if _, ok = config["shard.defaultHost"]; !ok {
+		config["shard.defaultHost"] = "localhost"
+	}
+	if _, ok = config["shard.currentHost"]; !ok {
+		config["shard.currentHost"] = config["shard.defaultHost"]
+	}
+	if _, ok = config["shard.prefix"]; !ok {
+		config["shard.prefix"] = "_h-"
+	}
 
 	log.Info("storage", "Creating new memcache handler", nil)
 	return &Storage{mc: memcache.New(config["memcache.server"].(string)),
-		log: log}
+		config: config,
+		log:    log}
 }
 
 //TODO: Optimize this to decode the PK for updates
@@ -270,14 +280,14 @@ func remove(list []string, pos int) (res []string) {
 
 func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
-    if appid == "" {
-        return sperrors.NoChannelError
-    }
+	if appid == "" {
+		return sperrors.NoChannelError
+	}
 
 	appIDArray, err := self.fetchAppIDArray(uaid)
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 	pos := sort.SearchStrings(appIDArray, appid)
 	if pos > -1 {
 		self.storeAppIDArray(uaid, remove(appIDArray, pos))
@@ -293,8 +303,8 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 			self.log.Error("storage", fmt.Sprintf("Could not delete %s, %s", pk, err), nil)
 		}
 	} else {
-        err = sperrors.InvalidChannelError
-    }
+		err = sperrors.InvalidChannelError
+	}
 	return err
 }
 
@@ -358,9 +368,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		}
 
 	}
-    if len(expired) == 0 && len(updates) == 0 {
-        return nil, nil
-    }
+	if len(expired) == 0 && len(updates) == 0 {
+		return nil, nil
+	}
 	results = make(util.JsMap)
 	results["expired"] = expired
 	results["updates"] = updates
@@ -402,5 +412,48 @@ func (self *Storage) ReloadData(uaid string, updates []string) (err error) {
 	_, _ = uaid, updates
 	return nil
 }
+
+func (self *Storage) SetUAIDHost(uaid string) (err error) {
+	host := self.config["shard.currentHost"].(string)
+	prefix := self.config["shard.prefix"].(string)
+
+	if uaid == "" {
+		return sperrors.MissingDataError
+	}
+
+	self.log.Debug("storage", fmt.Sprintf("SetUAIDHost:: setting %s => %s",
+		prefix+uaid, host), nil)
+	return self.mc.Set(&memcache.Item{Key: prefix + uaid, Value: []byte(host)})
+}
+
+func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
+	defaultHost := self.config["shard.defaultHost"].(string)
+	prefix := self.config["shard.prefix"].(string)
+
+	defer func(defaultHost string) {
+		if err := recover(); err != nil {
+			self.log.Error("storage",
+				fmt.Sprintf("could not fetch host for uaid %s: %s", uaid, err),
+				nil)
+		}
+	}(defaultHost)
+
+	item, err := self.mc.Get(prefix + uaid)
+	if err != nil {
+		self.log.Error("storage",
+			fmt.Sprintf("Fetch item:: [%s][%s] Error: %s", uaid, item, err),
+			nil)
+		return defaultHost, err
+	}
+	self.log.Debug("storage", fmt.Sprintf("GetUAIDHost:: %s is on %s",
+		prefix+uaid, string(item.Value)), nil)
+	return string(item.Value), nil
+}
+
+func (self *Storage) DelUAIDHost(uaid string) (err error) {
+	prefix := self.config["shard.prefix"].(string)
+	return self.mc.Delete(prefix + uaid)
+}
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
