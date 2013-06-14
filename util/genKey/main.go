@@ -34,7 +34,7 @@ func main() {
 	fmt.Printf("# Using keySize: %d", keySize)
 	for _, val := range validKeys {
 		if val == keySize {
-			fmt.Printf("\ntoken-key = %s\n",
+			fmt.Printf("\ntoken_key = %s\n",
 				base64.URLEncoding.EncodeToString(genKey(keySize)))
 			return
 		}
