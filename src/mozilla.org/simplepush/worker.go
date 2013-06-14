@@ -244,6 +244,9 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
+        websocket.JSON.Send(sock.Socket, util.JsMap{
+            "messageType": data["messageType"],
+            "status": 200})
 		self.Flush(sock, 0)
 		return nil
 	}

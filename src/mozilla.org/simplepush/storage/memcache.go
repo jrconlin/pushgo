@@ -401,7 +401,7 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 		}
 	}
 
-	if err != nil {
+	if err != nil && err != memcache.ErrCacheMiss {
 		return err
 	}
 	return nil
