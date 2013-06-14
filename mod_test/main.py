@@ -72,7 +72,7 @@ def on_message(ws, message):
         send_rest_alert(ws)
         return
     if ws.state == "shutdown":
-        print "### Exiting..."
+        print "### SUCCESS!!! Exiting..."
         exit()
 
 
