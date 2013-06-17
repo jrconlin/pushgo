@@ -300,6 +300,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType":  data["messageType"],
 		"status":       result.Command,
+        "channelID":    data["channelID"],
 		"pushEndpoint": endpoint})
 	return err
 }
