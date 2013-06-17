@@ -32,8 +32,8 @@ const (
 )
 
 const (
-    UAID_MAX_LEN = 100
-    CHID_MAX_LEN = 100
+	UAID_MAX_LEN = 100
+	CHID_MAX_LEN = 100
 )
 
 func NewWorker(config util.JsMap) *Worker {
@@ -119,7 +119,12 @@ func (self *Worker) Run(sock PushWS) {
 			}(sock)
 
 			self.log.Info("worker",
-				fmt.Sprintf("Client Read buffer, %s \n", buffer), nil)
+				fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
+					len(buffer)), nil)
+			if len(buffer) == 0 {
+                // Empty buffers are "pings"
+				buffer["messageType"] = "ping"
+			}
 			// process the client commands
 			if _, ok := buffer["messageType"]; !ok {
 				self.log.Info("worker", "Invalid message",
@@ -137,7 +142,7 @@ func (self *Worker) Run(sock PushWS) {
 				err = self.Ack(sock, buffer)
 			case "register":
 				err = self.Register(sock, buffer)
-                self.log.Info("worker", fmt.Sprintf("Reg result:: %s", err), nil)
+				self.log.Info("worker", fmt.Sprintf("Reg result:: %s", err), nil)
 			case "unregister":
 				err = self.Unregister(sock, buffer)
 			case "ping":
@@ -162,14 +167,14 @@ func (self *Worker) Run(sock PushWS) {
 // may be pending for the connection)
 func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// register the UAID
-    defer func() {
-        if r := recover(); r != nil {
-            self.log.Error("worker",
-                fmt.Sprintf("Unhandled error in Hello: %s", r),
-                nil )
-            err = sperrors.InvalidDataError
-            }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			self.log.Error("worker",
+				fmt.Sprintf("Unhandled error in Hello: %s", r),
+				nil)
+			err = sperrors.InvalidDataError
+		}
+	}()
 
 	data := buffer.(util.JsMap)
 	if _, ok := data["uaid"]; !ok {
@@ -225,14 +230,14 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
 func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
-    defer func() {
-        if r := recover(); r != nil {
-            self.log.Error("worker",
-                fmt.Sprintf("Unhandled error in Ack: %s", r),
-                nil )
-            err = sperrors.InvalidDataError
-            }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			self.log.Error("worker",
+				fmt.Sprintf("Unhandled error in Ack: %s", r),
+				nil)
+			err = sperrors.InvalidDataError
+		}
+	}()
 
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
@@ -244,9 +249,9 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
-        websocket.JSON.Send(sock.Socket, util.JsMap{
-            "messageType": data["messageType"],
-            "status": 200})
+		websocket.JSON.Send(sock.Socket, util.JsMap{
+			"messageType": data["messageType"],
+			"status":      200})
 		self.Flush(sock, 0)
 		return nil
 	}
@@ -256,14 +261,14 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
 func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
-    defer func() {
-        if r := recover(); r != nil {
-            self.log.Error("worker",
-                fmt.Sprintf("Unhandled error in Register: %s", r),
-                nil )
-            err = sperrors.InvalidDataError
-            }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			self.log.Error("worker",
+				fmt.Sprintf("Unhandled error in Register: %s", r),
+				nil)
+			err = sperrors.InvalidDataError
+		}
+	}()
 
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
@@ -301,14 +306,14 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 
 // Unregister a ChannelID.
 func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
-    defer func() {
-        if r := recover(); r != nil {
-            self.log.Error("worker",
-                fmt.Sprintf("Unhandled error in Unregister: %s", r),
-                nil )
-            err = sperrors.InvalidDataError
-            }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			self.log.Error("worker",
+				fmt.Sprintf("Unhandled error in Unregister: %s", r),
+				nil)
+			err = sperrors.InvalidDataError
+		}
+	}()
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
@@ -317,7 +322,7 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 		return sperrors.MissingDataError
 	}
 	appid := data["channelID"].(string)
-    // Always return success for an UNREG.
+	// Always return success for an UNREG.
 	sock.Store.DeleteAppID(sock.Uaid, appid, false)
 	self.log.Info("worker", "Sending UNREG response ..", nil)
 	websocket.JSON.Send(sock.Socket, util.JsMap{
