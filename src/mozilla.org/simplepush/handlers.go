@@ -114,16 +114,18 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		}
 	}
 
-	if host != currentHost && host != "localhost" {
-		logger.Info("main",
-			fmt.Sprintf("Proxying request to %s", host+port), nil)
-		err = proxyNotification(host+port, req.URL.Path)
-		if err != nil {
-			logger.Error("main",
-				fmt.Sprintf("Proxy to %s failed: %s", host+port, err),
-				nil)
+	if flag, ok := config["shard.doProxy"]; ok && flag == "y" {
+		if host != currentHost && host != "localhost" {
+			logger.Info("main",
+				fmt.Sprintf("Proxying request to %s", host+port), nil)
+			err = proxyNotification(host+port, req.URL.Path)
+			if err != nil {
+				logger.Error("main",
+					fmt.Sprintf("Proxy to %s failed: %s", host+port, err),
+					nil)
+			}
+			return
 		}
-		return
 	}
 
 	defer func(uaid, appid, path string, timer time.Time) {
