@@ -122,7 +122,7 @@ func (self *Worker) Run(sock PushWS) {
 				fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
 					len(buffer)), nil)
 			if len(buffer) == 0 {
-                // Empty buffers are "pings"
+				// Empty buffers are "pings"
 				buffer["messageType"] = "ping"
 			}
 			// process the client commands
@@ -249,9 +249,6 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
-		websocket.JSON.Send(sock.Socket, util.JsMap{
-			"messageType": data["messageType"],
-			"status":      200})
 		self.Flush(sock, 0)
 		return nil
 	}
@@ -300,6 +297,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType":  data["messageType"],
 		"status":       result.Command,
+		"channelID":    data["channelID"],
 		"pushEndpoint": endpoint})
 	return err
 }

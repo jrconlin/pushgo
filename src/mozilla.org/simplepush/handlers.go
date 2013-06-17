@@ -50,6 +50,7 @@ func proxyNotification(host, path string) (err error) {
 func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
 	// Handle the version updates.
 	var err error
+	var port string
 
 	timer := time.Now()
 
@@ -91,6 +92,12 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		return
 	}
 
+	if iport, ok := config["port"]; ok {
+		port = iport.(string)
+	}
+	if port != "" && port != "80" {
+		port = ":" + port
+	}
 	currentHost := "localhost"
 	if val, ok := config["shard.currentHost"]; ok {
 		currentHost = val.(string)
@@ -107,12 +114,13 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		}
 	}
 
-	if host != currentHost || host != "localhost" {
-		logger.Info("main", fmt.Sprintf("Proxying request to %s", host), nil)
-		err = proxyNotification(host, req.URL.Path)
+	if host != currentHost && host != "localhost" {
+		logger.Info("main",
+			fmt.Sprintf("Proxying request to %s", host+port), nil)
+		err = proxyNotification(host+port, req.URL.Path)
 		if err != nil {
 			logger.Error("main",
-				fmt.Sprintf("Proxy to %s failed: %s", host, err),
+				fmt.Sprintf("Proxy to %s failed: %s", host+port, err),
 				nil)
 		}
 		return
