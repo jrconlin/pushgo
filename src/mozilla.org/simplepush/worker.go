@@ -122,7 +122,7 @@ func (self *Worker) Run(sock PushWS) {
 				fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
 					len(buffer)), nil)
 			if len(buffer) == 0 {
-                // Empty buffers are "pings"
+				// Empty buffers are "pings"
 				buffer["messageType"] = "ping"
 			}
 			// process the client commands

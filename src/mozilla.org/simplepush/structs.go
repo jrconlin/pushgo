@@ -37,5 +37,6 @@ type PushWS struct {
 	Logger *util.HekaLogger
 	Born   time.Time
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
