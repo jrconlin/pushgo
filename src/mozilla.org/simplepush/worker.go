@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,8 +23,9 @@ var MissingChannelErr = errors.New("Missing channelID")
 //      these write back to the websocket.
 
 type Worker struct {
-	log   *util.HekaLogger
-	state int
+	log    *util.HekaLogger
+	state  int
+	filter *regexp.Regexp
 }
 
 const (
@@ -37,7 +39,11 @@ const (
 )
 
 func NewWorker(config util.JsMap) *Worker {
-	return &Worker{log: util.NewHekaLogger(config), state: INACTIVE}
+    // Allow [0-9a-z_-]/i as valid ChannelID characters.
+	filter := regexp.MustCompile("[^\\w-]")
+	return &Worker{log: util.NewHekaLogger(config),
+		state:  INACTIVE,
+		filter: filter}
 }
 
 func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
@@ -179,7 +185,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	data := buffer.(util.JsMap)
 	if _, ok := data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
-		return sperrors.MissingDataError
+		data["uaid"] = ""
 	}
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
@@ -276,6 +282,9 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	}
 	appid := data["channelID"].(string)
 	if len(appid) > CHID_MAX_LEN {
+		return sperrors.InvalidDataError
+	}
+	if self.filter.Find([]byte(strings.ToLower(appid))) != nil {
 		return sperrors.InvalidDataError
 	}
 	err = sock.Store.RegisterAppID(sock.Uaid, appid, "")

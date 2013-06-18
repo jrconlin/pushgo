@@ -324,7 +324,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 
 	recs, err := self.mc.GetMulti(items)
 	if err != nil {
-		self.log.Error("storage", fmt.Sprintf("%s", err), nil)
+		self.log.Error("storage", fmt.Sprintf("Fetch failed: %s", err), nil)
 		return nil, err
 	}
 

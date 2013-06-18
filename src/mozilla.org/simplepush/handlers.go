@@ -113,7 +113,6 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 			val = "localhost"
 		}
 	}
-
 	if flag, ok := config["shard.doProxy"]; ok && flag == "y" {
 		if host != currentHost && host != "localhost" {
 			logger.Info("main",
