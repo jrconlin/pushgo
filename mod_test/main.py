@@ -150,8 +150,9 @@ def send_rest_alert(ws):
     print ">>> Sending REST update"
     url = urlparse.urlparse(ws.update_url)
     http = httplib.HTTPConnection(url.netloc)
-    req = http.request("PUT", url.path)
-    print "#>> " + pprint.pformat(req)
+    http.set_debuglevel(10)
+    http.request("PUT", url.path+"?vers=123")
+    print "#>> "
     resp = http.getresponse()
     if resp.status != 200:
         exit("invalid url")

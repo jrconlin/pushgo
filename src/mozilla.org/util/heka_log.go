@@ -20,6 +20,7 @@ type HekaLogger struct {
 	logname  string
 	pid      int32
 	hostname string
+	conf     JsMap
 }
 
 const (
@@ -65,16 +66,27 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		sender:   sender,
 		logname:  logname,
 		pid:      pid,
-		hostname: hostname}
+		hostname: hostname,
+		conf:     conf}
 }
 
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
 
-	if len(fields) > 0 {
-		log.Printf("[%d]% 7s: %s %s", level, mtype, payload, fields)
+	var base_level int
+
+	if _, ok := self.conf["log.filter"]; ok {
+		base_level = self.conf["log.filter"].(int)
 	} else {
-		log.Printf("[%d]% 7s: %s", level, mtype, payload)
+		base_level = 10
+	}
+
+	if int(level) <= base_level {
+		if len(fields) > 0 {
+			log.Printf("[%d]% 7s: %s %s", level, mtype, payload, fields)
+		} else {
+			log.Printf("[%d]% 7s: %s", level, mtype, payload)
+		}
 	}
 
 	// Don't send an error if there's nothing to do

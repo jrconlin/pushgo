@@ -254,7 +254,9 @@ class TestPushAPI(unittest.TestCase):
                          "uaid": "reg_noshake_uaid_1"})
         ret = self._msg({"messageType": "register",
                          "channelID": add_epoch("reg_noshake_chan_1")})
-        self._compare_dict(ret, {"messageType": "register", "status": 200})
+        self._compare_dict(ret, {"messageType": "register",
+                                 "channelID": add_epoch("reg_noshake_chan_1"),
+                                 "status": 200})
         self._validate_endpoint(ret['pushEndpoint'])
 
     def test_reg_duplicate(self):
@@ -264,17 +266,22 @@ class TestPushAPI(unittest.TestCase):
                   "uaid": "reg_noshake_uaid_1"})
         ret = self._msg({"messageType": "register",
                          "channelID": add_epoch("dupe_handshake")})
-        self._compare_dict(ret, {"messageType": "register", "status": 200})
+        self._compare_dict(ret, {"messageType": "register",
+                                 "channelID": add_epoch("dupe_handshake"),
+                                 "status": 200})
 
         # duplicate handshake
         ret = self._msg({"messageType": "register",
                          "channelID": add_epoch("dupe_handshake")})
-        self._compare_dict(ret, {"messageType": "register", "status": 200})
+        self._compare_dict(ret, {"messageType": "register",
+                                 "channelID": add_epoch("dupe_handshake"),
+                                 "status": 200})
 
         # passing in list to channelID
         ret = self._msg({"messageType": "register",
                          "channelIDs": [add_epoch("chan_list")]})
-        self._compare_dict(ret, {"messageType": "register", "status": 401,
+        self._compare_dict(ret, {"messageType": "register",
+                                 "status": 401,
                                  "error":
                                  "Missing required fields for command"})
 
@@ -335,13 +342,17 @@ class TestPushAPI(unittest.TestCase):
         # unreg
         ret = self._msg({"messageType": "unregister",
                          "channelID": add_epoch("unreg_chan")})
-        self._compare_dict(ret, {"messageType": "unregister", "status": 200})
+        self._compare_dict(ret, {"messageType": "unregister",
+                                 "channelID": add_epoch("unreg_chan"),
+                                 "status": 200})
 
         # check if channel exists
         ret = self._msg({"messageType": "unregister",
                          "channelID": add_epoch("unreg_chan")})
         # XXX No-op on server results in this behavior
-        self._compare_dict(ret, {"messageType": "unregister", "status": 200})
+        self._compare_dict(ret, {"messageType": "unregister",
+                                 "channelID": add_epoch("unreg_chan"),
+                                 "status": 200})
 
     def test_chan_limits(self):
         """ Test string limits for keys """

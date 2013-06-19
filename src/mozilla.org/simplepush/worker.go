@@ -287,7 +287,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	if self.filter.Find([]byte(strings.ToLower(appid))) != nil {
 		return sperrors.InvalidDataError
 	}
-	err = sock.Store.RegisterAppID(sock.Uaid, appid, "")
+	err = sock.Store.RegisterAppID(sock.Uaid, appid, 0)
 	if err != nil {
 		self.log.Error("worker",
 			fmt.Sprintf("ERROR: RegisterAppID failed %s", err),

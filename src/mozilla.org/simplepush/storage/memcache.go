@@ -189,7 +189,7 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 }
 
 //TODO: Optimize this to decode the PK for updates
-func (self *Storage) UpdateChannel(pk, vers string) (err error) {
+func (self *Storage) UpdateChannel(pk string, vers int64) (err error) {
 	var rec util.JsMap
 
 	if len(pk) == 0 {
@@ -218,7 +218,7 @@ func (self *Storage) UpdateChannel(pk, vers string) (err error) {
 	}
 	// No record found or the record setting was DELETED
 	uaid, appid, err := ResolvePK(pk)
-	fmt.Printf("Registering %s %s %s\n", uaid, appid, vers)
+	fmt.Printf("Registering %s %s %d\n", uaid, appid, vers)
 	err = self.RegisterAppID(uaid, appid, vers)
 	if err == sperrors.ChannelExistsError {
 		pk, err = GenPK(uaid, appid)
@@ -230,7 +230,7 @@ func (self *Storage) UpdateChannel(pk, vers string) (err error) {
 	return err
 }
 
-func (self *Storage) RegisterAppID(uaid, appid, vers string) (err error) {
+func (self *Storage) RegisterAppID(uaid, appid string, vers int64) (err error) {
 
 	var rec util.JsMap
 
@@ -251,7 +251,7 @@ func (self *Storage) RegisterAppID(uaid, appid, vers string) (err error) {
 	rec = make(util.JsMap)
 	rec["s"] = REGISTERED
 	rec["l"] = time.Now().UTC().Unix()
-	if vers != "" {
+	if vers != 0 {
 		rec["v"] = vers
 		rec["s"] = LIVE
 	}
@@ -352,10 +352,24 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		// Apparently float64(1) != int(1).
 		switch update["s"] {
 		case float64(LIVE):
+            var fvers float64
+			var ok bool
 			// log.Printf("Adding record... %s", appid)
 			newRec := make(util.JsMap)
 			newRec["channelID"] = appid
-			newRec["version"] = update["v"]
+            fvers, ok = update["v"].(float64)
+			if !ok {
+                var cerr error
+                self.log.Error("storage", fmt.Sprintf("failed to conv %s", update), nil)
+				fvers, cerr = strconv.ParseFloat(update["v"].(string), 0)
+				if cerr != nil {
+					self.log.Error("storage",
+						fmt.Sprintf("Could not convert %s, %s", update["v"].(string), cerr),
+						nil)
+					fvers = float64(time.Now().UTC().Unix())
+				}
+			}
+            newRec["version"] = int64(fvers)
 			updates = append(updates, newRec)
 		case float64(DELETED):
 			self.log.Info("storage",

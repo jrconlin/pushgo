@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+    "strconv"
 	"time"
 )
 
@@ -51,6 +52,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	// Handle the version updates.
 	var err error
 	var port string
+	var vers int64
 
 	timer := time.Now()
 
@@ -59,7 +61,18 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
 	}
-	vers := fmt.Sprintf("%d", time.Now().UTC().Unix())
+
+    svers := req.FormValue("vers")
+	if svers != "" {
+        vers, err = strconv.ParseInt(svers, 10, 64)
+        if err != nil || vers < 0 {
+            http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
+            return
+        }
+	}
+	if vers == 0 {
+		vers = time.Now().UTC().Unix()
+	}
 
 	elements := strings.Split(req.URL.Path, "/")
 	pk := elements[len(elements)-1]
@@ -137,7 +150,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	}(uaid, appid, req.URL.Path, timer)
 
 	logger.Info("main",
-		fmt.Sprintf("setting version for %s.%s to %s", uaid, appid, vers),
+		fmt.Sprintf("setting version for %s.%s to %d", uaid, appid, vers),
 		nil)
 	err = store.UpdateChannel(pk, vers)
 
