@@ -16,8 +16,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
-    "strconv"
 	"time"
 )
 
@@ -62,13 +63,13 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		return
 	}
 
-    svers := req.FormValue("vers")
+	svers := req.FormValue("vers")
 	if svers != "" {
-        vers, err = strconv.ParseInt(svers, 10, 64)
-        if err != nil || vers < 0 {
-            http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
-            return
-        }
+		vers, err = strconv.ParseInt(svers, 10, 64)
+		if err != nil || vers < 0 {
+			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
+			return
+		}
 	}
 	if vers == 0 {
 		vers = time.Now().UTC().Unix()
@@ -114,6 +115,10 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	currentHost := "localhost"
 	if val, ok := config["shard.currentHost"]; ok {
 		currentHost = val.(string)
+	} else {
+		if val := os.Getenv("HOST"); len(val) > 0 {
+			currentHost = val
+		}
 	}
 	host, err := store.GetUAIDHost(uaid)
 	if err != nil {

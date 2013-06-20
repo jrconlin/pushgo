@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 )
 
 var logger *util.HekaLogger
@@ -41,6 +42,16 @@ func main() {
 	flag.Parse()
 	log.Printf("Using config %s", configFile)
 	config := util.MzGetConfig(configFile)
+
+	if _, ok := config["shard.currentHost"]; !ok {
+		currentHost := "localhost"
+		if val := os.Getenv("HOST"); len(val) > 0 {
+			currentHost = val
+		}
+		config["shard.currentHost"] = currentHost
+	}
+
+	log.Printf("CurrentHost: %s", config["shard.currentHost"])
 
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
