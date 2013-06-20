@@ -10,6 +10,7 @@ import (
 	"github.com/mozilla-services/heka/message"
 	"log"
 	"os"
+    "strconv"
 	"time"
 )
 
@@ -44,23 +45,23 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	sender = nil
 	logname = ""
 
-	if _, ok = conf["heka_sender"]; !ok {
-		conf["heka_sender"] = "tcp"
+	if _, ok = conf["heka.sender"]; !ok {
+		conf["heka.sender"] = "tcp"
 	}
-	if _, ok = conf["heka_server_addr"]; !ok {
-		conf["heka_server_addr"] = "127.0.0.1:5565"
+	if _, ok = conf["heka.server_addr"]; !ok {
+		conf["heka.server_addr"] = "127.0.0.1:5565"
 	}
-	if _, ok = conf["heka_logger_name"]; !ok {
-		conf["heka_logger_name"] = "simplepush"
+	if _, ok = conf["heka.logger_name"]; !ok {
+		conf["heka.logger_name"] = "simplepush"
 	}
-	if _, ok = conf["heka_no"]; !ok {
+	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
-		sender, err = client.NewNetworkSender(conf["heka_sender"].(string),
-			conf["heka_server_addr"].(string))
+		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
+			conf["heka.server_addr"].(string))
 		if err != nil {
 			log.Panic("Could not create sender ", err)
 		}
-		logname = conf["heka_logger_name"].(string)
+		logname = conf["heka.logger_name"].(string)
 	}
 	return &HekaLogger{encoder: encoder,
 		sender:   sender,
@@ -73,15 +74,11 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
 
-	var base_level int
+	var base_level int64
 
-	if _, ok := self.conf["log.filter"]; ok {
-		base_level = self.conf["log.filter"].(int)
-	} else {
-		base_level = 10
-	}
+    base_level, _ = strconv.ParseInt(MzGet(self.conf, "log.filter", "10"), 10, 0)
 
-	if int(level) <= base_level {
+	if int(level) <= int(base_level) {
 		if len(fields) > 0 {
 			log.Printf("[%d]% 7s: %s %s", level, mtype, payload, fields)
 		} else {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+    "strconv"
 	"strings"
 )
 
@@ -50,6 +51,21 @@ func MzGet(ma JsMap, key string, def string) string {
 		val = def
 	}
 	return val
+}
+
+func MzGetFlag(ma JsMap, key string) (flag bool) {
+    defer func() {
+        if r := recover(); r != nil {
+            flag = false
+        }
+    }()
+
+    flag = false
+    if val, ok := ma[key]; ok {
+        flag, _ = strconv.ParseBool(val.(string))
+    }
+
+    return
 }
 
 // o4fs

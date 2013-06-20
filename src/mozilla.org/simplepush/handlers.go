@@ -16,7 +16,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -112,26 +111,15 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	if port != "" && port != "80" {
 		port = ":" + port
 	}
-	currentHost := "localhost"
-	if val, ok := config["shard.currentHost"]; ok {
-		currentHost = val.(string)
-	} else {
-		if val := os.Getenv("HOST"); len(val) > 0 {
-			currentHost = val
-		}
-	}
+	currentHost := util.MzGet(config, "shard.current_host", "localhost")
 	host, err := store.GetUAIDHost(uaid)
 	if err != nil {
 		logger.Error("main",
 			fmt.Sprintf("Could not discover host for %s, %s (using default)",
 				uaid, err), nil)
-		if val, ok := config["shard.defaultHost"]; ok {
-			host = val.(string)
-		} else {
-			val = "localhost"
-		}
+		host = util.MzGet(config, "shard.defaultHost", "localhost")
 	}
-	if flag, ok := config["shard.doProxy"]; ok && flag == "y" {
+	if util.MzGetFlag(config, "shard.doProxy") {
 		if host != currentHost && host != "localhost" {
 			logger.Info("main",
 				fmt.Sprintf("Proxying request to %s", host+port), nil)

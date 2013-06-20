@@ -12,12 +12,11 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-    "io/ioutil"
+	"io/ioutil"
 	"log"
 	"net/http"
-    "net/url"
+	"net/url"
 	"os"
-    "strconv"
 )
 
 var logger *util.HekaLogger
@@ -37,25 +36,25 @@ func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.H
 }
 
 func awsGetPublicHostname() (hostname string, err error) {
-    req := &http.Request{Method: "GET",
-            URL: &url.URL{
-                Scheme: "http",
-                Host:   "169.254.169.254",
-                Path:   "/latest/meta-data/public-hostname"}}
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    if err != nil {
-        return
-    }
-    if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-        var hostBytes []byte
-        hostBytes, err = ioutil.ReadAll(resp.Body)
-        if err == nil {
-            hostname = string(hostBytes)
-        }
-        return
-    }
-    return
+	req := &http.Request{Method: "GET",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "169.254.169.254",
+			Path:   "/latest/meta-data/public-hostname"}}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var hostBytes []byte
+		hostBytes, err = ioutil.ReadAll(resp.Body)
+		if err == nil {
+			hostname = string(hostBytes)
+		}
+		return
+	}
+	return
 }
 
 // -- main
@@ -68,28 +67,24 @@ func main() {
 	log.Printf("Using config %s", configFile)
 	config := util.MzGetConfig(configFile)
 
-	if _, ok := config["shard.currentHost"]; !ok {
+	if _, ok := config["shard.current_host"]; !ok {
 		currentHost := "localhost"
 		if val := os.Getenv("HOST"); len(val) > 0 {
 			currentHost = val
 		} else {
-            val, ok := config["shard.use_aws_host"]
-            if ok {
-                usehost, err := strconv.ParseBool(val.(string))
-                if err ==nil && usehost {
-                    var awsHost string
-                    var err error
-                    awsHost, err = awsGetPublicHostname()
-                    if err == nil {
-                        currentHost = awsHost
-                    }
-                }
-            }
-        }
-		config["shard.currentHost"] = currentHost
+			if util.MzGetFlag(config, "shard.use_aws_host") {
+				var awsHost string
+				var err error
+				awsHost, err = awsGetPublicHostname()
+				if err == nil {
+					currentHost = awsHost
+				}
+			}
+		}
+		config["shard.current_host"] = currentHost
 	}
 
-	log.Printf("CurrentHost: %s", config["shard.currentHost"])
+	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
