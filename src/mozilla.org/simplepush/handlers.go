@@ -16,6 +16,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+    "regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ func proxyNotification(host, path string) (err error) {
 			Path:   path}}
 	client := &http.Client{}
 	resp, err := client.Do(req)
+
 	if err != nil {
 		return err
 	}
@@ -55,6 +57,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	var vers int64
 
 	timer := time.Now()
+    filter := regexp.MustCompile("[^\\w-\\.]")
 
 	logger.Debug("main", fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
 	if req.Method != "PUT" {
@@ -89,14 +92,25 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 			pk)
 		if err != nil {
 			logger.Error("main",
-				fmt.Sprintf("Could not decode token %s, %s", pk, err),
-				nil)
+				         "Could not decode token",
+                         util.JsMap{"primarykey": pk,
+                         "error": err})
 			http.Error(resp, "", http.StatusNotFound)
 			return
 		}
 
 		pk = strings.TrimSpace(string(bpk))
 	}
+
+    logger.Info("main", fmt.Sprintf("%s", filter.Find([]byte(pk))), nil)
+
+    if filter.Find([]byte(pk)) != nil {
+        logger.Error("main",
+                    "Invalid token for update",
+                    nil)
+        http.Error(resp, "Invalid Token", http.StatusNotFound)
+        return
+    }
 
 	uaid, appid, err := storage.ResolvePK(pk)
 	if err != nil {

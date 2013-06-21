@@ -91,7 +91,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 func (self *Worker) handleError(sock PushWS, message util.JsMap, err error) (ret error) {
 	self.log.Info("worker", "Sending error", util.JsMap{"error": err})
 	message["status"] = sperrors.ErrToStatus(err)
-	message["error"] = err.Error()
+	message["error"] = "An unexpected error occurred"
 	return websocket.JSON.Send(sock.Socket, message)
 }
 
