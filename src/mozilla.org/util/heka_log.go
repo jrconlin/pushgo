@@ -10,7 +10,7 @@ import (
 	"github.com/mozilla-services/heka/message"
 	"log"
 	"os"
-    "strconv"
+	"strconv"
 	"time"
 )
 
@@ -40,7 +40,6 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	var logname string
 	var err error
 	pid := int32(os.Getpid())
-	hostname, _ := os.Hostname()
 	encoder = nil
 	sender = nil
 	logname = ""
@@ -53,6 +52,9 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	}
 	if _, ok = conf["heka.logger_name"]; !ok {
 		conf["heka.logger_name"] = "simplepush"
+	}
+	if _, ok = conf["heka.current_host"]; !ok {
+		conf["heka.current_host"], _ = os.Hostname()
 	}
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
@@ -67,7 +69,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		sender:   sender,
 		logname:  logname,
 		pid:      pid,
-		hostname: hostname,
+		hostname: conf["heka.current_host"].(string),
 		conf:     conf}
 }
 
@@ -76,7 +78,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 
 	var base_level int64
 
-    base_level, _ = strconv.ParseInt(MzGet(self.conf, "log.filter", "10"), 10, 0)
+	base_level, _ = strconv.ParseInt(MzGet(self.conf, "log.filter", "10"), 10, 0)
 
 	if int(level) <= int(base_level) {
 		if len(fields) > 0 {

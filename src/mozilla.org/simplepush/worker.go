@@ -39,7 +39,7 @@ const (
 )
 
 func NewWorker(config util.JsMap) *Worker {
-    // Allow [0-9a-z_-]/i as valid ChannelID characters.
+	// Allow [0-9a-z_-]/i as valid ChannelID characters.
 	filter := regexp.MustCompile("[^\\w-]")
 	return &Worker{log: util.NewHekaLogger(config),
 		state:  INACTIVE,
@@ -58,12 +58,14 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			self.log.Error("worker",
-				fmt.Sprintf("Websocket Error %s", err), nil)
+				"Websocket Error",
+				util.JsMap{"error": err})
 			break
 		}
 		if len(raw) > 0 {
 			self.log.Info("worker",
-				fmt.Sprintf("Socket received %s", string(raw)), nil)
+				"Socket receive",
+				util.JsMap{"raw": string(raw)})
 			err := json.Unmarshal(raw, &buffer)
 			if err != nil {
 				self.log.Error("worker",
@@ -71,7 +73,8 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 				break
 			}
 			self.log.Info("worker",
-				fmt.Sprintf("Socket sending %s", buffer), nil)
+				"Socket send",
+				util.JsMap{"raw": buffer})
 			// Only do something if there's something to do.
 			in <- buffer
 		}
@@ -84,7 +87,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 
 // standardize the error reporting back to the client.
 func (self *Worker) handleError(sock PushWS, message util.JsMap, err error) (ret error) {
-	self.log.Info("worker", fmt.Sprintf("Sending error %s", err), nil)
+	self.log.Info("worker", "Sending error", util.JsMap{"error": err})
 	message["status"] = sperrors.ErrToStatus(err)
 	message["error"] = err.Error()
 	return websocket.JSON.Send(sock.Socket, message)
@@ -106,8 +109,9 @@ func (self *Worker) Run(sock PushWS) {
 			// A new Push has happened. Flush out the data to the
 			// device (and potentially remotely wake it if that fails)
 			self.log.Info("worker",
-				fmt.Sprintf("Client Run cmd: %d", cmd.Command),
-				nil)
+				"Client cmd",
+				util.JsMap{"cmd": cmd.Command})
+
 			if cmd.Command == FLUSH {
 				self.log.Info("worker",
 					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
@@ -148,15 +152,14 @@ func (self *Worker) Run(sock PushWS) {
 				err = self.Ack(sock, buffer)
 			case "register":
 				err = self.Register(sock, buffer)
-				self.log.Info("worker", fmt.Sprintf("Reg result:: %s", err), nil)
 			case "unregister":
 				err = self.Unregister(sock, buffer)
 			case "ping":
 				err = self.Ping(sock, buffer)
 			default:
 				self.log.Warn("worker",
-					fmt.Sprintf("I have no idea what [%s] is.", buffer),
-					nil)
+					"Bad command",
+					buffer)
 				err = sperrors.UnknownCommandError
 			}
 			if err != nil {
@@ -176,8 +179,8 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
-				fmt.Sprintf("Unhandled error in Hello: %s", r),
-				nil)
+				"Unhandled error",
+				util.JsMap{"cmd": "hello", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -219,8 +222,9 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		return err
 	}
 
-	self.log.Info("worker", "sending HELLO response....",
-		util.JsMap{"uaid": sock.Uaid})
+	self.log.Debug("worker", "sending response",
+		util.JsMap{"cmd": "hello", "error": err,
+			"uaid": sock.Uaid})
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType": data["messageType"],
 		"status":      result.Command,
@@ -239,8 +243,8 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
-				fmt.Sprintf("Unhandled error in Ack: %s", r),
-				nil)
+				"Unhandled error",
+				util.JsMap{"cmd": "ack", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -258,7 +262,8 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 		self.Flush(sock, 0)
 		return nil
 	}
-	self.log.Info("worker", fmt.Sprintf("Flushed ACK returning %s", err), nil)
+	self.log.Debug("worker", "sending response",
+		util.JsMap{"cmd": "ack", "error": err})
 	return err
 }
 
@@ -267,8 +272,8 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
-				fmt.Sprintf("Unhandled error in Register: %s", r),
-				nil)
+				"Unhandled error",
+				util.JsMap{"cmd": "register", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -302,7 +307,11 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
 	endpoint := result.Arguments.(util.JsMap)["pushEndpoint"].(string)
 	// return the info back to the socket
-	self.log.Info("worker", "Sending REGIS response....", nil)
+	self.log.Debug("worker", "sending response",
+		util.JsMap{"cmd": "register", "error": err,
+			"uaid":      sock.Uaid,
+			"channelid": data["channelID"],
+			"endpoint":  endpoint})
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType":  data["messageType"],
 		"status":       result.Command,
@@ -316,8 +325,8 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
-				fmt.Sprintf("Unhandled error in Unregister: %s", r),
-				nil)
+				"Unhandled error",
+				util.JsMap{"cmd": "register", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -331,7 +340,8 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 	appid := data["channelID"].(string)
 	// Always return success for an UNREG.
 	sock.Store.DeleteAppID(sock.Uaid, appid, false)
-	self.log.Info("worker", "Sending UNREG response ..", nil)
+	self.log.Debug("worker", "sending response",
+		util.JsMap{"cmd": "unregister", "error": err})
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType": data["messageType"],
 		"status":      200,
@@ -367,7 +377,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 		return
 	}
 	updates["messageType"] = messageType
-	self.log.Info("worker", "Flushing data back to socket", updates)
+	self.log.Debug("worker", "Flushing data back to socket", updates)
 	websocket.JSON.Send(sock.Socket, updates)
 }
 

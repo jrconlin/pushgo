@@ -151,7 +151,7 @@ def send_rest_alert(ws):
     url = urlparse.urlparse(ws.update_url)
     http = httplib.HTTPConnection(url.netloc)
     http.set_debuglevel(10)
-    http.request("PUT", url.path+"?vers=123")
+    http.request("PUT", url.path+"?version=123")
     print "#>> "
     resp = http.getresponse()
     if resp.status != 200:

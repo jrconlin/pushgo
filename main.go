@@ -92,6 +92,8 @@ func main() {
 		config["token_key"] = key
 	}
 
+	config["heka.current_host"] = config["shard.current_host"]
+
 	logger = util.NewHekaLogger(config)
 
 	simplepush.Clients = make(map[string]*simplepush.Client)

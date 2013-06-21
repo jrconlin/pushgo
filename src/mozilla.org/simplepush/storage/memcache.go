@@ -64,22 +64,19 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 	defer func() {
 		if err := recover(); err != nil {
 			self.log.Error("storage",
-				fmt.Sprintf("could not fetch record for %s: %s", pk, err),
-				nil)
+				fmt.Sprintf("could not fetch record for %s", pk),
+				util.JsMap{"primarykey": pk, "error": err})
 		}
 	}()
 
 	item, err := self.mc.Get(string(pk))
 	if err != nil {
 		self.log.Error("storage",
-			fmt.Sprintf("Fetch item:: [%s][%s] Error: %s", pk, item, err),
-			nil)
+			"Get Failed",
+			util.JsMap{"primarykey": pk,
+				"error": err})
 		return nil, err
 	}
-
-	self.log.Debug("storage",
-		fmt.Sprintf("Fetch item:: %s, item.Value: %s", item, item.Value),
-		nil)
 
 	json.Unmarshal(item.Value, &result)
 
@@ -87,7 +84,11 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 		return nil, err
 	}
 
-	self.log.Info("storage", fmt.Sprintf("%s => %s", pk, result), nil)
+	self.log.Debug("storage",
+		"Fetched",
+		util.JsMap{"primarykey": pk,
+			"item":  item,
+			"value": item.Value})
 	return result, err
 }
 
@@ -121,8 +122,10 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 
 	if err != nil {
 		self.log.Error("storage",
-			fmt.Sprintf("cannot marshal record [%s], %s", rec, err),
-			nil)
+			"storeRec marshalling failure",
+			util.JsMap{"error": err,
+				"primarykey": pk,
+				"record":     rec})
 		return err
 	}
 
@@ -138,8 +141,10 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 	rec["l"] = time.Now().UTC().Unix()
 
 	ttl, err := strconv.ParseInt(ttls, 0, 0)
-	self.log.Info("storage",
-		fmt.Sprintf("Storing record %s => %s", pk, raw), nil)
+	self.log.Debug("storage",
+		"Storing record",
+		util.JsMap{"primarykey": pk,
+			"record": raw})
 	item := &memcache.Item{Key: pk,
 		Value:      []byte(raw),
 		Expiration: int32(ttl)}
@@ -218,7 +223,11 @@ func (self *Storage) UpdateChannel(pk string, vers int64) (err error) {
 	}
 	// No record found or the record setting was DELETED
 	uaid, appid, err := ResolvePK(pk)
-	fmt.Printf("Registering %s %s %d\n", uaid, appid, vers)
+	self.log.Debug("storage",
+		"Registering channel",
+		util.JsMap{"uaid": uaid,
+			"channelID": appid,
+			"version":   vers})
 	err = self.RegisterAppID(uaid, appid, vers)
 	if err == sperrors.ChannelExistsError {
 		pk, err = GenPK(uaid, appid)
@@ -300,7 +309,9 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 			rec["s"] = DELETED
 			err = self.storeRec(pk, rec)
 		} else {
-			self.log.Error("storage", fmt.Sprintf("Could not delete %s, %s", pk, err), nil)
+			self.log.Error("storage",
+				"Could not delete Channel",
+				util.JsMap{"primarykey": pk, "error": err})
 		}
 	} else {
 		err = sperrors.InvalidChannelError
@@ -320,65 +331,72 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		// TODO: Puke on error
 		items = append(items, pk)
 	}
-	self.log.Info("storage", fmt.Sprintf("Fetching items %s", items), nil)
-
+	self.log.Debug("storage",
+		"Fetching items",
+		util.JsMap{"uaid": uaid,
+			"items": items})
 	recs, err := self.mc.GetMulti(items)
 	if err != nil {
-		self.log.Error("storage", fmt.Sprintf("Fetch failed: %s", err), nil)
+		self.log.Error("storage", "GetUpdate failed",
+			util.JsMap{"uaid": uaid,
+				"error": err})
 		return nil, err
 	}
 
 	var update util.JsMap
 	if len(recs) == 0 {
-		self.log.Info("storage",
-			fmt.Sprintf("No records found for %s", uaid),
-			nil)
+		self.log.Debug("storage",
+			"GetUpdates No records found", util.JsMap{"uaid": uaid})
 		return nil, err
 	}
 	for _, rec := range recs {
 		uaid, appid, err := ResolvePK(rec.Key)
-		self.log.Info("storage",
-			fmt.Sprintf("Fetched %s record %s", uaid, rec.Value),
-			nil)
+		self.log.Debug("storage",
+			"GetUpdates Fetched record ",
+			util.JsMap{"uaid": uaid,
+				"value": rec.Value})
 		err = json.Unmarshal(rec.Value, &update)
 		if err != nil {
 			return nil, err
 		}
 		if int64(update["l"].(float64)) < lastAccessed {
-			self.log.Info("storage", "Skipping record...", nil)
+			self.log.Debug("storage", "Skipping record...", util.JsMap{"rec": update})
 			continue
 		}
 		// Yay! Go translates numeric interface values as float64s
 		// Apparently float64(1) != int(1).
 		switch update["s"] {
 		case float64(LIVE):
-            var fvers float64
+			var fvers float64
 			var ok bool
 			// log.Printf("Adding record... %s", appid)
 			newRec := make(util.JsMap)
 			newRec["channelID"] = appid
-            fvers, ok = update["v"].(float64)
+			fvers, ok = update["v"].(float64)
 			if !ok {
-                var cerr error
-                self.log.Error("storage", fmt.Sprintf("failed to conv %s", update), nil)
+				var cerr error
+				self.log.Warn("storage",
+					"GetUpdates Possibly bad version",
+					util.JsMap{"update": update})
 				fvers, cerr = strconv.ParseFloat(update["v"].(string), 0)
 				if cerr != nil {
 					self.log.Error("storage",
-						fmt.Sprintf("Could not convert %s, %s", update["v"].(string), cerr),
-						nil)
+						"GetUpdates Using Timestamp",
+						util.JsMap{"update": update})
 					fvers = float64(time.Now().UTC().Unix())
 				}
 			}
-            newRec["version"] = int64(fvers)
+			newRec["version"] = int64(fvers)
 			updates = append(updates, newRec)
 		case float64(DELETED):
 			self.log.Info("storage",
-				fmt.Sprintf("Deleting record... %s", appid), nil)
+				"GetUpdates Deleting record",
+				util.JsMap{"update": update})
 			expired = append(expired, appid)
 		default:
 			self.log.Warn("storage",
-				fmt.Sprintf("WARN : Unknown state %d", update["s"]),
-				nil)
+				"Unknown state",
+				util.JsMap{"update": update})
 		}
 
 	}
@@ -435,8 +453,9 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 		return sperrors.MissingDataError
 	}
 
-	self.log.Debug("storage", fmt.Sprintf("SetUAIDHost:: setting %s => %s",
-		prefix+uaid, host), nil)
+	self.log.Debug("storage",
+		"SetUAIDHost",
+		util.JsMap{"uaid": uaid, "host": host})
 	return self.mc.Set(&memcache.Item{Key: prefix + uaid, Value: []byte(host)})
 }
 
@@ -447,20 +466,25 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	defer func(defaultHost string) {
 		if err := recover(); err != nil {
 			self.log.Error("storage",
-				fmt.Sprintf("could not fetch host for uaid %s: %s", uaid, err),
-				nil)
+				"GetUAIDHost no host",
+				util.JsMap{"uaid": uaid,
+					"error": err})
 		}
 	}(defaultHost)
 
 	item, err := self.mc.Get(prefix + uaid)
 	if err != nil {
 		self.log.Error("storage",
-			fmt.Sprintf("Fetch item:: [%s][%s] Error: %s", uaid, item, err),
-			nil)
+			"GetUAIDHost Fetch error",
+			util.JsMap{"uaid": uaid,
+				"item":  item,
+				"error": err})
 		return defaultHost, err
 	}
-	self.log.Debug("storage", fmt.Sprintf("GetUAIDHost:: %s is on %s",
-		prefix+uaid, string(item.Value)), nil)
+	self.log.Debug("storage",
+		"GetUAIDHost",
+		util.JsMap{"uaid": uaid,
+			"host": string(item.Value)})
 	return string(item.Value), nil
 }
 

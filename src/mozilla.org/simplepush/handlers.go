@@ -62,7 +62,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		return
 	}
 
-	svers := req.FormValue("vers")
+	svers := req.FormValue("version")
 	if svers != "" {
 		vers, err = strconv.ParseInt(svers, 10, 64)
 		if err != nil || vers < 0 {

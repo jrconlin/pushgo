@@ -8,7 +8,6 @@ import (
 	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
-	"fmt"
 	"strings"
 	"time"
 )
@@ -95,17 +94,19 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	// Raw client
 	if args["uaid"] == "" {
 		uaid, _ = GenUUID4()
-		self.log.Info("server",
-			fmt.Sprintf("Generating new UAID %s", uaid), nil)
+		self.log.Debug("server",
+			"Generating new UAID",
+			util.JsMap{"uaid": uaid})
 	} else {
 		uaid = args["uaid"].(string)
-		self.log.Info("server",
-			fmt.Sprintf("Using existing UAID '%s'", uaid), nil)
+		self.log.Debug("server",
+			"Using existing UAID",
+			util.JsMap{"uaid": uaid})
 		delete(args, "uaid")
 	}
 
 	prop := self.Set_proprietary_info(args)
-	self.log.Info("server", fmt.Sprintf("INFO : New prop %s", prop), nil)
+	self.log.Debug("server", "Proprietary Info", util.JsMap{"info": prop})
 
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
@@ -133,7 +134,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	uaid := sock.Uaid
-	self.log.Info("server", fmt.Sprintf("Cleaning up socket %s", uaid), nil)
+	self.log.Debug("server", "Cleaning up socket", util.JsMap{"uaid": uaid})
 	self.log.Info("timer", "Socket connection terminated", util.JsMap{
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
@@ -168,23 +169,22 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 		token, err = Encode(self.key, btoken)
 		if err != nil {
 			self.log.Error("server",
-				fmt.Sprintf("Token Encoding error: %s", err),
-				nil)
+				"Token Encoding error",
+				util.JsMap{"uaid": sock.Uaid,
+					"channelID": args["channelID"]})
 			return 500, nil
 		}
 
 	}
-	self.log.Info("server",
-		fmt.Sprintf("UAID %s, channel %s, Token %s", sock.Uaid,
-			args["channelID"].(string),
-			token), nil)
 	// cheezy variable replacement.
 	args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
 		"<token>", token, -1)
 	self.log.Info("server",
-		fmt.Sprintf("regis generated callback %s for %s.%s",
-			args["pushEndpoint"], sock.Uaid, args["channelID"]),
-		nil)
+		"Generated Endpoint",
+		util.JsMap{"uaid": sock.Uaid,
+			"channelID": args["channelID"],
+			"token":     token,
+			"endpoint":  args["pushEndpoint"]})
 	return 200, args
 }
 
@@ -200,7 +200,9 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 		r := recover()
 		if r != nil {
 			self.log.Error("server",
-				fmt.Sprintf("requestFlush failed  %s", r), nil)
+				"requestFlush failed",
+				util.JsMap{"error": r,
+					"uaid": client.UAID})
 			if client != nil {
 				self.ClientPing(client.Prop)
 			}
@@ -210,8 +212,8 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 
 	if client != nil {
 		self.log.Info("server",
-			fmt.Sprintf("Requesting flush for %s",
-				client.UAID), nil)
+			"Requesting flush",
+			util.JsMap{"uaid": client.UAID})
 		client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
 			Arguments: &util.JsMap{"uaid": client.UAID}}
 	}
@@ -224,8 +226,9 @@ func Flush(client *Client) (err error) {
 }
 
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
-	self.log.Info("server",
-		fmt.Sprintf("Server Handling command %s", cmd), nil)
+	self.log.Debug("server",
+		"Handling command",
+		util.JsMap{"cmd": cmd})
 	var ret util.JsMap
 	if cmd.Arguments != nil {
 		args = cmd.Arguments.(util.JsMap)
@@ -235,16 +238,16 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	switch int(cmd.Command) {
 	case HELLO:
-		self.log.Info("server", "Server Handling HELLO event...", nil)
+		self.log.Debug("server", "Handling HELLO event", nil)
 		result, ret = self.Hello(cmd, sock)
 	case UNREG:
-		self.log.Info("server", "Server Handling UNREG event...", nil)
+		self.log.Debug("server", "Handling UNREG event", nil)
 		result, ret = self.Unreg(cmd, sock)
 	case REGIS:
-		self.log.Info("server", "Server handling REGIS event...", nil)
+		self.log.Debug("server", "Handling REGIS event", nil)
 		result, ret = self.Regis(cmd, sock)
 	case DIE:
-		self.log.Info("server", "Server cleanup...", nil)
+		self.log.Debug("server", "Cleanup", nil)
 		self.Bye(sock)
 		return 0, nil
 	}
