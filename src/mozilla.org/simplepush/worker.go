@@ -62,7 +62,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 				util.JsMap{"error": err})
 			break
 		}
-		if len(raw) > 0 {
+		if len(raw) > 5 {
 			self.log.Info("worker",
 				"Socket receive",
 				util.JsMap{"raw": string(raw)})
@@ -72,9 +72,11 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 					"Unparsable data", util.JsMap{"raw": raw})
 				break
 			}
-			self.log.Info("worker",
-				"Socket send",
-				util.JsMap{"raw": buffer})
+			if len(buffer) > 10 {
+				self.log.Info("worker",
+					"Socket send",
+					util.JsMap{"raw": buffer})
+			}
 			// Only do something if there's something to do.
 			in <- buffer
 		}
