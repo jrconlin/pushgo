@@ -164,7 +164,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	if err != nil {
 		errstr := fmt.Sprintf("Could not update channel %s.%s :: %s", uaid, appid, err)
 		logger.Warn("main", errstr, nil)
-		status := sperrors.ErrToStatus(err)
+		status, _ := sperrors.ErrToStatus(err)
 		http.Error(resp, errstr, status)
 		return
 	}

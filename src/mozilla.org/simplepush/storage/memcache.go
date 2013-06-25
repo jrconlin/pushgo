@@ -393,6 +393,8 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 				"GetUpdates Deleting record",
 				util.JsMap{"update": update})
 			expired = append(expired, appid)
+        case float64(REGISTERED):
+            // Item registered, but not yet active. Ignore it.
 		default:
 			self.log.Warn("storage",
 				"Unknown state",

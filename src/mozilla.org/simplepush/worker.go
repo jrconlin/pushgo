@@ -62,10 +62,12 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 				util.JsMap{"error": err})
 			break
 		}
-		if len(raw) > 5 {
-			self.log.Info("worker",
-				"Socket receive",
-				util.JsMap{"raw": string(raw)})
+		if len(raw) > 0 {
+			if len(raw) > 5 {
+				self.log.Info("worker",
+					"Socket receive",
+					util.JsMap{"raw": string(raw)})
+			}
 			err := json.Unmarshal(raw, &buffer)
 			if err != nil {
 				self.log.Error("worker",
@@ -90,8 +92,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 // standardize the error reporting back to the client.
 func (self *Worker) handleError(sock PushWS, message util.JsMap, err error) (ret error) {
 	self.log.Info("worker", "Sending error", util.JsMap{"error": err})
-	message["status"] = sperrors.ErrToStatus(err)
-	message["error"] = "An unexpected error occurred"
+	message["status"], message["error"] = sperrors.ErrToStatus(err)
 	return websocket.JSON.Send(sock.Socket, message)
 }
 
@@ -309,16 +310,13 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
 	endpoint := result.Arguments.(util.JsMap)["pushEndpoint"].(string)
 	// return the info back to the socket
-	self.log.Debug("worker", "sending response",
-		util.JsMap{"cmd": "register", "error": err,
-			"uaid":      sock.Uaid,
-			"channelid": data["channelID"],
-			"endpoint":  endpoint})
-	websocket.JSON.Send(sock.Socket, util.JsMap{
-		"messageType":  data["messageType"],
-		"status":       result.Command,
+	reply := util.JsMap{"messageType": data["messageType"],
+		"uaid":         sock.Uaid,
+		"status":       200,
 		"channelID":    data["channelID"],
-		"pushEndpoint": endpoint})
+		"pushEndpoint": endpoint}
+	self.log.Debug("worker", "sending response", reply)
+	websocket.JSON.Send(sock.Socket, reply)
 	return err
 }
 
@@ -333,10 +331,12 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 		}
 	}()
 	if sock.Uaid == "" {
+		self.log.Error("worker", "Unregister failed, missing sock.uaid", nil)
 		return sperrors.InvalidCommandError
 	}
 	data := buffer.(util.JsMap)
 	if data["channelID"] == nil {
+		self.log.Error("worker", "Unregister failed, missing channelID", nil)
 		return sperrors.MissingDataError
 	}
 	appid := data["channelID"].(string)

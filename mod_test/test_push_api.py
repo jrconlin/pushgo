@@ -73,20 +73,20 @@ class TestPushAPI(unittest.TestCase):
         ret = self._msg({"messagetype": "hello",
                          "channelIDs": [add_epoch("CASE_CHAN")],
                          "uaid": "CASE_UAID"})
-        self._compare_dict(ret, {'status': 401, 'error': 'Unknown command'})
+        self._compare_dict(ret, {'status': 401, 'error': 'Invalid command'})
 
         # leading trailing spaces
         ret = self._msg({" messageType ": "hello",
                          "channelIDs": [add_epoch("CASE_CHAN")],
                          "uaid": "CASE_UAID"})
-        self._compare_dict(ret, {'status': 401, 'error': 'Unknown command'})
+        self._compare_dict(ret, {'status': 401, 'error': 'Invalid command'})
 
         ret = self._msg({"messageType": "hello",
                          "ChannelIds": [add_epoch("CASE_CHAN")],
                          "uaid": "CASE_UAID"})
         self._compare_dict(ret, {'status': 401,
                                  'error':
-                                 'Missing required fields for command'})
+                                 'Invalid command'})
 
         """ Issue #32
         ret = self._msg({"messageType": "hello",
@@ -106,7 +106,7 @@ class TestPushAPI(unittest.TestCase):
                          "uaiD": "CASE_UAID"})
         self._compare_dict(ret, {'status': 401,
                                  'error':
-                                 'Missing required fields for command'})
+                                 'Invalid command'})
 
         # test ack
         self._msg({"messageType": "acK",
@@ -114,7 +114,7 @@ class TestPushAPI(unittest.TestCase):
                    "uaid": "CASE_UAID"})
         self._compare_dict(ret, {'status': 401,
                                  'error':
-                                 'Missing required fields for command'})
+                                 'Invalid command'})
 
         # test ping
         self._msg({"messageType": "PING",
@@ -122,13 +122,13 @@ class TestPushAPI(unittest.TestCase):
                    "uaid": "CASE_UAID"})
         self._compare_dict(ret, {'status': 401,
                                  'error':
-                                 'Missing required fields for command'})
+                                 'Invalid command'})
 
     def test_empty_args(self):
         ret = self._msg({"messageType": "",
                          "channelIDs": [add_epoch("CASE_CHAN")],
                          "uaid": "CASE_UAID"})
-        self._compare_dict(ret, {'status': 401, 'error': 'Unknown command'})
+        self._compare_dict(ret, {'status': 401, 'error': 'Invalid command'})
 
         ret = self._msg({"messageType": "hello",
                          "channelIDs": [],
@@ -159,7 +159,7 @@ class TestPushAPI(unittest.TestCase):
                          "uaid": "CASE_UAID"})
         self._compare_dict(ret, {'status': 503,
                                  'messageType': 'register',
-                                 'error': 'No Channel ID Specified'})
+                                 'error': 'Service Unavailable'})
 
         # test ping
         # XXX Bug - ping after error isn't updated in response
@@ -176,7 +176,7 @@ class TestPushAPI(unittest.TestCase):
             if dt == 'HeLLO':
                 verify_json["status"] = 200
             else:
-                verify_json["error"] = "Unknown command"
+                verify_json["error"] = "Invalid command"
             self._compare_dict(ret, verify_json)
 
         # sending non strings to make sure it doesn't break server
@@ -213,7 +213,7 @@ class TestPushAPI(unittest.TestCase):
             elif len(string) > 100:
                 # 100 char limit for UAID and Channel
                 valid_json["status"] = 401
-                valid_json["error"] = "An Invalid value was specified"
+                valid_json["error"] = "Invalid command"
 
             self._compare_dict(ret, valid_json)
 
@@ -231,11 +231,10 @@ class TestPushAPI(unittest.TestCase):
                 self._compare_dict(ret, {"messageType": "hello",
                                          "status": 401,
                                          "error":
-                                         "Missing required fields for " +
-                                         "command"})
+                                         "Invalid command"})
             else:
                 self._compare_dict(ret, {"status": 401,
-                                         "error": "Unknown command"})
+                                         "error": "Invalid command"})
 
             invalid_ws.close()
 
@@ -283,7 +282,7 @@ class TestPushAPI(unittest.TestCase):
         self._compare_dict(ret, {"messageType": "register",
                                  "status": 401,
                                  "error":
-                                 "Missing required fields for command"})
+                                 "Invalid command"})
 
     def test_reg_plural(self):
         """ Test registration with a lot of channels and uaids """
@@ -364,7 +363,7 @@ class TestPushAPI(unittest.TestCase):
                          "channelID": "%s" % chan_150[: 101]})
         self._compare_dict(ret, {"status": 401,
                                  "messageType": "register",
-                                 "error": "An Invalid value was specified"})
+                                 "error": "Invalid command"})
 
         ret = self._msg({"messageType": "register",
                          "channelID": "%s" % chan_150[: 100]})

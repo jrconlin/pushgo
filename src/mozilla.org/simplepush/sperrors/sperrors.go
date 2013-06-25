@@ -17,7 +17,7 @@ var NoRecordWarning = errors.New("No record found")
 var ServerError = errors.New("An unknown Error occured")
 var UnknownCommandError = errors.New("Unknown command")
 
-func ErrToStatus(err error) (status int) {
+func ErrToStatus(err error) (status int, message string) {
 	status = 200
 	if err != nil {
 		switch err {
@@ -27,16 +27,19 @@ func ErrToStatus(err error) (status int) {
 			NoChannelError,
 			NoRecordWarning:
 			status = http.StatusServiceUnavailable
-		case UnknownCommandError,
-			MissingDataError,
+            message = "Service Unavailable"
+        case MissingDataError,
 			InvalidCommandError,
-			InvalidDataError:
-			status = 401
+			InvalidDataError,
+			UnknownCommandError:
+            status = 401
+            message = "Invalid command"
 		default:
 			status = 500
+            message = "An unexpected error occurred"
 		}
 	}
-	return status
+	return status, message
 }
 
 // o4fs
