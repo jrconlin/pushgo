@@ -130,10 +130,11 @@ func (self *Worker) Run(sock PushWS) {
 				sock.Socket.Close()
 				return
 			}(sock)
-
-			self.log.Info("worker",
-				fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
-					len(buffer)), nil)
+			if len(buffer) > 0 {
+				self.log.Info("worker",
+					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
+						len(buffer)), nil)
+			}
 			if len(buffer) == 0 {
 				// Empty buffers are "pings"
 				buffer["messageType"] = "ping"

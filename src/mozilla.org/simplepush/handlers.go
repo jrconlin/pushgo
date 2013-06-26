@@ -80,7 +80,8 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	elements := strings.Split(req.URL.Path, "/")
 	pk := elements[len(elements)-1]
 	if len(pk) == 0 {
-		logger.Error("main", "No token, rejecting request", nil)
+		logger.Error("main", "No token, rejecting request",
+            util.JsMap{"remoteAddr": req.RemoteAddr})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		return
 	}
@@ -94,6 +95,8 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 			logger.Error("main",
 				         "Could not decode token",
                          util.JsMap{"primarykey": pk,
+                         "remoteAddr": req.RemoteAddr,
+                         "path": req.RequestURI,
                          "error": err})
 			http.Error(resp, "", http.StatusNotFound)
 			return
@@ -118,6 +121,15 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 			fmt.Sprintf("Could not resolve PK %s, %s", pk, err), nil)
 		return
 	}
+
+    if appid == "" {
+        logger.Error("main",
+            "Incomplete primary key",
+            util.JsMap{"uaid": uaid,
+                "channelID": appid,
+                "remoteAddr": req.RemoteAddr})
+       return
+    }
 
 	if iport, ok := config["port"]; ok {
 		port = iport.(string)
