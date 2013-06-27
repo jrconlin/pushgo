@@ -8,6 +8,7 @@ import (
 	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
+	"fmt"
 	"strings"
 	"time"
 )
@@ -179,6 +180,10 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	// cheezy variable replacement.
 	args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
 		"<token>", token, -1)
+	host := fmt.Sprintf("%s:%s", self.config["shard.current_host"].(string),
+		self.config["port"].(string))
+	args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
+		"<current_host>", host, -1)
 	self.log.Info("server",
 		"Generated Endpoint",
 		util.JsMap{"uaid": sock.Uaid,
