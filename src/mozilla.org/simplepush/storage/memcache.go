@@ -104,7 +104,8 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
 	arr.Sort()
 	err = self.mc.Set(&memcache.Item{Key: uaid,
-		Value: []byte(strings.Join(arr, ","))})
+		Value: []byte(strings.Join(arr, ","))},
+        Expiration: 0)
 	return err
 }
 
@@ -177,11 +178,11 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 	if _, ok = config["db.timeout_del"]; !ok {
 		config["db.timeout_del"] = "86400"
 	}
-	if _, ok = config["shard.defaultHost"]; !ok {
-		config["shard.defaultHost"] = "localhost"
+	if _, ok = config["shard.default_host"]; !ok {
+		config["shard.default_host"] = "localhost"
 	}
-	if _, ok = config["shard.currentHost"]; !ok {
-		config["shard.currentHost"] = config["shard.defaultHost"]
+	if _, ok = config["shard.current_host"]; !ok {
+		config["shard.current_host"] = config["shard.default_host"]
 	}
 	if _, ok = config["shard.prefix"]; !ok {
 		config["shard.prefix"] = "_h-"
@@ -393,8 +394,8 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 				"GetUpdates Deleting record",
 				util.JsMap{"update": update})
 			expired = append(expired, appid)
-        case float64(REGISTERED):
-            // Item registered, but not yet active. Ignore it.
+		case float64(REGISTERED):
+			// Item registered, but not yet active. Ignore it.
 		default:
 			self.log.Warn("storage",
 				"Unknown state",
@@ -448,7 +449,7 @@ func (self *Storage) ReloadData(uaid string, updates []string) (err error) {
 }
 
 func (self *Storage) SetUAIDHost(uaid string) (err error) {
-	host := self.config["shard.currentHost"].(string)
+	host := self.config["shard.current_host"].(string)
 	prefix := self.config["shard.prefix"].(string)
 
 	if uaid == "" {
@@ -458,11 +459,14 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 	self.log.Debug("storage",
 		"SetUAIDHost",
 		util.JsMap{"uaid": uaid, "host": host})
-	return self.mc.Set(&memcache.Item{Key: prefix + uaid, Value: []byte(host)})
+	ttl,_ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
+	return self.mc.Set(&memcache.Item{Key: prefix + uaid,
+		Value:      []byte(host),
+		Expiration: self.config["db.timeout_live"]})
 }
 
 func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
-	defaultHost := self.config["shard.defaultHost"].(string)
+	defaultHost := self.config["shard.default_host"].(string)
 	prefix := self.config["shard.prefix"].(string)
 
 	defer func(defaultHost string) {
@@ -487,6 +491,8 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		"GetUAIDHost",
 		util.JsMap{"uaid": uaid,
 			"host": string(item.Value)})
+    // reinforce the link.
+    self.setUAIDHost(string(item.Value))
 	return string(item.Value), nil
 }
 
