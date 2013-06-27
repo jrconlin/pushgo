@@ -118,7 +118,7 @@ func (self *Worker) Run(sock PushWS) {
 			if cmd.Command == FLUSH {
 				self.log.Info("worker",
 					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
-				self.Flush(sock, time.Now().UTC().Unix())
+				self.Flush(sock, 0)
 				// additional non-client commands are TBD.
 			}
 		case buffer := <-in:

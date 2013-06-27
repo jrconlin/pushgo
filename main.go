@@ -9,14 +9,10 @@ import (
 	"mozilla.org/simplepush"
 	"mozilla.org/util"
 
-	"encoding/base64"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
-	"os"
 )
 
 var logger *util.HekaLogger
@@ -25,36 +21,11 @@ var logger *util.HekaLogger
 func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.HekaLogger)) http.HandlerFunc {
 	config := util.MzGetConfig("config.ini")
 	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
+    config = simplepush.FixConfig(config)
 
 	return func(resp http.ResponseWriter, req *http.Request) {
 		fn(resp, req, config, logger)
 	}
-}
-
-func awsGetPublicHostname() (hostname string, err error) {
-	req := &http.Request{Method: "GET",
-		URL: &url.URL{
-			Scheme: "http",
-			Host:   "169.254.169.254",
-			Path:   "/latest/meta-data/public-hostname"}}
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		var hostBytes []byte
-		hostBytes, err = ioutil.ReadAll(resp.Body)
-		if err == nil {
-			hostname = string(hostBytes)
-		}
-		return
-	}
-	return
 }
 
 // -- main
@@ -67,32 +38,8 @@ func main() {
 	log.Printf("Using config %s", configFile)
 	config := util.MzGetConfig(configFile)
 
-	if _, ok := config["shard.current_host"]; !ok {
-		currentHost := "localhost"
-		if val := os.Getenv("HOST"); len(val) > 0 {
-			currentHost = val
-		} else {
-			if util.MzGetFlag(config, "shard.use_aws_host") {
-				var awsHost string
-				var err error
-				awsHost, err = awsGetPublicHostname()
-				if err == nil {
-					currentHost = awsHost
-				}
-			}
-		}
-		config["shard.current_host"] = currentHost
-	}
-
+    config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
-
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
-
-	config["heka.current_host"] = config["shard.current_host"]
 
 	logger = util.NewHekaLogger(config)
 

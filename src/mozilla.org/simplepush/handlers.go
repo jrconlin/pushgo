@@ -16,11 +16,64 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+    "os"
     "regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+func awsGetPublicHostname() (hostname string, err error) {
+	req := &http.Request{Method: "GET",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "169.254.169.254",
+			Path:   "/latest/meta-data/public-hostname"}}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var hostBytes []byte
+		hostBytes, err = ioutil.ReadAll(resp.Body)
+		if err == nil {
+			hostname = string(hostBytes)
+		}
+		return
+	}
+	return
+}
+
+
+func FixConfig(config util.JsMap) (util.JsMap) {
+	if _, ok := config["shard.current_host"]; !ok {
+		currentHost := "localhost"
+		if val := os.Getenv("HOST"); len(val) > 0 {
+			currentHost = val
+		} else {
+			if util.MzGetFlag(config, "shard.use_aws_host") {
+				var awsHost string
+				var err error
+				awsHost, err = awsGetPublicHostname()
+				if err == nil {
+					currentHost = awsHost
+				}
+			}
+		}
+		config["shard.current_host"] = currentHost
+	}
+	// Convert the token_key from base64 (if present)
+	if k, ok := config["token_key"]; ok {
+		key, _ := base64.URLEncoding.DecodeString(k.(string))
+		config["token_key"] = key
+	}
+
+	config["heka.current_host"] = config["shard.current_host"]
+
+    return config
+
+}
 
 // VIP response
 func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
@@ -197,9 +250,10 @@ func PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
 	// can we pass this in somehow?
 	config := util.MzGetConfig("config.ini")
+    config = FixConfig(config)
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
+  		key, _ := base64.URLEncoding.DecodeString(string(k.([]uint8)))
 		config["token_key"] = key
 	}
 	logger := util.NewHekaLogger(config)
