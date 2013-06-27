@@ -63,6 +63,14 @@ func FixConfig(config util.JsMap) (util.JsMap) {
 		}
 		config["shard.current_host"] = currentHost
 	}
+	// Convert the token_key from base64 (if present)
+	if k, ok := config["token_key"]; ok {
+		key, _ := base64.URLEncoding.DecodeString(k.(string))
+		config["token_key"] = key
+	}
+
+	config["heka.current_host"] = config["shard.current_host"]
+
     return config
 
 }

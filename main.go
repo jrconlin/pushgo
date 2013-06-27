@@ -9,7 +9,6 @@ import (
 	"mozilla.org/simplepush"
 	"mozilla.org/util"
 
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -22,10 +21,7 @@ var logger *util.HekaLogger
 func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.HekaLogger)) http.HandlerFunc {
 	config := util.MzGetConfig("config.ini")
 	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
+    config = simplepush.FixConfig(config)
 
 	return func(resp http.ResponseWriter, req *http.Request) {
 		fn(resp, req, config, logger)
@@ -44,14 +40,6 @@ func main() {
 
     config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
-
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
-		config["token_key"] = key
-	}
-
-	config["heka.current_host"] = config["shard.current_host"]
 
 	logger = util.NewHekaLogger(config)
 
