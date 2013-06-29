@@ -46,7 +46,7 @@ class PushTestCase(unittest.TestCase):
                 print 'Unable to parse json:', e
                 raise AssertionError, e
 
-    def compare_dict(self, ret_data, exp_data):
+    def compare_dict(self, ret_data, exp_data, exit_on_assert=False):
         """ compares two dictionaries and raises assert with info """
         self.log("RESPONSE GOT:", ret_data)
         self.log("RESPONSE EXPECTED:", exp_data)
@@ -55,6 +55,8 @@ class PushTestCase(unittest.TestCase):
 
         if diff["errors"]:
             print 'AssertionError', diff["errors"]
+            if exit_on_assert:
+                exit("AssertionError: %s" % diff["errors"])
             raise AssertionError, diff["errors"]
 
     def validate_endpoint(self, endpoint):

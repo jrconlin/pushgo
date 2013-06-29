@@ -14,16 +14,20 @@ def get_uaid(chan_str):
     """uniquify our channels so there's no collision"""
     return "%s%s" % (chan_str, str_gen(16))
 
-def send_http_put(update_path, args='version=123'):
+def send_http_put(update_path, args='version=123', ct='application/x-www-form-urlencoded', exit_on_assert=False):
     """ executes an HTTP PUT with version"""
-    print_log('update_path', update_path)
+    print_log('send_http_put', update_path)
     opener = urllib2.build_opener(urllib2.HTTPHandler)
-    request = urllib2.Request(update_path, data=args)
+    request = urllib2.Request(update_path, args)
+    request.add_header('Content-Type', ct)
     request.get_method = lambda: 'PUT'
     try:
         url = opener.open(request)
-    except HTTPError, (errno, msg):
-        raise
+    except Exception, e:
+        if exit_on_assert:
+            exit('Exception in HTTP PUT: %s' % e)
+        raise Exception, e
+
     url.close()
     return url.getcode()
 
