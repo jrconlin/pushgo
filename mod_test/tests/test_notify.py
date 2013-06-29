@@ -12,60 +12,92 @@ class TestNotify(PushTestCase):
             websocket.enableTrace(True)
 
     def test_two_chan(self):
-        # PUT to unregistered endpoint
+        self.chan1 = ""
+        self.chan2 = ""
+        self.uaid = get_uaid('notify')
+
         def on_close(ws):
             self.log('on_close:')
+
+        def _assert_equal(a, b):
+            """ Running socket swallows asserts, force an exit on mismatch """
+            if a != b:
+                self.log('ERROR: value mismatch:', '%s != %s' % (a, b))
+                exit('assert equal mismatch: %s != %s' % (a, b))
+
+        def _check_updates(updates_list, chan1_val="", chan2_val=""):
+            for chan in updates_list:
+                if chan1_val != "" and chan["channelID"] == "chan1":
+                    _assert_equal(chan["version"], chan1_val)
+                if chan2_val != "" and chan["channelID"] == "chan2":
+                    _assert_equal(chan["version"], chan2_val)
+            
+            return
 
         def on_message(ws, message):
             ret = json.loads(message)
             self.log('on_msg:', ret)
             self.log('state', ws.state)
+
             if ws.state == 'hello':
-                reg_chan(ws)
-            elif ws.state == 'register':
-                ws.update_url = ret.get("pushEndpoint")
-                self.log('update_url', ws.update_url)
-                send_update_1(ws.update_url)
+                reg_chan(ws, 'register1', 'chan1')
+            elif ws.state == 'register1':
+                # register chan1
+                self.chan1 = ret.get("pushEndpoint")
+                self.log('self.chan1', self.chan1)
+                reg_chan(ws, 'register2', 'chan2')
+            elif ws.state == 'register2':
+                # register chan2
+                self.chan2 = ret.get("pushEndpoint")
+                self.log('self.chan2', self.chan2)
+                # http put to chan1
+                send_update(self.chan1, 'version=12345789', 'update1')
             elif ws.state == 'update1':
-                self.compare_dict(ret, {"messageType":"notification"})
-                self.assertEqual(ret["updates"][0]["channelID"], "chan1")
-                for chan in ret["updates"]:
-                    if chan["channelID"] == "chan1":
-                        self.assertEqual(chan["version"], 98764321)
-                send_update_2(ws.update_url)
+                #verify chan1
+                self.compare_dict(ret, {"messageType":"notification"}, True)
+                _assert_equal(ret["updates"][0]["channelID"], "chan1")
+                _check_updates(ret["updates"], 12345789)
+
+                # http put to chan2
+                send_update(self.chan2, 'version=987654321', 'update2')
             elif ws.state == 'update2':
-                self.compare_dict(ret, {"messageType":"notification"})
-                self.assertEqual(len(ret["updates"]), 2)
-                for chan in ret["updates"]:
-                    if chan["channelID"] == "chan1_diff":
-                        self.assertEqual(chan["version"], 123)
-                    elif chan["channelID"] == "chan1":
-                        self.assertEqual(chan["version"], 98764321)
-                send_update_3(ws.update_url)
+                #verify chan1 and chan2
+                self.compare_dict(ret, {"messageType":"notification"}, True)
+                _check_updates(ret["updates"], 12345789, 987654321)
+                send_ack(ws, ret["updates"])
+
+                # http put to chan1
+                send_update(self.chan1, 'version=1', 'update3')
             elif ws.state == 'update3':
                 # update the same channel
-                self.compare_dict(ret, {"messageType":"notification"})
-                for chan in ret["updates"]:
-                    if chan["channelID"] == "chan1":
-                        self.assertEqual(chan["version"], 98764322)
-                    else:
-                        # old chan_diff version is the same
-                        self.assertEqual(chan["version"], 123)
-                send_update_4(ws.update_url)
+                self.compare_dict(ret, {"messageType":"notification"}, True)
+                _check_updates(ret["updates"], 1)
+                send_ack(ws, ret["updates"])
+
+                # http put to chan2
+                send_update(self.chan2, 'version=0', 'update4', 'text/plain')
             elif ws.state == 'update4':
                 # update the same channel
-                self.compare_dict(ret, {"messageType":"notification"})
-                # invalid version string results in epoch
+                self.compare_dict(ret, {"messageType":"notification"}, True)
                 for chan in ret["updates"]:
-                    if chan["channelID"] == "chan1_invalid":
-                        self.assertEqual(len(str(chan["version"])), 10)
-                send_ack(ws, 'ack1', ret["updates"])
+                    if chan["channelID"] == "chan2":
+                        # check if 0 version returns epoch
+                        _assert_equal(len(str(chan["version"])), 10)
+
+                send_ack(ws, ret["updates"])
+
+                # http put to chan2 with invalid content-type, results in epoch
+                send_update(self.chan1, 'version=999', 'update5', 'application/json')
+            elif ws.state == 'update5':
+                # update the same channel
+                self.compare_dict(ret, {"messageType":"notification"}, True)
+                for chan in ret["updates"]:
+                    if chan["channelID"] == "chan1":
+                        # check if 0 version returns epoch
+                        _assert_equal(len(str(chan["version"])), 10)
+
+                send_ack(ws, ret["updates"])
                 ws.close()
-            # XXX Bug here with ack doesn't respond
-            # elif ws.state == 'ack1':
-            #     self.compare_dict(ret, {"messageType":"notification"})
-            #     # self.compare_dict(ret["updates"][0], {"channelID":"chan1"})
-            #     ws.close()
 
         def on_open(ws):
             self.log('open:', ws)
@@ -74,54 +106,45 @@ class TestNotify(PushTestCase):
         def on_close(ws):
             self.log('on close')
 
+        def on_error(ws):
+            self.log('on error')
+            ws.close()
+            raise AssertError, ws
+
         def setup_chan(ws):
             ws.state = 'hello'
             self.msg(ws, 
                      {"messageType": "hello", 
                       "channelIDs": ["chan1", "chan2"],
-                      "uaid":get_uaid("notify_uaid")},
+                      "uaid":self.uaid},
                       cb=False)
 
-        def reg_chan(ws):
-            ws.state = 'register'
+        def reg_chan(ws, state, chan_str):
+            ws.state = state
             self.msg(ws, 
                      {"messageType": "register", 
-                      "channelID": "chan1",
-                      "uaid":get_uaid("notify_uaid")},
+                      "channelID": chan_str,
+                      "uaid":self.uaid},
                       cb=False)
 
-        def send_ack(ws, ack_str, updates_list):
+        def send_ack(ws, updates_list):
             # there should be no response from ack
-            ws.state = ack_str
             self.log('Sending ACK')
             self.msg(ws, 
                      {"messageType": "ack", 
                       "updates": updates_list,
-                      "uaid":get_uaid("notify_uaid")},
+                      "uaid":self.uaid},
                       cb=False)
 
-        def send_update_1(update_url):
-            ws.state = 'update1'
-            resp = send_http_put(ws.update_url, 'version=98764321')
-            self.assertEqual(resp, 200)
-
-        def send_update_2(update_url):
-            ws.state = 'update2'
-            resp = send_http_put(ws.update_url+'_diff', 'version=123')
-            self.assertEqual(resp, 200)
-
-        def send_update_3(update_url):
-            ws.state = 'update3'
-            resp = send_http_put(ws.update_url, 'version=98764322')
-            self.assertEqual(resp, 200)
-
-        def send_update_4(update_url):
-            ws.state = 'update4'
-            send_http_put(ws.update_url, '')
+        def send_update(update_url, str_data, state='update1', ct='application/x-www-form-urlencoded'):
+            ws.state = state
+            resp = send_http_put(update_url, str_data, ct, True)
+            _assert_equal(resp, 200)
 
         ws = websocket.WebSocketApp(self.url,
                                     on_open=on_open,
                                     on_message=on_message,
+                                    on_error=on_error,
                                     on_close=on_close)
         ws.run_forever()
 
