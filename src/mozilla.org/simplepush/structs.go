@@ -22,6 +22,15 @@ const (
 	DIE
 )
 
+var cmdLabels = map[int] string {
+    0: "Unregister",
+    1: "Register",
+    2: "Hello",
+    3: "ACK",
+    4: "Flush",
+    5: "Return",
+    6: "Die" }
+
 type PushCommand struct {
 	// Use mutable int value
 	Command   int         //command type (UNREG, REGIS, ACK, etc)

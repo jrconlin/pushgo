@@ -59,7 +59,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 		if err != nil {
 			self.log.Error("worker",
 				"Websocket Error",
-				util.JsMap{"error": err})
+				util.JsMap{"error": err.Error()})
 			break
 		}
 		if len(raw) > 0 {

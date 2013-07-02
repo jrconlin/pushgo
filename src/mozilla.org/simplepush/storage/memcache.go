@@ -6,6 +6,11 @@ package storage
 
 // thin memcache wrapper
 
+/** TODO: Support multiple memcache nodes.
+ *      * Need to be able to discover and shard to each node.
+ */
+
+
 import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"mozilla.org/simplepush/sperrors"
@@ -31,6 +36,16 @@ type Storage struct {
 	config util.JsMap
 	mc     *memcache.Client
 	log    *util.HekaLogger
+	thrash int64
+}
+
+type StorageError struct {
+	err   error
+	retry int
+}
+
+func (e *StorageError) Error() string {
+	return "StorageError: " + e.err.Error()
 }
 
 func indexOf(list []string, val string) (index int) {
@@ -104,8 +119,8 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
 	arr.Sort()
 	err = self.mc.Set(&memcache.Item{Key: uaid,
-		Value: []byte(strings.Join(arr, ",")),
-        Expiration: 0})
+		Value:      []byte(strings.Join(arr, ",")),
+		Expiration: 0})
 	return err
 }
 
@@ -149,6 +164,7 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 	item := &memcache.Item{Key: pk,
 		Value:      []byte(raw),
 		Expiration: int32(ttl)}
+
 	err = self.mc.Set(item)
 	if err != nil {
 		self.log.Error("storage",
@@ -191,11 +207,13 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 	log.Info("storage", "Creating new memcache handler", nil)
 	return &Storage{mc: memcache.New(config["memcache.server"].(string)),
 		config: config,
-		log:    log}
+		log:    log,
+		thrash: 0}
 }
 
 //TODO: Optimize this to decode the PK for updates
 func (self *Storage) UpdateChannel(pk string, vers int64) (err error) {
+
 	var rec util.JsMap
 
 	if len(pk) == 0 {
@@ -415,6 +433,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
 	//TODO, go through the results and nuke what's there, then call flush
 
+
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
 			expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
@@ -478,6 +497,7 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		}
 	}(defaultHost)
 
+
 	item, err := self.mc.Get(prefix + uaid)
 	if err != nil {
 		self.log.Error("storage",
@@ -491,8 +511,8 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		"GetUAIDHost",
 		util.JsMap{"uaid": uaid,
 			"host": string(item.Value)})
-    // reinforce the link.
-    self.SetUAIDHost(string(item.Value))
+	// reinforce the link.
+	self.SetUAIDHost(string(item.Value))
 	return string(item.Value), nil
 }
 
