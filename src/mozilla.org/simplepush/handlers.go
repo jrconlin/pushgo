@@ -16,11 +16,64 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-    "regexp"
+	"os"
+	"regexp"
+    "runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 )
+
+func awsGetPublicHostname() (hostname string, err error) {
+	req := &http.Request{Method: "GET",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "169.254.169.254",
+			Path:   "/latest/meta-data/public-hostname"}}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var hostBytes []byte
+		hostBytes, err = ioutil.ReadAll(resp.Body)
+		if err == nil {
+			hostname = string(hostBytes)
+		}
+		return
+	}
+	return
+}
+
+func FixConfig(config util.JsMap) util.JsMap {
+	if _, ok := config["shard.current_host"]; !ok {
+		currentHost := "localhost"
+		if val := os.Getenv("HOST"); len(val) > 0 {
+			currentHost = val
+		} else {
+			if util.MzGetFlag(config, "shard.use_aws_host") {
+				var awsHost string
+				var err error
+				awsHost, err = awsGetPublicHostname()
+				if err == nil {
+					currentHost = awsHost
+				}
+			}
+		}
+		config["shard.current_host"] = currentHost
+	}
+	// Convert the token_key from base64 (if present)
+	if k, ok := config["token_key"]; ok {
+		key, _ := base64.URLEncoding.DecodeString(k.(string))
+		config["token_key"] = key
+	}
+
+	config["heka.current_host"] = config["shard.current_host"]
+
+	return config
+
+}
 
 // VIP response
 func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
@@ -57,7 +110,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	var vers int64
 
 	timer := time.Now()
-    filter := regexp.MustCompile("[^\\w-\\.]")
+	filter := regexp.MustCompile("[^\\w-\\.]")
 
 	logger.Debug("main", fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
 	if req.Method != "PUT" {
@@ -81,7 +134,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	pk := elements[len(elements)-1]
 	if len(pk) == 0 {
 		logger.Error("main", "No token, rejecting request",
-            util.JsMap{"remoteAddr": req.RemoteAddr})
+			util.JsMap{"remoteAddr": req.RemoteAddr})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		return
 	}
@@ -93,11 +146,11 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 			pk)
 		if err != nil {
 			logger.Error("main",
-				         "Could not decode token",
-                         util.JsMap{"primarykey": pk,
-                         "remoteAddr": req.RemoteAddr,
-                         "path": req.RequestURI,
-                         "error": err})
+				"Could not decode token",
+				util.JsMap{"primarykey": pk,
+					"remoteAddr": req.RemoteAddr,
+					"path":       req.RequestURI,
+					"error":      err})
 			http.Error(resp, "", http.StatusNotFound)
 			return
 		}
@@ -105,15 +158,13 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		pk = strings.TrimSpace(string(bpk))
 	}
 
-    logger.Info("main", fmt.Sprintf("%s", filter.Find([]byte(pk))), nil)
-
-    if filter.Find([]byte(pk)) != nil {
-        logger.Error("main",
-                    "Invalid token for update",
-                    nil)
-        http.Error(resp, "Invalid Token", http.StatusNotFound)
-        return
-    }
+	if filter.Find([]byte(pk)) != nil {
+		logger.Error("main",
+			"Invalid token for update",
+			nil)
+		http.Error(resp, "Invalid Token", http.StatusNotFound)
+		return
+	}
 
 	uaid, appid, err := storage.ResolvePK(pk)
 	if err != nil {
@@ -122,14 +173,14 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		return
 	}
 
-    if appid == "" {
-        logger.Error("main",
-            "Incomplete primary key",
-            util.JsMap{"uaid": uaid,
-                "channelID": appid,
-                "remoteAddr": req.RemoteAddr})
-       return
-    }
+	if appid == "" {
+		logger.Error("main",
+			"Incomplete primary key",
+			util.JsMap{"uaid": uaid,
+				"channelID":  appid,
+				"remoteAddr": req.RemoteAddr})
+		return
+	}
 
 	if iport, ok := config["port"]; ok {
 		port = iport.(string)
@@ -197,9 +248,10 @@ func PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
 	// can we pass this in somehow?
 	config := util.MzGetConfig("config.ini")
+	config = FixConfig(config)
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
+		key, _ := base64.URLEncoding.DecodeString(string(k.([]uint8)))
 		config["token_key"] = key
 	}
 	logger := util.NewHekaLogger(config)
@@ -215,7 +267,8 @@ func PushSocketHandler(ws *websocket.Conn) {
 	sock.Logger.Info("main", "New socket connection detected", nil)
 	defer func(log *util.HekaLogger) {
 		if r := recover(); r != nil {
-			log.Error("main", r.(error).Error(), nil)
+			debug.PrintStack()
+			log.Error("main", "Unknown error", util.JsMap{"error": r.(error).Error()})
 		}
 	}(sock.Logger)
 

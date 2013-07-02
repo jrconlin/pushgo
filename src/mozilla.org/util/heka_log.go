@@ -8,8 +8,11 @@ import (
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/mozilla-services/heka/client"
 	"github.com/mozilla-services/heka/message"
+
+	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"time"
 )
@@ -107,18 +110,18 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 		msg.SetPayload(payload)
 	}
 	for key, ival := range fields {
+        var field *message.Field
+        var err error
 		if ival == nil {
 			continue
 		}
 		if key == "" {
 			continue
 		}
-		field, err := message.NewField(key, ival, message.Field_RAW)
-		if err != nil {
-			log.Fatal("ERROR: Could not log field %s:%s (%s)", field,
-				ival.(string), err)
-			return err
-		}
+        field, err = message.NewField(key, ival, message.Field_RAW)
+        if err != nil {
+            field, err = message.NewField(key, fmt.Sprintf("%s", ival), message.Field_RAW)
+        }
 		msg.AddField(field)
 	}
 	err = self.encoder.EncodeMessageStream(msg, &stream)
@@ -151,6 +154,7 @@ func (self HekaLogger) Error(mtype, msg string, fields JsMap) (err error) {
 }
 
 func (self HekaLogger) Critical(mtype, msg string, fields JsMap) (err error) {
+	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
 }
 

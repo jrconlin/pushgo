@@ -59,7 +59,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 		if err != nil {
 			self.log.Error("worker",
 				"Websocket Error",
-				util.JsMap{"error": err})
+				util.JsMap{"error": err.Error()})
 			break
 		}
 		if len(raw) > 0 {
@@ -118,7 +118,7 @@ func (self *Worker) Run(sock PushWS) {
 			if cmd.Command == FLUSH {
 				self.log.Info("worker",
 					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
-				self.Flush(sock, time.Now().UTC().Unix())
+				self.Flush(sock, 0)
 				// additional non-client commands are TBD.
 			}
 		case buffer := <-in:

@@ -137,6 +137,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	uaid := sock.Uaid
 	self.log.Debug("server", "Cleaning up socket", util.JsMap{"uaid": uaid})
 	self.log.Info("timer", "Socket connection terminated", util.JsMap{
+        "timer":    "stop",
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
 	delete(Clients, uaid)
@@ -182,7 +183,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 		"<token>", token, -1)
 	host := fmt.Sprintf("%s:%s", self.config["shard.current_host"].(string),
 		self.config["port"].(string))
-	args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
+	args["pushEndpoint"] = strings.Replace(args["pushEndpoint"].(string),
 		"<current_host>", host, -1)
 	self.log.Info("server",
 		"Generated Endpoint",
