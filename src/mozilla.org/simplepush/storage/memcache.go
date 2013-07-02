@@ -119,13 +119,8 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
 	arr.Sort()
 	err = self.mc.Set(&memcache.Item{Key: uaid,
-<<<<<<< HEAD
-		Value: []byte(strings.Join(arr, ","))},
-        Expiration: 0)
-=======
 		Value:      []byte(strings.Join(arr, ",")),
 		Expiration: 0})
->>>>>>> dev
 	return err
 }
 
@@ -483,17 +478,10 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 	self.log.Debug("storage",
 		"SetUAIDHost",
 		util.JsMap{"uaid": uaid, "host": host})
-<<<<<<< HEAD
-	ttl,_ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
-	return self.mc.Set(&memcache.Item{Key: prefix + uaid,
-		Value:      []byte(host),
-		Expiration: self.config["db.timeout_live"]})
-=======
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
 	return self.mc.Set(&memcache.Item{Key: prefix + uaid,
 		Value:      []byte(host),
 		Expiration: int32(ttl)})
->>>>>>> dev
 }
 
 func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
@@ -523,13 +511,8 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		"GetUAIDHost",
 		util.JsMap{"uaid": uaid,
 			"host": string(item.Value)})
-<<<<<<< HEAD
-    // reinforce the link.
-    self.setUAIDHost(string(item.Value))
-=======
 	// reinforce the link.
 	self.SetUAIDHost(string(item.Value))
->>>>>>> dev
 	return string(item.Value), nil
 }
 
