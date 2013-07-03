@@ -137,7 +137,6 @@ func (self *Serv) Bye(sock *PushWS) {
 	uaid := sock.Uaid
 	self.log.Debug("server", "Cleaning up socket", util.JsMap{"uaid": uaid})
 	self.log.Info("timer", "Socket connection terminated", util.JsMap{
-        "timer":    "stop",
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
 	delete(Clients, uaid)

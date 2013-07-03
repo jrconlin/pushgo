@@ -10,7 +10,6 @@ package storage
  *      * Need to be able to discover and shard to each node.
  */
 
-
 import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"mozilla.org/simplepush/sperrors"
@@ -18,6 +17,7 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +57,24 @@ func indexOf(list []string, val string) (index int) {
 	return -1
 }
 
+func (self *Storage) isFatal(err error) bool {
+	// if it has anything to do with the connection, restart the server.
+	// this is crappy, crappy behavior, but it's what go wants.
+	switch err {
+	case nil:
+		return false
+	case memcache.ErrCacheMiss, memcache.ErrCASConflict,
+		memcache.ErrNotStored, memcache.ErrNoStats,
+		memcache.ErrMalformedKey:
+		return false
+	default:
+		self.log.Critical("storage", "CRITICAL HIT! RESTARTING!",
+			util.JsMap{"error": err})
+		log.Fatal("### RESTARTING ### ", err.Error())
+		return true
+	}
+}
+
 func ResolvePK(pk string) (uaid, appid string, err error) {
 	items := strings.SplitN(pk, ".", 2)
 	if len(items) < 2 {
@@ -78,6 +96,7 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 
 	defer func() {
 		if err := recover(); err != nil {
+			self.isFatal(err.(error))
 			self.log.Error("storage",
 				fmt.Sprintf("could not fetch record for %s", pk),
 				util.JsMap{"primarykey": pk, "error": err})
@@ -86,6 +105,7 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 
 	item, err := self.mc.Get(string(pk))
 	if err != nil {
+		self.isFatal(err)
 		self.log.Error("storage",
 			"Get Failed",
 			util.JsMap{"primarykey": pk,
@@ -110,6 +130,7 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	raw, err := self.mc.Get(uaid)
 	if err != nil {
+		self.isFatal(err)
 		return nil, err
 	}
 	result = strings.Split(string(raw.Value), ",")
@@ -121,6 +142,7 @@ func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err err
 	err = self.mc.Set(&memcache.Item{Key: uaid,
 		Value:      []byte(strings.Join(arr, ",")),
 		Expiration: 0})
+	self.isFatal(err)
 	return err
 }
 
@@ -167,6 +189,7 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 
 	err = self.mc.Set(item)
 	if err != nil {
+		self.isFatal(err)
 		self.log.Error("storage",
 			fmt.Sprintf("Failure to set item %s {%s}", pk, item),
 			nil)
@@ -356,6 +379,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 			"items": items})
 	recs, err := self.mc.GetMulti(items)
 	if err != nil {
+		self.isFatal(err)
 		self.log.Error("storage", "GetUpdate failed",
 			util.JsMap{"uaid": uaid,
 				"error": err})
@@ -433,7 +457,6 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
 	//TODO, go through the results and nuke what's there, then call flush
 
-
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
 			expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
@@ -441,6 +464,7 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 			for _, appid := range expired {
 				pk, _ := GenPK(uaid, appid)
 				err = self.mc.Delete(pk)
+				self.isFatal(err)
 			}
 		}
 	}
@@ -451,6 +475,7 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 				recmap := rec.(map[string]interface{})
 				pk, _ := GenPK(uaid, recmap["channelID"].(string))
 				err = self.mc.Delete(pk)
+				self.isFatal(err)
 			}
 		}
 	}
@@ -479,9 +504,11 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 		"SetUAIDHost",
 		util.JsMap{"uaid": uaid, "host": host})
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
-	return self.mc.Set(&memcache.Item{Key: prefix + uaid,
+	err = self.mc.Set(&memcache.Item{Key: prefix + uaid,
 		Value:      []byte(host),
 		Expiration: int32(ttl)})
+	self.isFatal(err)
+	return err
 }
 
 func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
@@ -497,9 +524,9 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		}
 	}(defaultHost)
 
-
 	item, err := self.mc.Get(prefix + uaid)
 	if err != nil {
+		self.isFatal(err)
 		self.log.Error("storage",
 			"GetUAIDHost Fetch error",
 			util.JsMap{"uaid": uaid,
@@ -518,7 +545,9 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	prefix := self.config["shard.prefix"].(string)
-	return self.mc.Delete(prefix + uaid)
+	err = self.mc.Delete(prefix + uaid)
+	self.isFatal(err)
+	return err
 }
 
 // o4fs
