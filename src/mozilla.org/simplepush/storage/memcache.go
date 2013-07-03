@@ -338,6 +338,14 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 	return err
 }
 
+func (self *Storage) IsKnownUaid(uaid string) bool {
+    _, err := self.fetchAppIDArray(uaid)
+    if err == nil {
+        return true
+    }
+    return false
+}
+
 func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.JsMap, err error) {
 	appIDArray, err := self.fetchAppIDArray(uaid)
 
@@ -514,6 +522,19 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	// reinforce the link.
 	self.SetUAIDHost(string(item.Value))
 	return string(item.Value), nil
+}
+
+func (self *Storage) PurgeUAID(uaid string) (err error){
+    appIDArray, err := self.fetchAppIDArray(uaid)
+    if err == nil && len(appIDArray) > 0 {
+        for _, appid := range appIDArray {
+            pk, _ := GenPK(uaid, appid)
+            self.mc.Delete(pk)
+        }
+    }
+    self.mc.Delete(uaid)
+    self.DelUAIDHost(uaid)
+    return nil
 }
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {

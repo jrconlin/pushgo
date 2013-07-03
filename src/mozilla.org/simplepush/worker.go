@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,6 +27,7 @@ type Worker struct {
 	log    *util.HekaLogger
 	state  int
 	filter *regexp.Regexp
+	config util.JsMap
 }
 
 const (
@@ -34,16 +36,36 @@ const (
 )
 
 const (
-	UAID_MAX_LEN = 100
-	CHID_MAX_LEN = 100
+	UAID_MAX_LEN         = 100
+	CHID_MAX_LEN         = 100
+	CHID_DEFAULT_MAX_NUM = 200
 )
 
 func NewWorker(config util.JsMap) *Worker {
 	// Allow [0-9a-z_-]/i as valid ChannelID characters.
 	filter := regexp.MustCompile("[^\\w-]")
+	switch config["db.max_channels"].(type) {
+	case string:
+		vi, _ := config["db.max_channels"]
+		if val, err := strconv.Atoi(vi.(string)); err != nil {
+			config["db.max_channels"] = val
+		}
+	case int:
+		config["db.max_channels"] = config["db.max_channels"].(int)
+	case int16:
+		config["db.max_channels"] = int(config["db.max_channels"].(int16))
+	case int32:
+		config["db.max_channels"] = int(config["db.max_channels"].(int32))
+	case int64:
+		config["db.max_channels"] = int(config["db.max_channels"].(int64))
+	default:
+		config["db.max_channels"] = CHID_DEFAULT_MAX_NUM
+	}
+
 	return &Worker{log: util.NewHekaLogger(config),
 		state:  INACTIVE,
-		filter: filter}
+		filter: filter,
+		config: config}
 }
 
 func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
@@ -189,6 +211,10 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		}
 	}()
 
+	//Force the client to re-register all it's clients.
+	// This is done by returning a new UAID.
+	forceReset := false
+
 	data := buffer.(util.JsMap)
 	if _, ok := data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
@@ -198,7 +224,9 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		// Must include "channelIDs" (even if empty)
 		return sperrors.MissingDataError
 	}
-	if len(sock.Uaid) > 0 && len(data["uaid"].(string)) > 0 && sock.Uaid != data["uaid"].(string) {
+	if len(sock.Uaid) > 0 &&
+		len(data["uaid"].(string)) > 0 &&
+		sock.Uaid != data["uaid"].(string) {
 		// if there's already a Uaid for this channel, don't accept a new one
 		return sperrors.InvalidCommandError
 	}
@@ -209,8 +237,25 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			return sperrors.InvalidDataError
 		}
 		if len(sock.Uaid) == 0 {
-			sock.Uaid, _ = GenUUID4()
+			forceReset = forceReset || true
 		}
+	    if num := len(data["channelIDs"].([]interface{})); num > 0 {
+		// are there a suspicious number of channels?
+		    if num > self.config["db.max_channels"].(int) {
+    			forceReset = forceReset || true
+	    	}
+            if ! sock.Store.IsKnownUaid(sock.Uaid) {
+                forceReset = forceReset || true
+            }
+        }
+	}
+	if forceReset {
+        self.log.Warn("worker", "Resetting UAID for device",
+            util.JsMap{"uaid":sock.Uaid})
+        if len(sock.Uaid) > 0 {
+            sock.Store.PurgeUAID(sock.Uaid)
+        }
+		sock.Uaid, _ = GenUUID4()
 	}
 	// register the sockets (NOOP)
 	// register any proprietary connection requirements

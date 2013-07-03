@@ -171,9 +171,10 @@ class TestPushAPI(unittest.TestCase):
         for dt in data_types:
             verify_json = {"messageType": "%s" % dt,
                            "status": 401, "uaid": "uaid"}
+            # Sending channelIDs for server unknown UAIDs causes a reset.
             ret = self._msg({"messageType": '%s' % dt,
-                            "channelIDs": [add_epoch("abc")], "uaid": "uaid"})
-            if dt == 'HeLLO':
+                            "channelIDs": [], "uaid": "uaid"})
+            if dt in ('HeLLO', 'uaid'):
                 verify_json["status"] = 200
             else:
                 verify_json["error"] = "Invalid command"
@@ -191,6 +192,8 @@ class TestPushAPI(unittest.TestCase):
 
     def test_hello_uaid_types(self):
         """ Test handshake uaids with lots of data types """
+        unknown_uaid = str_gen(32)
+        strings.append(unknown_uaid)
         for string in strings:
             valid_json = {"messageType": "hello"}
             ws = websocket.create_connection(url)
@@ -198,6 +201,8 @@ class TestPushAPI(unittest.TestCase):
                    "customKey": "custom value",
                    "channelIDs": [add_epoch("hello_uaid_types")],
                    "uaid": "%s" % string}
+            if string in ["valid_uaid", 'CASE_UAID']:
+                msg["channelIDs"] = []
             ws.send(json.dumps(msg))
             ret = json.loads(ws.recv())
             if string == "valid_uaid":
@@ -209,12 +214,17 @@ class TestPushAPI(unittest.TestCase):
                 valid_json["status"] = 200
                 self.assertEqual(len(ret["uaid"]), 32)
             elif string == " fooey barrey ":
-                valid_json["status"] = 500
+                valid_json["status"] = 200
             elif len(string) > 100:
                 # 100 char limit for UAID and Channel
                 valid_json["status"] = 401
                 valid_json["error"] = "Invalid command"
-
+            elif string == unknown_uaid:
+                # check for reset condition
+                assert(ret["status"] == 200)
+                assert(ret["uaid"] != unknown_uaid)
+                # don't do the array compare
+                continue
             self._compare_dict(ret, valid_json)
 
     def test_hello_invalid_keys(self):
@@ -353,10 +363,10 @@ class TestPushAPI(unittest.TestCase):
                                  "channelID": add_epoch("unreg_chan"),
                                  "status": 200})
 
-    def test_chan_limits(self):
+    def test_1a1_chan_limits(self):
         """ Test string limits for keys """
         self._msg({"messageType": "hello",
-                  "channelIDs": [add_epoch("chan_limits")],
+                  "channelIDs": [],
                   "uaid": "chan_limit_uaid"})
 
         ret = self._msg({"messageType": "register",
