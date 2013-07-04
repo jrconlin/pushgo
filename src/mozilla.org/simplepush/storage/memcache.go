@@ -70,7 +70,7 @@ func (self *Storage) isFatal(err error) bool {
 	default:
 		self.log.Critical("storage", "CRITICAL HIT! RESTARTING!",
 			util.JsMap{"error": err})
-		log.Fatal("### RESTARTING ### ", err.Error())
+        log.Fatal("### RESTARTING ### ", err)
 		return true
 	}
 }
@@ -128,6 +128,9 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 }
 
 func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
+    if uaid == "" {
+        return result, nil
+    }
 	raw, err := self.mc.Get(uaid)
 	if err != nil {
 		self.isFatal(err)
@@ -362,6 +365,7 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 }
 
 func (self *Storage) IsKnownUaid(uaid string) bool {
+    self.log.Debug("storage","IsKnownUaid", util.JsMap{"uaid":uaid})
     _, err := self.fetchAppIDArray(uaid)
     if err == nil {
         return true
