@@ -1,9 +1,12 @@
 #!/usr/bin/python
 
-import json, unittest, websocket
+import json
+import unittest
+import websocket
 
 from pushtest.pushTestCase import PushTestCase
-from pushtest.utils import *
+from pushtest.utils import (get_uaid, send_http_put, AssertError)
+
 
 class TestNotify(PushTestCase):
     """ Test HTTP PUT and notifications generated tests """
@@ -31,7 +34,7 @@ class TestNotify(PushTestCase):
                     _assert_equal(chan["version"], chan1_val)
                 if chan2_val != "" and chan["channelID"] == "chan2":
                     _assert_equal(chan["version"], chan2_val)
-            
+
             return
 
         def on_message(ws, message):
@@ -54,7 +57,7 @@ class TestNotify(PushTestCase):
                 send_update(self.chan1, 'version=12345789', 'update1')
             elif ws.state == 'update1':
                 #verify chan1
-                self.compare_dict(ret, {"messageType":"notification"}, True)
+                self.compare_dict(ret, {"messageType": "notification"}, True)
                 _assert_equal(ret["updates"][0]["channelID"], "chan1")
                 _check_updates(ret["updates"], 12345789)
 
@@ -62,7 +65,7 @@ class TestNotify(PushTestCase):
                 send_update(self.chan2, 'version=987654321', 'update2')
             elif ws.state == 'update2':
                 #verify chan1 and chan2
-                self.compare_dict(ret, {"messageType":"notification"}, True)
+                self.compare_dict(ret, {"messageType": "notification"}, True)
                 _check_updates(ret["updates"], 12345789, 987654321)
                 send_ack(ws, ret["updates"])
 
@@ -70,7 +73,7 @@ class TestNotify(PushTestCase):
                 send_update(self.chan1, 'version=1', 'update3')
             elif ws.state == 'update3':
                 # update the same channel
-                self.compare_dict(ret, {"messageType":"notification"}, True)
+                self.compare_dict(ret, {"messageType": "notification"}, True)
                 _check_updates(ret["updates"], 1)
                 send_ack(ws, ret["updates"])
 
@@ -78,7 +81,7 @@ class TestNotify(PushTestCase):
                 send_update(self.chan2, 'version=0', 'update4', 'text/plain')
             elif ws.state == 'update4':
                 # update the same channel
-                self.compare_dict(ret, {"messageType":"notification"}, True)
+                self.compare_dict(ret, {"messageType": "notification"}, True)
                 for chan in ret["updates"]:
                     if chan["channelID"] == "chan2":
                         # check if 0 version returns epoch
@@ -87,10 +90,11 @@ class TestNotify(PushTestCase):
                 send_ack(ws, ret["updates"])
 
                 # http put to chan2 with invalid content-type, results in epoch
-                send_update(self.chan1, 'version=999', 'update5', 'application/json')
+                send_update(self.chan1, 'version=999',
+                            'update5', 'application/json')
             elif ws.state == 'update5':
                 # update the same channel
-                self.compare_dict(ret, {"messageType":"notification"}, True)
+                self.compare_dict(ret, {"messageType": "notification"}, True)
                 for chan in ret["updates"]:
                     if chan["channelID"] == "chan1":
                         # check if 0 version returns epoch
@@ -103,40 +107,38 @@ class TestNotify(PushTestCase):
             self.log('open:', ws)
             setup_chan(ws)
 
-        def on_close(ws):
-            self.log('on close')
-
         def on_error(ws):
             self.log('on error')
             ws.close()
-            raise AssertError, ws
+            raise AssertError(ws)
 
         def setup_chan(ws):
             ws.state = 'hello'
-            self.msg(ws, 
-                     {"messageType": "hello", 
+            self.msg(ws,
+                     {"messageType": "hello",
                       "channelIDs": ["chan1", "chan2"],
-                      "uaid":self.uaid},
-                      cb=False)
+                      "uaid": self.uaid},
+                     cb=False)
 
         def reg_chan(ws, state, chan_str):
             ws.state = state
-            self.msg(ws, 
-                     {"messageType": "register", 
+            self.msg(ws,
+                     {"messageType": "register",
                       "channelID": chan_str,
-                      "uaid":self.uaid},
-                      cb=False)
+                      "uaid": self.uaid},
+                     cb=False)
 
         def send_ack(ws, updates_list):
             # there should be no response from ack
             self.log('Sending ACK')
-            self.msg(ws, 
-                     {"messageType": "ack", 
+            self.msg(ws,
+                     {"messageType": "ack",
                       "updates": updates_list,
-                      "uaid":self.uaid},
-                      cb=False)
+                      "uaid": self.uaid},
+                     cb=False)
 
-        def send_update(update_url, str_data, state='update1', ct='application/x-www-form-urlencoded'):
+        def send_update(update_url, str_data, state='update1',
+                        ct='application/x-www-form-urlencoded'):
             ws.state = state
             resp = send_http_put(update_url, str_data, ct, True)
             _assert_equal(resp, 200)

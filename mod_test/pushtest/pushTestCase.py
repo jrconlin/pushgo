@@ -1,6 +1,9 @@
 
-import ConfigParser, json, unittest, websocket
-from utils import *
+import ConfigParser
+import json
+import unittest
+from utils import (str_gen, str2bool, print_log, comp_dict)
+
 
 class PushTestCase(unittest.TestCase):
     """ General API tests """
@@ -12,21 +15,25 @@ class PushTestCase(unittest.TestCase):
 
     # data types
     uuid = ['f7067d44-5893-407c-8d4c-fc8f7ed97041',
-            '1c57e340-df59-44648105-b91f1a39608b', 
+            '1c57e340-df59-44648105-b91f1a39608b',
             '0cb8a613-8e2b-4b47-b370-51098daa8401',
             '14a84c48-2b8c-4669-8976--541368ccf4d3']
     big_uuid = uuid * 100
 
     chan_150 = str_gen(150)
-    strings = ['', 'valid_uaid', ' fooey barrey ', '!@#$%^&*()-+', '0', '1', '-66000', uuid[0], 
-               'True', 'False', 'true', 'false' , '\"foo bar\"',str_gen(64000)]
-    data_types = ['messageType', 'HeLLO', '!@#$%^&*()-+', '0', '1', '-66000', '',
-                  1, 0, -1, True, False, None, ' fooey barrey ', str_gen(64000), chr(0), '\x01\x00\x12\x59']
+    strings = ['', 'valid_uaid', ' fooey barrey ',
+               '!@#$%^&*()-+', '0', '1', '-66000', uuid[0],
+               'True', 'False', 'true', 'false',
+               '\"foo bar\"', str_gen(64000)]
+    data_types = ['messageType', 'HeLLO', '!@#$%^&*()-+', '0',
+                  '1', '-66000', '',
+                  1, 0, -1, True, False, None, ' fooey barrey ',
+                  str_gen(64000), chr(0), '\x01\x00\x12\x59']
 
     def __init__(self, *args, **kwargs):
         unittest.TestCase.__init__(self, *args, **kwargs)
-        
-    def log(self, prefix, msg = ""):
+
+    def log(self, prefix, msg=""):
         if self.verbose:
             print_log(prefix, msg)
 
@@ -44,20 +51,21 @@ class PushTestCase(unittest.TestCase):
                 return json.loads(ret)
             except Exception, e:
                 print 'Unable to parse json:', e
-                raise AssertionError, e
+                raise AssertionError(e)
 
     def compare_dict(self, ret_data, exp_data, exit_on_assert=False):
         """ compares two dictionaries and raises assert with info """
         self.log("RESPONSE GOT:", ret_data)
         self.log("RESPONSE EXPECTED:", exp_data)
-   
+
         diff = comp_dict(ret_data, exp_data)
 
         if diff["errors"]:
             print 'AssertionError', diff["errors"]
             if exit_on_assert:
                 exit("AssertionError: %s" % diff["errors"])
-            raise AssertionError, diff["errors"]
+            raise AssertionError(diff["errors"])
+        return True
 
     def validate_endpoint(self, endpoint):
         """ validate endpoint is in proper url format """

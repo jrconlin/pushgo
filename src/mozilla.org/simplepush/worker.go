@@ -215,24 +215,30 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// This is done by returning a new UAID.
 	forceReset := false
 
+    var suggestedUAID string
+
 	data := buffer.(util.JsMap)
 	if _, ok := data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
 	}
+    suggestedUAID = data["uaid"].(string)
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
 		return sperrors.MissingDataError
 	}
 	if len(sock.Uaid) > 0 &&
 		len(data["uaid"].(string)) > 0 &&
-		sock.Uaid != data["uaid"].(string) {
+		sock.Uaid != suggestedUAID {
 		// if there's already a Uaid for this channel, don't accept a new one
 		return sperrors.InvalidCommandError
 	}
+	if self.filter.Find([]byte(strings.ToLower(suggestedUAID))) != nil {
+		return sperrors.InvalidDataError
+	}
 	if len(sock.Uaid) == 0 {
 		// if there's no UAID for the socket, accept or create a new one.
-		sock.Uaid = data["uaid"].(string)
+		sock.Uaid = suggestedUAID
 		if len(sock.Uaid) > UAID_MAX_LEN {
 			return sperrors.InvalidDataError
 		}
