@@ -5,7 +5,7 @@ import unittest
 import websocket
 
 from pushtest.pushTestCase import PushTestCase
-from pushtest.utils import (get_uaid, send_http_put, AssertError)
+from pushtest.utils import (get_uaid, send_http_put)
 
 
 class TestNotify(PushTestCase):

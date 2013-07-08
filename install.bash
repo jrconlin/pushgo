@@ -1,7 +1,7 @@
 #! /bin/bash
 set -e
-for env in 'GOROOT' 'GOBIN' ; do
-    if [ -z '${$env}' ]; then
+for env in "GOROOT" "GOBIN" ; do
+    if [ -z "${!env}" ]; then
         echo "$env not defined. Is go installed?"
         exit 1
     fi
@@ -18,7 +18,7 @@ if [ ! -e config.ini ]; then
     echo "Copying sample ini file to config.ini"
     cp config.sample.ini config.ini
 fi
-if [ ! -z '$HOST' ]; then
+if [ ! -z "$HOST" ]; then
     echo "Setting local shard host name"
     echo "shard.currentHost = $HOST:8080" >> config.ini
 fi

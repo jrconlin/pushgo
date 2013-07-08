@@ -27,7 +27,7 @@ class TestPushAPI(PushTestCase):
         """ Test handshake messageType with lots of data types """
         for dt in self.data_types:
             tmp_uaid = get_uaid("uaid")
-            verify_json = {"messageType": "%s" % dt,
+            verify_json = {"messageType": "%s" % dt.lower(),
                            "status": 401,
                            "uaid": tmp_uaid}
             ret = self.msg(self.ws, {"messageType": '%s' % dt.lower(),
@@ -45,7 +45,6 @@ class TestPushAPI(PushTestCase):
         try:
             self.ws.send('{"messageType": null}')
         except Exception, (errno, msg):
-            import pdb; pdb.set_trace()
             print 'Exception', errno, msg
             self.assertEqual(errno, 32)
             self.assertEqual(msg, 'Broken pipe')
@@ -75,7 +74,6 @@ class TestPushAPI(PushTestCase):
                 valid_json["uaid"] = "valid_uaid"
             elif string == "":
                 valid_json["status"] = 200
-                import pdb; pdb.set_trace()
                 assert(len(ret["uaid"]) > 0)
             elif string == " fooey barrey ":
                 valid_json["status"] = 401
@@ -134,7 +132,6 @@ class TestPushAPI(PushTestCase):
 
     def test_reg_duplicate(self):
         """ Test registration with duplicate channel name """
-        import pdb; pdb.set_trace()
         self.msg(self.ws, {"messageType": "hello",
                  "channelIDs": [get_uaid("reg_noshake_chan_1")],
                  "uaid": get_uaid("reg_noshake_uaid_1")})
@@ -240,7 +237,6 @@ class TestPushAPI(PushTestCase):
                                     "status": 200})
 
         # happy
-        import pdb; pdb.set_trace()
         ret = self.msg(self.ws, {'messageType': 'ping'})
         if ret != {}:
             self.compare_dict(ret, {"messageType": "ping",

@@ -162,7 +162,9 @@ func (self *Worker) Run(sock PushWS) {
 				buffer["messageType"] = "ping"
 			}
 			// process the client commands
-			if _, ok := buffer["messageType"]; !ok {
+            var messageType string
+            var ok bool
+			if messageType, ok = buffer["messageType"]; !ok {
 				self.log.Info("worker", "Invalid message",
 					util.JsMap{"reason": "Missing messageType",
 						"data": buffer})
@@ -171,7 +173,8 @@ func (self *Worker) Run(sock PushWS) {
 					sperrors.UnknownCommandError)
 				break
 			}
-			switch strings.ToLower(buffer["messageType"].(string)) {
+            log.Printf("messageType:... ", messageType)
+			switch strings.ToLower(messageType.(string)) {
 			case "hello":
 				err = self.Hello(&sock, buffer)
 			case "ack":
