@@ -334,7 +334,7 @@ func remove(list []string, pos int) (res []string) {
 
 func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {
 
-	if appid == "" {
+	if len(appid) == 0 {
 		return sperrors.NoChannelError
 	}
 

@@ -49,12 +49,12 @@ class TestNotify(PushTestCase):
             self.log('state', ws.state)
 
             if ws.state == 'hello':
-                reg_chan(ws, 'register1', 'tn.chan1')
+                reg_chan(ws, 'register1', 'tn_chan1')
             elif ws.state == 'register1':
                 # register chan1
                 self.chan1 = ret.get("pushEndpoint")
                 self.log('self.chan1', self.chan1)
-                reg_chan(ws, 'register2', 'tn.chan2')
+                reg_chan(ws, 'register2', 'tn_chan2')
             elif ws.state == 'register2':
                 # register chan2
                 self.chan2 = ret.get("pushEndpoint")
@@ -64,7 +64,7 @@ class TestNotify(PushTestCase):
             elif ws.state == 'update1':
                 #verify chan1
                 self.compare_dict(ret, {"messageType": "notification"}, True)
-                _assert_equal(ret["updates"][0]["channelID"], "tn.chan1")
+                _assert_equal(ret["updates"][0]["channelID"], "tn_chan1")
                 _check_updates(ret["updates"], 12345789)
 
                 # http put to chan2

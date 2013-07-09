@@ -147,7 +147,7 @@ class TestPushAPI(PushTestCase):
         ret = self.msg(self.ws, {"messageType": "hello",
                        "channelIDs": self.big_uuid,
                        "uaid": uaid})
-        self.compare_dict(ret, {"status": 401, "messageType": "hello"})
+        self.compare_dict(ret, {"status": 503, "messageType": "hello"})
 
         # register 100 channels
         for chan in self.big_uuid:

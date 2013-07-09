@@ -20,16 +20,18 @@ const (
 	FLUSH
 	RETRN
 	DIE
+	PURGE
 )
 
-var cmdLabels = map[int] string {
-    0: "Unregister",
-    1: "Register",
-    2: "Hello",
-    3: "ACK",
-    4: "Flush",
-    5: "Return",
-    6: "Die" }
+var cmdLabels = map[int]string{
+	0: "Unregister",
+	1: "Register",
+	2: "Hello",
+	3: "ACK",
+	4: "Flush",
+	5: "Return",
+	6: "Die",
+	7: "Purge"}
 
 type PushCommand struct {
 	// Use mutable int value
@@ -46,5 +48,6 @@ type PushWS struct {
 	Logger *util.HekaLogger
 	Born   time.Time
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

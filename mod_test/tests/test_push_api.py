@@ -79,7 +79,7 @@ class TestPushAPI(PushTestCase):
                 valid_json["status"] = 200
                 assert(len(ret["uaid"]) > 0)
             elif string == " fooey barrey ":
-                valid_json["status"] = 401
+                valid_json["status"] = 503
             elif len(string) > 100:
                 # 100 char limit for UAID and Channel
                 valid_json["status"] = 401
@@ -261,7 +261,7 @@ class TestPushAPI(PushTestCase):
                  "channelIDs": ["ping_chan_1"],
                  "uaid": get_uaid("ping_uaid")})
         ret = self.msg(ws2, {"messageType": "register",
-                       "channelID": "ping_chan_1a.ws2"})
+                       "channelID": "ping_chan_1a-ws2"})
         self.compare_dict(ret, {"status": 200, "messageType": "register"})
         self.msg(ws2, {"messageType": "purge"})
         ws2.close()

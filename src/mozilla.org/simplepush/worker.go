@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -162,9 +163,8 @@ func (self *Worker) Run(sock PushWS) {
 				buffer["messageType"] = "ping"
 			}
 			// process the client commands
-            var messageType string
-            var ok bool
-			if messageType, ok = buffer["messageType"]; !ok {
+			var messageType string
+			if mt, ok := buffer["messageType"]; !ok {
 				self.log.Info("worker", "Invalid message",
 					util.JsMap{"reason": "Missing messageType",
 						"data": buffer})
@@ -172,9 +172,17 @@ func (self *Worker) Run(sock PushWS) {
 					util.JsMap{},
 					sperrors.UnknownCommandError)
 				break
+			} else {
+				switch mt.(type) {
+				case string:
+					messageType = mt.(string)
+				default:
+					messageType = ""
+				}
 			}
-            log.Printf("messageType:... ", messageType)
-			switch strings.ToLower(messageType.(string)) {
+			log.Printf("messageType:... ", messageType)
+			buffer["messageType"] = strings.ToLower(messageType)
+			switch strings.ToLower(messageType) {
 			case "hello":
 				err = self.Hello(&sock, buffer)
 			case "ack":
@@ -185,6 +193,8 @@ func (self *Worker) Run(sock PushWS) {
 				err = self.Unregister(sock, buffer)
 			case "ping":
 				err = self.Ping(sock, buffer)
+			case "purge":
+				err = self.Purge(sock, buffer)
 			default:
 				self.log.Warn("worker",
 					"Bad command",
@@ -192,6 +202,7 @@ func (self *Worker) Run(sock PushWS) {
 				err = sperrors.UnknownCommandError
 			}
 			if err != nil {
+                self.log.Debug("worker","Run returned error", nil)
 				self.handleError(sock, buffer, err)
 				break
 			}
@@ -218,52 +229,56 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// This is done by returning a new UAID.
 	forceReset := false
 
-    var suggestedUAID string
+	var suggestedUAID string
 
 	data := buffer.(util.JsMap)
 	if _, ok := data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
 	}
-    suggestedUAID = data["uaid"].(string)
+	suggestedUAID = data["uaid"].(string)
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
+        self.log.Debug("worker", "Missing ChannelIDs", nil)
 		return sperrors.MissingDataError
 	}
 	if len(sock.Uaid) > 0 &&
 		len(data["uaid"].(string)) > 0 &&
 		sock.Uaid != suggestedUAID {
 		// if there's already a Uaid for this channel, don't accept a new one
-		return sperrors.InvalidCommandError
+        self.log.Debug("worker", "Conflicting UAIDs", nil)
+		return sperrors.InvalidChannelError
 	}
 	if self.filter.Find([]byte(strings.ToLower(suggestedUAID))) != nil {
-		return sperrors.InvalidDataError
+        self.log.Debug("worker", "Invalid character in UAID", nil)
+		return sperrors.InvalidChannelError
 	}
 	if len(sock.Uaid) == 0 {
 		// if there's no UAID for the socket, accept or create a new one.
 		sock.Uaid = suggestedUAID
 		if len(sock.Uaid) > UAID_MAX_LEN {
+            self.log.Debug("worker", "UAID is too long", nil)
 			return sperrors.InvalidDataError
 		}
 		if len(sock.Uaid) == 0 {
 			forceReset = forceReset || true
 		}
-	    if num := len(data["channelIDs"].([]interface{})); num > 0 {
-		// are there a suspicious number of channels?
-		    if num > self.config["db.max_channels"].(int) {
-    			forceReset = forceReset || true
-	    	}
-            if ! sock.Store.IsKnownUaid(sock.Uaid) {
-                forceReset = forceReset || true
-            }
-        }
+		if num := len(data["channelIDs"].([]interface{})); num > 0 {
+			// are there a suspicious number of channels?
+			if num > self.config["db.max_channels"].(int) {
+				forceReset = forceReset || true
+			}
+			if !sock.Store.IsKnownUaid(sock.Uaid) {
+				forceReset = forceReset || true
+			}
+		}
 	}
 	if forceReset {
-        self.log.Warn("worker", "Resetting UAID for device",
-            util.JsMap{"uaid":sock.Uaid})
-        if len(sock.Uaid) > 0 {
-            sock.Store.PurgeUAID(sock.Uaid)
-        }
+		self.log.Warn("worker", "Resetting UAID for device",
+			util.JsMap{"uaid": sock.Uaid})
+		if len(sock.Uaid) > 0 {
+			sock.Store.PurgeUAID(sock.Uaid)
+		}
 		sock.Uaid, _ = GenUUID4()
 	}
 	// register the sockets (NOOP)
@@ -341,7 +356,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	}
 	data := buffer.(util.JsMap)
 	if data["channelID"] == nil {
-		return sperrors.MissingDataError
+		return sperrors.InvalidDataError
 	}
 	appid := data["channelID"].(string)
 	if len(appid) > CHID_MAX_LEN {
@@ -443,6 +458,17 @@ func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
 	websocket.JSON.Send(sock.Socket, util.JsMap{
 		"messageType": data["messageType"],
 		"status":      200})
+	return nil
+}
+
+func (self *Worker) Purge(sock PushWS, buffer interface{}) (err error) {
+	/*
+	   // If needed...
+	   sock.Scmd <- PushCommand{Command: PURGE,
+	       Arguments:util.JsMap{"uaid": sock.Uaid}}
+	   result := <-sock.Scmd
+	*/
+	websocket.JSON.Send(sock.Socket, util.JsMap{})
 	return nil
 }
 

@@ -7,7 +7,7 @@ import (
 
 var ChannelExistsError = errors.New("Channel Already Exists")
 var InvalidChannelError = errors.New("No Channel ID Specified")
-var InvalidCommandError = errors.New("Invalid command")
+var InvalidCommandError = errors.New("Invalid Command")
 var InvalidDataError = errors.New("An Invalid value was specified")
 var InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
 var MissingDataError = errors.New("Missing required fields for command")
@@ -22,21 +22,21 @@ func ErrToStatus(err error) (status int, message string) {
 	if err != nil {
 		switch err {
 		case ChannelExistsError,
-			InvalidChannelError,
 			NoDataToStoreError,
-			NoChannelError,
+			InvalidChannelError,
 			NoRecordWarning:
 			status = http.StatusServiceUnavailable
-            message = "Service Unavailable"
-        case MissingDataError,
+			message = "Service Unavailable"
+		case MissingDataError,
+			NoChannelError,
 			InvalidCommandError,
 			InvalidDataError,
 			UnknownCommandError:
-            status = 401
-            message = "Invalid command"
+			status = 401
+			message = "Invalid Command"
 		default:
 			status = 500
-            message = "An unexpected error occurred"
+			message = "An unexpected error occurred"
 		}
 	}
 	return status, message
