@@ -231,8 +231,8 @@ func Flush(client *Client) (err error) {
 }
 
 func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
-    result = 200
-    return
+	result = 200
+	return
 }
 
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
@@ -260,9 +260,9 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		self.log.Debug("server", "Cleanup", nil)
 		self.Bye(sock)
 		return 0, nil
-    case PURGE:
-        self.log.Debug("Server", "Purge", nil)
-        self.Purge(cmd, sock)
+	case PURGE:
+		self.log.Debug("Server", "Purge", nil)
+		self.Purge(cmd, sock)
 	}
 
 	args["uaid"] = ret["uaid"]
