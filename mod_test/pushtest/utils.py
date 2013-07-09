@@ -25,6 +25,7 @@ def send_http_put(update_path, args='version=123',
                   ct='application/x-www-form-urlencoded',
                   exit_on_assert=False):
     """ executes an HTTP PUT with version"""
+
     print_log('send_http_put', update_path)
     opener = urllib2.build_opener(urllib2.HTTPHandler)
     request = urllib2.Request(update_path, args)
@@ -34,7 +35,8 @@ def send_http_put(update_path, args='version=123',
         url = opener.open(request)
     except Exception, e:
         if exit_on_assert:
-            exit('Exception in HTTP PUT: %s' % e)
+            import pdb; pdb.set_trace()
+            exit('Exception in HTTP PUT: %s' % (e))
         raise e
     url.close()
     return url.getcode()

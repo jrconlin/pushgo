@@ -30,25 +30,31 @@ class TestNotify(PushTestCase):
 
         def _check_updates(updates_list, chan1_val="", chan2_val=""):
             for chan in updates_list:
-                if chan1_val != "" and chan["channelID"] == "chan1":
+                if chan1_val != "" and chan["channelID"] == "tn.chan1":
                     _assert_equal(chan["version"], chan1_val)
-                if chan2_val != "" and chan["channelID"] == "chan2":
+                if chan2_val != "" and chan["channelID"] == "tn.chan2":
                     _assert_equal(chan["version"], chan2_val)
 
             return
 
         def on_message(ws, message):
             ret = json.loads(message)
+            if ws.state == 'purge':
+                ws.close()
+                return
+            if len(ret) == 0:
+                # skip blank records
+                return
             self.log('on_msg:', ret)
             self.log('state', ws.state)
 
             if ws.state == 'hello':
-                reg_chan(ws, 'register1', 'chan1')
+                reg_chan(ws, 'register1', 'tn.chan1')
             elif ws.state == 'register1':
                 # register chan1
                 self.chan1 = ret.get("pushEndpoint")
                 self.log('self.chan1', self.chan1)
-                reg_chan(ws, 'register2', 'chan2')
+                reg_chan(ws, 'register2', 'tn.chan2')
             elif ws.state == 'register2':
                 # register chan2
                 self.chan2 = ret.get("pushEndpoint")
@@ -58,7 +64,7 @@ class TestNotify(PushTestCase):
             elif ws.state == 'update1':
                 #verify chan1
                 self.compare_dict(ret, {"messageType": "notification"}, True)
-                _assert_equal(ret["updates"][0]["channelID"], "chan1")
+                _assert_equal(ret["updates"][0]["channelID"], "tn.chan1")
                 _check_updates(ret["updates"], 12345789)
 
                 # http put to chan2
@@ -83,7 +89,7 @@ class TestNotify(PushTestCase):
                 # update the same channel
                 self.compare_dict(ret, {"messageType": "notification"}, True)
                 for chan in ret["updates"]:
-                    if chan["channelID"] == "chan2":
+                    if chan["channelID"] == "tn.chan2":
                         # check if 0 version returns epoch
                         _assert_equal(len(str(chan["version"])), 10)
 
@@ -96,12 +102,13 @@ class TestNotify(PushTestCase):
                 # update the same channel
                 self.compare_dict(ret, {"messageType": "notification"}, True)
                 for chan in ret["updates"]:
-                    if chan["channelID"] == "chan1":
+                    if chan["channelID"] == "tn.chan1":
                         # check if 0 version returns epoch
                         _assert_equal(len(str(chan["version"])), 10)
 
                 send_ack(ws, ret["updates"])
-                ws.close()
+                ws.state="purge"
+                self.msg(ws, {"messageType": "purge"})
 
         def on_open(ws):
             self.log('open:', ws)
@@ -110,15 +117,16 @@ class TestNotify(PushTestCase):
         def on_error(ws):
             self.log('on error')
             ws.close()
-            raise AssertError(ws)
+            raise AssertionError(ws)
 
         def setup_chan(ws):
             ws.state = 'hello'
             self.msg(ws,
                      {"messageType": "hello",
-                      "channelIDs": ["chan1", "chan2"],
+                      "channelIDs": [],
                       "uaid": self.uaid},
                      cb=False)
+            self.msg(ws, {"messageType": "purge"})
 
         def reg_chan(ws, state, chan_str):
             ws.state = state
@@ -139,6 +147,9 @@ class TestNotify(PushTestCase):
 
         def send_update(update_url, str_data, state='update1',
                         ct='application/x-www-form-urlencoded'):
+            if update_url == '':
+                import pdb; pdb.set_trace()
+                raise AssertionError("No update_url found")
             ws.state = state
             resp = send_http_put(update_url, str_data, ct, True)
             _assert_equal(resp, 200)

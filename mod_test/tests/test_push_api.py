@@ -27,10 +27,10 @@ class TestPushAPI(PushTestCase):
         """ Test handshake messageType with lots of data types """
         for dt in self.data_types:
             tmp_uaid = get_uaid("uaid")
-            verify_json = {"messageType": "%s" % dt.lower(),
+            verify_json = {"messageType": ("%s" % dt).lower(),
                            "status": 401,
                            "uaid": tmp_uaid}
-            ret = self.msg(self.ws, {"messageType": '%s' % dt.lower(),
+            ret = self.msg(self.ws, {"messageType": ('%s' % dt).lower(),
                            "channelIDs": [],
                            "uaid": tmp_uaid})
             if dt == 'HeLLO':
@@ -41,10 +41,12 @@ class TestPushAPI(PushTestCase):
 
         # sending non self.strings to make sure it doesn't break server
         self.ws.send('{"messageType": 123}')
-        self.assertEqual(self.ws.recv(), None)
+        self.compare_dict(json.loads(self.ws.recv()), {"status": 401})
+
         try:
             self.ws.send('{"messageType": null}')
         except Exception, (errno, msg):
+            import pdb; pdb.set_trace()
             print 'Exception', errno, msg
             self.assertEqual(errno, 32)
             self.assertEqual(msg, 'Broken pipe')
@@ -55,6 +57,7 @@ class TestPushAPI(PushTestCase):
         lstrings = list(self.strings)
         lstrings.append(unknown_uaid)
         for string in lstrings:
+            print string
             valid_json = {"messageType": "hello"}
             ws = websocket.create_connection(self.url)
             msg = {"messageType": "hello",
@@ -85,6 +88,8 @@ class TestPushAPI(PushTestCase):
                 assert(ret["uaid"] != unknown_uaid)
                 continue
             self.compare_dict(ret, valid_json)
+            self.msg(ws, {"messageType":"purge"})
+
 
     def test_hello_invalid_keys(self):
         """ Test various json keys """
@@ -103,7 +108,7 @@ class TestPushAPI(PushTestCase):
             else:
                 self.compare_dict(ret, {"status": 401,
                                   "error": "Invalid Command"})
-
+            self.msg(invalid_ws, {"messageType": "purge"})
             invalid_ws.close()
 
     def test_reg_noshake(self):
@@ -127,14 +132,14 @@ class TestPushAPI(PushTestCase):
                               "status": 200})
             self.validate_endpoint(ret['pushEndpoint'])
         #clean-up
-        self.msg(self.ws, {"messageType": "unregister",
-                           "channelID": "reg_noshake_chan_1"})
+        self.msg(self.ws, {"messageType": "purge"})
 
     def test_reg_duplicate(self):
         """ Test registration with duplicate channel name """
+        uaid = get_uaid("reg_noshake_uaid_1")
         self.msg(self.ws, {"messageType": "hello",
                  "channelIDs": [get_uaid("reg_noshake_chan_1")],
-                 "uaid": get_uaid("reg_noshake_uaid_1")})
+                 "uaid": uaid})
         if allowDupes:
             ret = self.msg(self.ws, {"messageType": "register",
                            "channelID": "dupe_handshake"})
@@ -192,6 +197,7 @@ class TestPushAPI(PushTestCase):
     def test_unreg(self):
         """ Test unregister """
         # unreg non existent
+        uaid = "unreg_uaid"
         ret = self.msg(self.ws, {"messageType": "unregister"})
         self.compare_dict(ret, {"messageType": "unregister",
                           "status": 401,
@@ -207,12 +213,9 @@ class TestPushAPI(PushTestCase):
         # setup
         self.msg(self.ws, {"messageType": "hello",
                  "channelIDs": ["unreg_chan"],
-                 "uaid": get_uaid("unreg_uaid")})
+                 "uaid": uaid})
         self.msg(self.ws, {"messageType": "register",
                  "channelID": "unreg_chan"})
-        self.msg(self.ws, {"messageType": "hello",
-                 "channelIDs": ["unreg_chan"],
-                 "uaid": get_uaid("unreg_uaid")})
 
         # unreg
         ret = self.msg(self.ws, {"messageType": "unregister",
@@ -226,10 +229,12 @@ class TestPushAPI(PushTestCase):
         # XXX No-op on server results in this behavior
         self.compare_dict(ret, {"messageType": "unregister",
                           "status": 200})
+        self.msg(self.ws, {"messageType": "purge"})
 
     def test_ping(self):
         # Ping responses can contain any data.
         # The reference server returns the minimal data set "{}"
+        ws2 = websocket.create_connection(self.url)
         # happy
         ret = self.msg(self.ws, {})
         if ret != {}:
@@ -252,12 +257,14 @@ class TestPushAPI(PushTestCase):
                               "status": 200})
 
         # do a register between pings
-        self.msg(self.ws, {"messageType": "hello",
+        self.msg(ws2, {"messageType": "hello",
                  "channelIDs": ["ping_chan_1"],
                  "uaid": get_uaid("ping_uaid")})
-        ret = self.msg(self.ws, {"messageType": "register",
-                       "channelID": "ping_chan_1a"})
+        ret = self.msg(ws2, {"messageType": "register",
+                       "channelID": "ping_chan_1a.ws2"})
         self.compare_dict(ret, {"status": 200, "messageType": "register"})
+        self.msg(ws2, {"messageType": "purge"})
+        ws2.close()
 
         # send and ack too
         # XXX ack can hang socket
@@ -278,10 +285,7 @@ class TestPushAPI(PushTestCase):
                 self.compare_dict(ret, {"messageType": "ping",
                                   "status": 200})
         #cleanup
-        self.msg(self.ws, {"messageType": "unregister",
-                 "channelID": "ping_chan_1"})
-        self.msg(self.ws, {"messageType": "unregister",
-                 "channelID": "ping_chan_1a"})
+        self.msg(self.ws, {"messageType": "purge"})
 
     def test_ack(self):
         """ Test ack """
@@ -300,6 +304,7 @@ class TestPushAPI(PushTestCase):
                  "uaid": get_uaid("ack_uaid")})
         reg = self.msg(self.ws, {"messageType": "register",
                        "channelID": "ack_chan_1"})
+        assert (reg["pushEndpoint"] is not None)
 
         # send an http PUT request to the endpoint
         send_http_put(reg['pushEndpoint'])
@@ -310,11 +315,11 @@ class TestPushAPI(PushTestCase):
         ret = self.msg(self.ws, {"messageType": "ack",
                        "updates": [{"channelID": "ack_chan_1",
                                     "version": 23}]})
-        self.compare_dict(ret, {"messageType": "notification",
-                          "expired": None})
+        self.compare_dict(ret, {"messageType": "notification"})
         self.assertEqual(ret["updates"][0]["channelID"], "ack_chan_1")
 
     def tearDown(self):
+        self.msg(self.ws, {"messageType": "purge"})
         self.ws.close()
 
 if __name__ == '__main__':

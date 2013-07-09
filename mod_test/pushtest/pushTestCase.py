@@ -50,7 +50,7 @@ class PushTestCase(unittest.TestCase):
                 ret = ws.recv()
                 return json.loads(ret)
             except Exception, e:
-                print 'Unable to parse json:', e
+                print '#### Unable to parse json:', e
                 raise AssertionError(e)
 
     def compare_dict(self, ret_data, exp_data, exit_on_assert=False):
