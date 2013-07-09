@@ -1,4 +1,4 @@
-Simple Push Server in Go v0.100
+Simple Push Server in Go v0.500
 ===
 
 *Please note: This server is still under radical development.*
