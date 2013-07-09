@@ -1,5 +1,9 @@
 #!/usr/bin/python
 
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 import json
 import unittest
 import websocket
@@ -45,11 +49,8 @@ class TestPushAPI(PushTestCase):
 
         try:
             self.ws.send('{"messageType": null}')
-        except Exception, (errno, msg):
-            import pdb; pdb.set_trace()
-            print 'Exception', errno, msg
-            self.assertEqual(errno, 32)
-            self.assertEqual(msg, 'Broken pipe')
+        except Exception, e:
+            print 'Exception', e
 
     def test_hello_uaid_types(self):
         """ Test handshake uaids with lots of data types """
@@ -88,8 +89,7 @@ class TestPushAPI(PushTestCase):
                 assert(ret["uaid"] != unknown_uaid)
                 continue
             self.compare_dict(ret, valid_json)
-            self.msg(ws, {"messageType":"purge"})
-
+            self.msg(ws, {"messageType": "purge"})
 
     def test_hello_invalid_keys(self):
         """ Test various json keys """
