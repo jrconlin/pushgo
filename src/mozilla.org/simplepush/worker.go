@@ -202,7 +202,7 @@ func (self *Worker) Run(sock PushWS) {
 				err = sperrors.UnknownCommandError
 			}
 			if err != nil {
-                self.log.Debug("worker","Run returned error", nil)
+				self.log.Debug("worker", "Run returned error", nil)
 				self.handleError(sock, buffer, err)
 				break
 			}
@@ -239,25 +239,25 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	suggestedUAID = data["uaid"].(string)
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
-        self.log.Debug("worker", "Missing ChannelIDs", nil)
+		self.log.Debug("worker", "Missing ChannelIDs", nil)
 		return sperrors.MissingDataError
 	}
 	if len(sock.Uaid) > 0 &&
 		len(data["uaid"].(string)) > 0 &&
 		sock.Uaid != suggestedUAID {
 		// if there's already a Uaid for this channel, don't accept a new one
-        self.log.Debug("worker", "Conflicting UAIDs", nil)
+		self.log.Debug("worker", "Conflicting UAIDs", nil)
 		return sperrors.InvalidChannelError
 	}
 	if self.filter.Find([]byte(strings.ToLower(suggestedUAID))) != nil {
-        self.log.Debug("worker", "Invalid character in UAID", nil)
+		self.log.Debug("worker", "Invalid character in UAID", nil)
 		return sperrors.InvalidChannelError
 	}
 	if len(sock.Uaid) == 0 {
 		// if there's no UAID for the socket, accept or create a new one.
 		sock.Uaid = suggestedUAID
 		if len(sock.Uaid) > UAID_MAX_LEN {
-            self.log.Debug("worker", "UAID is too long", nil)
+			self.log.Debug("worker", "UAID is too long", nil)
 			return sperrors.InvalidDataError
 		}
 		if len(sock.Uaid) == 0 {

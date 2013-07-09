@@ -70,7 +70,7 @@ func (self *Storage) isFatal(err error) bool {
 	default:
 		self.log.Critical("storage", "CRITICAL HIT! RESTARTING!",
 			util.JsMap{"error": err})
-        log.Fatal("### RESTARTING ### ", err)
+		log.Fatal("### RESTARTING ### ", err)
 		return true
 	}
 }
@@ -128,9 +128,9 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 }
 
 func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
-    if uaid == "" {
-        return result, nil
-    }
+	if uaid == "" {
+		return result, nil
+	}
 	raw, err := self.mc.Get(uaid)
 	if err != nil {
 		self.isFatal(err)
@@ -365,12 +365,12 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 }
 
 func (self *Storage) IsKnownUaid(uaid string) bool {
-    self.log.Debug("storage","IsKnownUaid", util.JsMap{"uaid":uaid})
-    _, err := self.fetchAppIDArray(uaid)
-    if err == nil {
-        return true
-    }
-    return false
+	self.log.Debug("storage", "IsKnownUaid", util.JsMap{"uaid": uaid})
+	_, err := self.fetchAppIDArray(uaid)
+	if err == nil {
+		return true
+	}
+	return false
 }
 
 func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.JsMap, err error) {
@@ -555,17 +555,17 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	return string(item.Value), nil
 }
 
-func (self *Storage) PurgeUAID(uaid string) (err error){
-    appIDArray, err := self.fetchAppIDArray(uaid)
-    if err == nil && len(appIDArray) > 0 {
-        for _, appid := range appIDArray {
-            pk, _ := GenPK(uaid, appid)
-            self.mc.Delete(pk)
-        }
-    }
-    self.mc.Delete(uaid)
-    self.DelUAIDHost(uaid)
-    return nil
+func (self *Storage) PurgeUAID(uaid string) (err error) {
+	appIDArray, err := self.fetchAppIDArray(uaid)
+	if err == nil && len(appIDArray) > 0 {
+		for _, appid := range appIDArray {
+			pk, _ := GenPK(uaid, appid)
+			self.mc.Delete(pk)
+		}
+	}
+	self.mc.Delete(uaid)
+	self.DelUAIDHost(uaid)
+	return nil
 }
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {

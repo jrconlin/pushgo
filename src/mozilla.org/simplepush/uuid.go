@@ -25,5 +25,6 @@ func GenUUID4() (string, error) {
 
 	return hex.EncodeToString(uuid), nil
 }
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
