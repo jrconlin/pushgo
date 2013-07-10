@@ -24,14 +24,12 @@ func main() {
 
 	flag.StringVar(&configFile, "config", "config.ini", "Configuration File")
 	flag.Parse()
-	log.Printf("Using config %s", configFile)
 	config := util.MzGetConfig(configFile)
 
     config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	logger = util.NewHekaLogger(config)
-    log.Printf("#### token_key: %s\n", config["token_key"])
 
 	simplepush.Clients = make(map[string]*simplepush.Client)
 
