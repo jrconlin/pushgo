@@ -17,17 +17,6 @@ import (
 
 var logger *util.HekaLogger
 
-// -- utils
-func makeHandler(fn func(http.ResponseWriter, *http.Request, util.JsMap, *util.HekaLogger)) http.HandlerFunc {
-	config := util.MzGetConfig("config.ini")
-	// Convert the token_key from base64 (if present)
-    config = simplepush.FixConfig(config)
-
-	return func(resp http.ResponseWriter, req *http.Request) {
-		fn(resp, req, config, logger)
-	}
-}
-
 // -- main
 func main() {
 
@@ -42,17 +31,19 @@ func main() {
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	logger = util.NewHekaLogger(config)
+    log.Printf("#### token_key: %s\n", config["token_key"])
 
 	simplepush.Clients = make(map[string]*simplepush.Client)
 
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
+    handlers := simplepush.NewHandler(config, logger)
 
 	// Register the handlers
 	// each websocket gets it's own handler.
-	http.HandleFunc("/update/", makeHandler(simplepush.UpdateHandler))
-	http.HandleFunc("/status/", makeHandler(simplepush.StatusHandler))
-	http.Handle("/", websocket.Handler(simplepush.PushSocketHandler))
+	http.HandleFunc("/update/", handlers.UpdateHandler)
+	http.HandleFunc("/status/", handlers.StatusHandler)
+	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server
 	host := util.MzGet(config, "host", "localhost")

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+    "log"
 	"net/http"
 	"net/url"
 	"os"
@@ -65,7 +66,11 @@ func FixConfig(config util.JsMap) util.JsMap {
 	}
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(k.(string))
+		key, err := base64.URLEncoding.DecodeString(k.(string))
+        if err != nil {
+            log.Fatal(err)
+        }
+
 		config["token_key"] = key
 	}
 
@@ -75,8 +80,18 @@ func FixConfig(config util.JsMap) util.JsMap {
 
 }
 
+type Handler struct {
+    config util.JsMap
+    logger *util.HekaLogger
+}
+
+func NewHandler(config util.JsMap, logger *util.HekaLogger) *Handler {
+    return &Handler{config: config,
+    logger: logger}
+}
+
 // VIP response
-func StatusHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
+func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	resp.Write([]byte("OK"))
@@ -103,16 +118,18 @@ func proxyNotification(host, path string) (err error) {
 }
 
 // -- REST
-func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMap, logger *util.HekaLogger) {
+func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	var err error
 	var port string
 	var vers int64
 
 	timer := time.Now()
-	filter := regexp.MustCompile("[^\\w-\\.]")
+	filter := regexp.MustCompile("[^\\w-\\.\\=]")
+    self.logger.Debug("main", "Config", self.config)
 
-	logger.Debug("main", fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
+	self.logger.Debug("main",
+        fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
@@ -133,19 +150,20 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	elements := strings.Split(req.URL.Path, "/")
 	pk := elements[len(elements)-1]
 	if len(pk) == 0 {
-		logger.Error("main", "No token, rejecting request",
+		self.logger.Error("main", "No token, rejecting request",
 			util.JsMap{"remoteAddr": req.RemoteAddr})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		return
 	}
 
-	store := storage.New(config, logger)
-	if token, ok := config["token_key"]; ok {
+	store := storage.New(self.config, self.logger)
+	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
+        self.logger.Debug("main", "Decoding key", util.JsMap{"token": token})
 		var err error
 		bpk, err := Decode(token.([]byte),
 			pk)
 		if err != nil {
-			logger.Error("main",
+			self.logger.Error("main",
 				"Could not decode token",
 				util.JsMap{"primarykey": pk,
 					"remoteAddr": req.RemoteAddr,
@@ -159,7 +177,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	}
 
 	if filter.Find([]byte(pk)) != nil {
-		logger.Error("main",
+		self.logger.Error("main",
 			"Invalid token for update",
 			nil)
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
@@ -168,13 +186,13 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 
 	uaid, appid, err := storage.ResolvePK(pk)
 	if err != nil {
-		logger.Error("main",
+	    self.logger.Error("main",
 			fmt.Sprintf("Could not resolve PK %s, %s", pk, err), nil)
 		return
 	}
 
 	if appid == "" {
-		logger.Error("main",
+		self.logger.Error("main",
 			"Incomplete primary key",
 			util.JsMap{"uaid": uaid,
 				"channelID":  appid,
@@ -182,27 +200,27 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 		return
 	}
 
-	if iport, ok := config["port"]; ok {
+	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)
 	}
 	if port != "" && port != "80" {
 		port = ":" + port
 	}
-	currentHost := util.MzGet(config, "shard.current_host", "localhost")
+	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
 	host, err := store.GetUAIDHost(uaid)
 	if err != nil {
-		logger.Error("main",
+		self.logger.Error("main",
 			fmt.Sprintf("Could not discover host for %s, %s (using default)",
 				uaid, err), nil)
-		host = util.MzGet(config, "shard.defaultHost", "localhost")
+		host = util.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
-	if util.MzGetFlag(config, "shard.doProxy") {
+	if util.MzGetFlag(self.config, "shard.doProxy") {
 		if host != currentHost && host != "localhost" {
-			logger.Info("main",
+			self.logger.Info("main",
 				fmt.Sprintf("Proxying request to %s", host+port), nil)
 			err = proxyNotification(host+port, req.URL.Path)
 			if err != nil {
-				logger.Error("main",
+				self.logger.Error("main",
 					fmt.Sprintf("Proxy to %s failed: %s", host+port, err),
 					nil)
 			}
@@ -211,7 +229,7 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	}
 
 	defer func(uaid, appid, path string, timer time.Time) {
-		logger.Info("timer", "Client Update complete",
+		self.logger.Info("timer", "Client Update complete",
 			util.JsMap{
 				"uaid":      uaid,
 				"path":      req.URL.Path,
@@ -219,21 +237,21 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 				"duration":  time.Now().Sub(timer).Nanoseconds()})
 	}(uaid, appid, req.URL.Path, timer)
 
-	logger.Info("main",
+	self.logger.Info("main",
 		fmt.Sprintf("setting version for %s.%s to %d", uaid, appid, vers),
 		nil)
 	err = store.UpdateChannel(pk, vers)
 
 	if err != nil {
 		errstr := fmt.Sprintf("Could not update channel %s.%s :: %s", uaid, appid, err)
-		logger.Warn("main", errstr, nil)
+		self.logger.Warn("main", errstr, nil)
 		status, _ := sperrors.ErrToStatus(err)
 		http.Error(resp, errstr, status)
 		return
 	}
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
-	logger.Info("timer", "Client Update complete",
+	self.logger.Info("timer", "Client Update complete",
 		util.JsMap{"uaid": uaid,
 			"channelID": appid,
 			"duration":  time.Now().Sub(timer).Nanoseconds()})
@@ -244,24 +262,15 @@ func UpdateHandler(resp http.ResponseWriter, req *http.Request, config util.JsMa
 	return
 }
 
-func PushSocketHandler(ws *websocket.Conn) {
+func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
-	// can we pass this in somehow?
-	config := util.MzGetConfig("config.ini")
-	config = FixConfig(config)
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, _ := base64.URLEncoding.DecodeString(string(k.([]uint8)))
-		config["token_key"] = key
-	}
-	logger := util.NewHekaLogger(config)
-	store := storage.New(config, logger)
+	store := storage.New(self.config, self.logger)
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Scmd:   make(chan PushCommand),
 		Ccmd:   make(chan PushCommand),
 		Store:  store,
-		Logger: logger,
+		Logger: self.logger,
 		Born:   timer}
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
@@ -272,7 +281,7 @@ func PushSocketHandler(ws *websocket.Conn) {
 		}
 	}(sock.Logger)
 
-	go NewWorker(config).Run(sock)
+	go NewWorker(self.config).Run(sock)
 	for {
 		select {
 		case serv_cmd := <-sock.Scmd:
