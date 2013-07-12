@@ -7,4 +7,6 @@ Run `make` to install dependencies.
 
 You can run smoke tests invoking `python main.py`
 
-You can also acceptance level tests by invoking `./run_all.py`. You can run a specific test file by passing the filename as an argument.  Debug output is controlled by config.ini.
+You can also acceptance level tests by invoking `./run_all.py`. You
+can run a specific test file by passing the filename as an argument.
+Debug output is controlled by config.ini.

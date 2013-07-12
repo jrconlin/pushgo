@@ -7,6 +7,9 @@ import urlparse
 import pprint
 
 appid = "test1"
+version = ""
+success = False
+
 
 def on_close(ws):
     print "## Closed"
@@ -44,7 +47,7 @@ def on_message(ws, message):
     else:
         if type == "notification":
             if ws.state == "update":
-                check_update(msg)
+                check_update(msg, ws)
                 print "### Update pass, shutting down...."
                 ## disable this if you want to test multiple messages.
                 ws.state = "shutdown"
@@ -54,14 +57,14 @@ def on_message(ws, message):
     if ws.state == "helloagain":
         # retry the registration
         ws.state = "register"
-        ws.send(json.dumps({"messageType": ws.state, "channelID": appid}))
+        ws.send(json.dumps({"messageType": ws.state, "channelID": ws.appid}))
         return
     if ws.state == "hello":
         ## We're recognized, try to register the appid channel.
         ## NOTE: Normally, channelIDs are UUID4 type values.
         check_hello(msg)
         ws.state = "register"
-        ws.send(json.dumps({"messageType": ws.state, "channelID": appid}))
+        ws.send(json.dumps({"messageType": ws.state, "channelID": ws.appid}))
         return
     if ws.state == "register":
         ## Endpoint is registered. Send an update via the REST interface.
@@ -73,7 +76,8 @@ def on_message(ws, message):
         return
     if ws.state == "shutdown":
         print "### SUCCESS!!! Exiting..."
-        exit()
+        ws.success = True
+        ws.close()
 
 
 def on_open(ws):
@@ -84,8 +88,10 @@ def on_open(ws):
 def fail_invalid_string(ws):
     ws.send("banana")
 
+
 def fail_bad_data_1(ws):
     ws.send(json.dumps({"messageType": 1}))
+
 
 def fail_bad_data_2(ws):
     ws.send(json.dumps({"messageType": "banana"}))
@@ -111,10 +117,10 @@ def state_machine(ws):
             print "!!! Untrapped failure occurred"
             exit(0)
     # do successful
-    ws.state="hello"
+    ws.state = "hello"
     print ">>> Sending 'Hello'"
     ws.send(json.dumps({"messageType": ws.state,
-            "uaid": "test", "channelIDs":[]}))
+            "uaid": "test", "channelIDs": []}))
 
 
 def check_hello(msg):
@@ -126,10 +132,13 @@ def check_hello(msg):
     return
 
 
-def check_update(msg):
+def check_update(msg, ws):
     try:
-        assert(msg.get("updates")[0].get("channelID") == appid,
+        assert(msg.get("updates")[0].get("channelID") == ws.appid,
                "does not contain channelID")
+        if len(ws.version):
+            assert(msg.get("updates")[0].get("version") == ws.version,
+                   "does not contain correct version")
     except AssertionError, e:
         print e
         exit("Update failed check")
@@ -151,7 +160,7 @@ def send_rest_alert(ws):
     url = urlparse.urlparse(ws.update_url)
     http = httplib.HTTPConnection(url.netloc)
     http.set_debuglevel(10)
-    http.request("PUT", url.path+"?version=123")
+    http.request("PUT", url.path + "?version=" + version)
     print "#>> "
     resp = http.getresponse()
     if resp.status != 200:
@@ -184,7 +193,16 @@ def main():
                                 on_error=on_error,
                                 on_close=on_close)
     ws.state = "initialize"
+    ws.appid = appid
+    ws.version = version
+    ws.success = False
     ws.run_forever()
     print("leaving")
+    print "=============="
+    if ws.success:
+        print "Smoke test was successful"
+    else:
+        print "Smoke test failed."
+    print "=============="
 
 main()

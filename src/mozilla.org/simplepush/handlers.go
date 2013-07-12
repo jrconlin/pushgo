@@ -142,8 +142,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
 			return
 		}
-	}
-	if vers == 0 {
+	} else {
 		vers = time.Now().UTC().Unix()
 	}
 
