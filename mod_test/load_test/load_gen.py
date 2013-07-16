@@ -6,27 +6,22 @@
 
 import json
 import time
-import gevent
-import sys
 
 from ws4py.client.threadedclient import WebSocketClient
 
 from loads.case import TestCase
-from pushtest.utils import (get_uaid, get_rand, str_gen, send_http_put)
+from pushtest.utils import (
+    get_rand,
+    get_prob,
+    get_uaid,
+    str_gen,
+    send_http_put)
 
 
 class WsClient(WebSocketClient):
-    """ Load test for pushgo. Runs types of tests:
-        - connect, hello, register, update, ack, close
-        - connect, hello, register, update, close
-        - connect, hello, register, update loop one channel, ack, close
-        - connect, hello, register, update loop different channel, ack, close
-        - connect, hello, register, update, ack, ping loop, close 
 
-        Requires loads
-
-
-    """
+    """ ws4py websocket client, executes send messages based on
+    server response """
 
     endpoint = ""
     chan = ""
@@ -36,20 +31,23 @@ class WsClient(WebSocketClient):
     sleep = 1
     client_type = ""
 
-    max_sleep = 10
+    max_sleep = 3
     max_updates = 5
     verbose = True
 
-    client_types = {'conn_close':30, 
-                    'conn_noack':5,
-                    'one_chan':30, 
-                    'multi_chan':30,
-                    'ping_loop':5}  
-                
+    client_types = {'conn_close': 30,
+                    'conn_noack': 5,
+                    'one_chan': 30,
+                    'multi_chan': 30,
+                    'ping_loop': 5}
+
     def opened(self):
-        self.client_type = get_rand(self.client_types)
-        # self.client_type = 'ping_loop'
-        print '\n', self.client_type
+        self.client_type = get_prob(self.client_types)
+
+        if self.verbose:
+            print '\n', self.client_type
+
+        self.sleep = get_rand(self.max_sleep)
         self.chan = str_gen(8)
         self.uaid = get_uaid()
         self.version = int(str_gen(8))
@@ -65,12 +63,12 @@ class WsClient(WebSocketClient):
     def reg(self):
         self.send(
             '{"messageType":"register", "channelID":"%s", "uaid":"%s"}' %
-            (self.chan, self.uaid))    
+            (self.chan, self.uaid))
 
     def unreg(self):
         self.send(
             '{"messageType":"unregister", "channelID":"%s"}' %
-            self.uaid) 
+            self.uaid)
 
     def put(self):
         send_http_put(self.endpoint, "version=%s" % self.version)
@@ -80,7 +78,6 @@ class WsClient(WebSocketClient):
                   % (self.chan, self.version))
 
     def ping(self):
-        print 'ping'
         self.send('{}')
 
     def check_response(self, data):
@@ -88,7 +85,6 @@ class WsClient(WebSocketClient):
             if data['status'] != 200:
                 print 'ERROR status: ', data['status']
                 self.close()
-                # errors.append("status: %s != 200" % data['status'])
 
     def new_chan(self):
         self.chan = str_gen(8)
@@ -106,6 +102,7 @@ class WsClient(WebSocketClient):
             self.close()
 
         if "messageType" in data:
+            print 'sleep', self.sleep
             time.sleep(self.sleep)
 
             if data["messageType"] == "hello":
@@ -119,28 +116,39 @@ class WsClient(WebSocketClient):
             if data["messageType"] == "notification":
                 if self.client_type != 'conn_noack':
                     self.ack()
-
                 if self.client_type == 'conn_close' or self.client_type == 'conn_noack':
                     self.unreg()
                     self.close()
                 if self.client_type == 'one_chan':
                     self.version += 1
                     self.put()
-                elif self.client_type == 'multi_chan':   
-                    self.unreg()             
+                elif self.client_type == 'multi_chan':
+                    self.unreg()
                     self.new_chan()
                 elif self.client_type == 'ping_loop':
                     self.ping()
-            
-            self.count += 1
 
+            self.count += 1
 
 
 class TestLoad(TestCase):
 
+    """
+    Load test for pushgo. Runs types of tests:
+    - connect, hello, register, update, ack, close
+    - connect, hello, register, update, close
+    - connect, hello, register, update loop one channel, ack, close
+    - connect, hello, register, update loop different channel, ack, close
+    - connect, hello, register, update, ack, ping loop, close
+
+    You can run this by installing Loads and running this:
+    loads-runner load_test.load_gen.TestLoad.test_load -c 10 -u 10
+    """
+
     def test_load(self):
         try:
             ws = WsClient("ws://localhost:8080")
+
             ws.connect()
             ws.run_forever()
         except KeyboardInterrupt:

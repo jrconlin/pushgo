@@ -1,10 +1,16 @@
+#!/usr/bin/python
+
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 import string
 import random
 import urllib2
-import time
+
 
 def str_gen(size=6, chars=string.digits):
-    #generate rand string
+    # generate rand string
     random.seed()
     return ''.join(random.choice(chars) for x in range(size))
 
@@ -32,9 +38,10 @@ def send_http_put(update_path, args='version=123',
     request.get_method = lambda: 'PUT'
     try:
         url = opener.open(request)
-    except Exception, e:
+    except Exception as e:
         if exit_on_assert:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
             exit('Exception in HTTP PUT: %s' % (e))
         raise e
     url.close()
@@ -63,6 +70,11 @@ def get_endpoint(ws_url):
         ret = ws_url.replace('ws:', 'http:')
     return ret
 
-def get_rand(population):
+
+def get_rand(max):
+    return random.randrange(max)
+
+
+def get_prob(population):
     random.seed()
     return random.choice([x for x in population for y in range(population[x])])
