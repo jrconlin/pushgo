@@ -1,10 +1,17 @@
+#!/usr/bin/python
+
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 import string
 import random
 import urllib2
 
 
-def str_gen(size=6, chars=string.ascii_uppercase + string.digits):
-    #generate rand string
+def str_gen(size=6, chars=string.digits):
+    # generate rand string
+    random.seed()
     return ''.join(random.choice(chars) for x in range(size))
 
 
@@ -16,7 +23,7 @@ def print_log(prefix, msg):
     print "::%s: %s" % (prefix, msg)
 
 
-def get_uaid(chan_str):
+def get_uaid(chan_str=""):
     """uniquify our channels so there's no collision"""
     return "%s%s" % (chan_str, str_gen(16))
 
@@ -25,17 +32,16 @@ def send_http_put(update_path, args='version=123',
                   ct='application/x-www-form-urlencoded',
                   exit_on_assert=False):
     """ executes an HTTP PUT with version"""
-
-    print_log('send_http_put', update_path)
     opener = urllib2.build_opener(urllib2.HTTPHandler)
     request = urllib2.Request(update_path, args)
     request.add_header('Content-Type', ct)
     request.get_method = lambda: 'PUT'
     try:
         url = opener.open(request)
-    except Exception, e:
+    except Exception as e:
         if exit_on_assert:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
             exit('Exception in HTTP PUT: %s' % (e))
         raise e
     url.close()
@@ -63,3 +69,12 @@ def get_endpoint(ws_url):
     else:
         ret = ws_url.replace('ws:', 'http:')
     return ret
+
+
+def get_rand(max):
+    return random.randrange(max)
+
+
+def get_prob(population):
+    random.seed()
+    return random.choice([x for x in population for y in range(population[x])])
