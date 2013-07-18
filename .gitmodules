@@ -1,0 +1,3 @@
+[submodule "simplepush_test"]
+	path = simplepush_test
+	url = git://github.com/jrconlin/simplepush_test.git
