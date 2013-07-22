@@ -14,7 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-    "log"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -67,9 +67,9 @@ func FixConfig(config util.JsMap) util.JsMap {
 	// Convert the token_key from base64 (if present)
 	if k, ok := config["token_key"]; ok {
 		key, err := base64.URLEncoding.DecodeString(k.(string))
-        if err != nil {
-            log.Fatal(err)
-        }
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		config["token_key"] = key
 	}
@@ -81,13 +81,13 @@ func FixConfig(config util.JsMap) util.JsMap {
 }
 
 type Handler struct {
-    config util.JsMap
-    logger *util.HekaLogger
+	config util.JsMap
+	logger *util.HekaLogger
 }
 
 func NewHandler(config util.JsMap, logger *util.HekaLogger) *Handler {
-    return &Handler{config: config,
-    logger: logger}
+	return &Handler{config: config,
+		logger: logger}
 }
 
 // VIP response
@@ -126,10 +126,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	timer := time.Now()
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
-    self.logger.Debug("main", "Config", self.config)
+	self.logger.Debug("main", "Config", self.config)
 
-	self.logger.Debug("main",
-        fmt.Sprintf("Handling Update %s", req.URL.Path), nil)
+	self.logger.Debug("update", "Handling Update",
+		util.JsMap{"path": req.URL.Path})
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
@@ -149,24 +149,25 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	elements := strings.Split(req.URL.Path, "/")
 	pk := elements[len(elements)-1]
 	if len(pk) == 0 {
-		self.logger.Error("main", "No token, rejecting request",
-			util.JsMap{"remoteAddr": req.RemoteAddr})
+		self.logger.Error("update", "No token, rejecting request",
+			util.JsMap{"remoteAddr": req.RemoteAddr,
+				"path": req.URL.Path})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		return
 	}
 
 	store := storage.New(self.config, self.logger)
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
-        self.logger.Debug("main", "Decoding key", util.JsMap{"token": token})
+		self.logger.Debug("main", "Decoding key", util.JsMap{"token": token})
 		var err error
 		bpk, err := Decode(token.([]byte),
 			pk)
 		if err != nil {
-			self.logger.Error("main",
+			self.logger.Error("update",
 				"Could not decode token",
 				util.JsMap{"primarykey": pk,
 					"remoteAddr": req.RemoteAddr,
-					"path":       req.RequestURI,
+					"path":       req.URL.Path,
 					"error":      err})
 			http.Error(resp, "", http.StatusNotFound)
 			return
@@ -176,22 +177,26 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if filter.Find([]byte(pk)) != nil {
-		self.logger.Error("main",
+		self.logger.Error("update",
 			"Invalid token for update",
-			nil)
+			util.JsMap{"token": pk,
+				"path": req.URL.Path})
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		return
 	}
 
 	uaid, appid, err := storage.ResolvePK(pk)
 	if err != nil {
-	    self.logger.Error("main",
-			fmt.Sprintf("Could not resolve PK %s, %s", pk, err), nil)
+		self.logger.Error("update",
+			"Could not resolve PK",
+			util.JsMap{"primaryKey": pk,
+				"path":  req.URL.Path,
+				"error": err})
 		return
 	}
 
 	if appid == "" {
-		self.logger.Error("main",
+		self.logger.Error("update",
 			"Incomplete primary key",
 			util.JsMap{"uaid": uaid,
 				"channelID":  appid,
@@ -208,20 +213,25 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
 	host, err := store.GetUAIDHost(uaid)
 	if err != nil {
-		self.logger.Error("main",
-			fmt.Sprintf("Could not discover host for %s, %s (using default)",
-				uaid, err), nil)
+		self.logger.Error("update",
+			"Could not discover host for UAID",
+			util.JsMap{"uaid": uaid,
+				"error": err})
 		host = util.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
 	if util.MzGetFlag(self.config, "shard.doProxy") {
 		if host != currentHost && host != "localhost" {
-			self.logger.Info("main",
-				fmt.Sprintf("Proxying request to %s", host+port), nil)
+			self.logger.Info("update",
+				"Proxying request for UAID",
+				util.JsMap{"uaid": uaid,
+					"destination": host + port})
 			err = proxyNotification(host+port, req.URL.Path)
 			if err != nil {
-				self.logger.Error("main",
-					fmt.Sprintf("Proxy to %s failed: %s", host+port, err),
-					nil)
+				self.logger.Error("update",
+					"Proxy failed", util.JsMap{
+						"uaid":        uaid,
+						"destination": host + port,
+						"error":       err})
 			}
 			return
 		}
@@ -236,16 +246,19 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				"duration":  time.Now().Sub(timer).Nanoseconds()})
 	}(uaid, appid, req.URL.Path, timer)
 
-	self.logger.Info("main",
-		fmt.Sprintf("setting version for %s.%s to %d", uaid, appid, vers),
-		nil)
+	self.logger.Info("update",
+		"setting version for ChannelID",
+		util.JsMap{"uaid": uaid, "channelID": appid, "version": vers})
 	err = store.UpdateChannel(pk, vers)
 
 	if err != nil {
-		errstr := fmt.Sprintf("Could not update channel %s.%s :: %s", uaid, appid, err)
-		self.logger.Warn("main", errstr, nil)
+		self.logger.Error("update", "Cound not update channel",
+			util.JsMap{"UAID": uaid,
+				"channelID": appid,
+				"version":   vers,
+				"error":     err})
 		status, _ := sperrors.ErrToStatus(err)
-		http.Error(resp, errstr, status)
+		http.Error(resp, "Could not update channel version", status)
 		return
 	}
 	resp.Header().Set("Content-Type", "application/json")
@@ -276,7 +289,8 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	defer func(log *util.HekaLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
-			log.Error("main", "Unknown error", util.JsMap{"error": r.(error).Error()})
+			log.Error("main", "Unknown error",
+				util.JsMap{"error": r.(error).Error()})
 		}
 	}(sock.Logger)
 
@@ -286,8 +300,9 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		case serv_cmd := <-sock.Scmd:
 			result, args := HandleServerCommand(serv_cmd, &sock)
 			sock.Logger.Debug("main",
-				fmt.Sprintf("Returning Result %s", result),
-				nil)
+				"Server Returning Result",
+				util.JsMap{"result": result,
+					"args": args})
 			sock.Scmd <- PushCommand{result, args}
 		}
 	}
