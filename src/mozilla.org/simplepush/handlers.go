@@ -94,7 +94,8 @@ func NewHandler(config util.JsMap, logger *util.HekaLogger) *Handler {
 func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
-	resp.Write([]byte("OK"))
+    clientCount := len(Clients)
+    resp.Write([]byte(fmt.Sprintf("OK\nclients:%d\n", clientCount)))
 }
 
 func proxyNotification(host, path string) (err error) {
