@@ -95,7 +95,7 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
     clientCount := len(Clients)
-    resp.Write([]byte(fmt.Sprintf("OK\nclients:%d\n", clientCount)))
+    resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
 func proxyNotification(host, path string) (err error) {
