@@ -22,7 +22,7 @@ func MzGetConfig(filename string) JsMap {
 	// Yay for no equivalent to readln
 	file, err := os.Open(filename)
 
-    defer file.Close()
+	defer file.Close()
 
 	if err != nil {
 		log.Fatal(err)
