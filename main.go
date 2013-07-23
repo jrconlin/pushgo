@@ -7,6 +7,7 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"flag"
@@ -16,6 +17,7 @@ import (
 )
 
 var logger *util.HekaLogger
+var store *storage.Storage
 
 // -- main
 func main() {
@@ -30,12 +32,13 @@ func main() {
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	logger = util.NewHekaLogger(config)
+    store = storage.New(config, logger)
 
 	simplepush.Clients = make(map[string]*simplepush.Client)
 
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
-    handlers := simplepush.NewHandler(config, logger)
+    handlers := simplepush.NewHandler(config, logger, store)
 
 	// Register the handlers
 	// each websocket gets it's own handler.

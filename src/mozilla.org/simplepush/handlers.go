@@ -83,11 +83,13 @@ func FixConfig(config util.JsMap) util.JsMap {
 type Handler struct {
 	config util.JsMap
 	logger *util.HekaLogger
+    store *storage.Storage
 }
 
-func NewHandler(config util.JsMap, logger *util.HekaLogger) *Handler {
+func NewHandler(config util.JsMap, logger *util.HekaLogger, store *storage.Storage) *Handler {
 	return &Handler{config: config,
-		logger: logger}
+		logger: logger,
+        store: store}
 }
 
 // VIP response
@@ -157,7 +159,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	store := storage.New(self.config, self.logger)
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
 		self.logger.Debug("main", "Decoding key", util.JsMap{"token": token})
 		var err error
@@ -212,7 +213,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		port = ":" + port
 	}
 	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
-	host, err := store.GetUAIDHost(uaid)
+	host, err := self.store.GetUAIDHost(uaid)
 	if err != nil {
 		self.logger.Error("update",
 			"Could not discover host for UAID",
@@ -250,7 +251,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	self.logger.Info("update",
 		"setting version for ChannelID",
 		util.JsMap{"uaid": uaid, "channelID": appid, "version": vers})
-	err = store.UpdateChannel(pk, vers)
+	err = self.store.UpdateChannel(pk, vers)
 
 	if err != nil {
 		self.logger.Error("update", "Cound not update channel",
@@ -277,12 +278,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
-	store := storage.New(self.config, self.logger)
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Scmd:   make(chan PushCommand),
 		Ccmd:   make(chan PushCommand),
-		Store:  store,
+		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}
 

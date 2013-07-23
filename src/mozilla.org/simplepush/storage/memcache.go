@@ -574,6 +574,39 @@ func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	self.isFatal(err)
 	return err
 }
+/*
+func (self *Storage) Handler(chan in) {
+    for {
+        select {
+        case cmd := <-in:
+            select cmd['cmd'].string(){
+                case "DelUAIDHost":
+                    cmd["err"] = DelUAIDHost(cmd["uaid"])
+                case "PurgeUAID":
+                    cmd["err"] = PurgeUAID(cmd["uaid"])
+                case "GetUAIDHost":
+                    cmd["host"], cmd["err"] = GetUAIDHost(cmd["uaid")
+                case "SetUAIDHost":
+                    cmd["err"] = SetUAIDHost(cmd["uaid"], cmd["host"])
+                case "Ack":
+                    cmd["err"] = Ack(cmd["uaid"], cmd["ackPacket"])
+                case "GetUpdates":
+                    cmd["updates"] = GetUpdates(cmd["uaid"], cmd["lastAccessed"])
+                case "IsKnownUaid":
+                    cmd["known"] = IsKnownUaid(cmd["uaid"])
+                case "DeleteAppId":
+                    cmd["err"] = DeleteAppId(cmd["uaid"], cmd["channelid"], cmd["clearOnly"])
+                case "RegisterAppID":
+                    cmd["err"] = RegisterAppID(cmd["uaid"], cmd["channelid"], cmd["vers"])
+                case "UpdateChannel":
+                    cmd["err"] = UpdateChannel(cmd["pk"], cmd["version"])
+            }
+            in<- cmd
+        }
+    }
+}
+*/
+
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
