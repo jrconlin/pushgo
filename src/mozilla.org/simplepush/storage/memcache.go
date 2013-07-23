@@ -574,6 +574,7 @@ func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	self.isFatal(err)
 	return err
 }
+
 /*
 func (self *Storage) Handler(chan in) {
     for {
@@ -606,7 +607,6 @@ func (self *Storage) Handler(chan in) {
     }
 }
 */
-
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

@@ -83,21 +83,21 @@ func FixConfig(config util.JsMap) util.JsMap {
 type Handler struct {
 	config util.JsMap
 	logger *util.HekaLogger
-    store *storage.Storage
+	store  *storage.Storage
 }
 
 func NewHandler(config util.JsMap, logger *util.HekaLogger, store *storage.Storage) *Handler {
 	return &Handler{config: config,
 		logger: logger,
-        store: store}
+		store:  store}
 }
 
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
-    clientCount := len(Clients)
-    resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
+	clientCount := len(Clients)
+	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
 func proxyNotification(host, path string) (err error) {
