@@ -57,6 +57,13 @@ func InitServer(config util.JsMap, logger *util.HekaLogger) (err error) {
 	return nil
 }
 
+func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
+	// Perform whatever steps are needed to remotely wake the client.
+	// TODO: Perform whatever proprietary steps are required to remotely
+	// wake a given device (e.g. send a UDP ping, SMS message, etc.)
+	return nil
+}
+
 func (self *Serv) Set_proprietary_info(args util.JsMap) (cp *ClientProprietary) {
 	// As noted in Bye, you may wish to store this info into a self-expiring
 	// semi-persistant storage system like memcache. This will allow device
@@ -191,13 +198,6 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 			"token":     token,
 			"endpoint":  args["pushEndpoint"]})
 	return 200, args
-}
-
-func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
-	// Perform whatever steps are needed to remotely wake the client.
-	// TODO: Perform whatever proprietary steps are required to remotely
-	// wake a given device (e.g. send a UDP ping, SMS message, etc.)
-	return nil
 }
 
 func (self *Serv) RequestFlush(client *Client) (err error) {

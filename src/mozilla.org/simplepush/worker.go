@@ -104,6 +104,7 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 			}
 			// Only do something if there's something to do.
 			in <- buffer
+
 		}
 	}
 	// Clean up the server side (This will delete records associated
@@ -128,6 +129,17 @@ func (self *Worker) Run(sock PushWS) {
 	// as they happen.)
 	in := make(chan util.JsMap)
 	go self.sniffer(sock, in)
+
+	if timeout_s, ok := self.config["socket.hello_timeout"]; ok {
+		timeout, _ := time.ParseDuration(timeout_s.(string))
+		time.AfterFunc(timeout,
+			func() {
+				if sock.Uaid == "" {
+					self.log.Error("worker", "Idle hello. Closing socket", nil)
+					sock.Socket.Close()
+				}
+			})
+	}
 
 	for {
 		select {

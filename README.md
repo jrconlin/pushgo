@@ -1,7 +1,7 @@
 Simple Push Server in Go v0.500
 ===
 
-*Please note: This server is still under radical development.*
+*Please note: This server is still under development.*
 
 This server was created to support the [Mozilla Simple Push
 protocol](https://wiki.mozilla.org/WebAPI/SimplePush). The Go language
