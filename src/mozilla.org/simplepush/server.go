@@ -101,7 +101,7 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	// New connects overwrite previous connections.
 	// Raw client
 	if args["uaid"] == "" {
-		uaid, _ = GenUUID4()
+		uaid, _ = util.GenUUID4()
 		self.log.Debug("server",
 			"Generating new UAID",
 			util.JsMap{"uaid": uaid})

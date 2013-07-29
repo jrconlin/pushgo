@@ -8,11 +8,11 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush/sperrors"
 	"mozilla.org/util"
+	"runtime/debug"
 
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -192,7 +192,6 @@ func (self *Worker) Run(sock PushWS) {
 					messageType = ""
 				}
 			}
-			log.Printf("messageType:... ", messageType)
 			buffer["messageType"] = strings.ToLower(messageType)
 			switch strings.ToLower(messageType) {
 			case "hello":
@@ -230,6 +229,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// register the UAID
 	defer func() {
 		if r := recover(); r != nil {
+			debug.PrintStack()
 			self.log.Error("worker",
 				"Unhandled error",
 				util.JsMap{"cmd": "hello", "error": r})
@@ -291,7 +291,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		if len(sock.Uaid) > 0 {
 			sock.Store.PurgeUAID(sock.Uaid)
 		}
-		sock.Uaid, _ = GenUUID4()
+		sock.Uaid, _ = util.GenUUID4()
 	}
 	// register the sockets (NOOP)
 	// register any proprietary connection requirements

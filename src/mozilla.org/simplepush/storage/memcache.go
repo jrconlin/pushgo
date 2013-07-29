@@ -16,6 +16,7 @@ import (
 	"mozilla.org/util"
 
 	"encoding/json"
+    "errors"
 	"fmt"
 	"log"
 	"sort"
@@ -60,6 +61,15 @@ func indexOf(list []string, val string) (index int) {
 func (self *Storage) isFatal(err error) bool {
 	// if it has anything to do with the connection, restart the server.
 	// this is crappy, crappy behavior, but it's what go wants.
+    if err == nil {
+        return false
+    }
+    if strings.Contains(err.Error(), "timeout") {
+        return false
+    }
+    if strings.Contains(err.Error(), "too many open files") {
+        return false
+    }
 	switch err {
 	case nil:
 		return false
@@ -103,50 +113,58 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 		}
 	}()
 
-	item, err := self.mc.Get(string(pk))
-	if err != nil {
-		self.isFatal(err)
-		self.log.Error("storage",
-			"Get Failed",
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		item, err := mc.Get(string(pk))
+		if err != nil {
+			self.isFatal(err)
+			self.log.Error("storage",
+				"Get Failed",
+				util.JsMap{"primarykey": pk,
+					"error": err})
+			return nil, err
+		}
+
+		json.Unmarshal(item.Value, &result)
+
+		if result == nil {
+			return nil, err
+		}
+
+		self.log.Debug("storage",
+			"Fetched",
 			util.JsMap{"primarykey": pk,
-				"error": err})
-		return nil, err
-	}
-
-	json.Unmarshal(item.Value, &result)
-
-	if result == nil {
-		return nil, err
-	}
-
-	self.log.Debug("storage",
-		"Fetched",
-		util.JsMap{"primarykey": pk,
-			"item":  item,
-			"value": item.Value})
-	return result, err
+				"item":  item,
+				"value": item.Value})
+		return result, err
 }
 
 func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	if uaid == "" {
 		return result, nil
 	}
-	raw, err := self.mc.Get(uaid)
-	if err != nil {
-		self.isFatal(err)
-		return nil, err
-	}
-	result = strings.Split(string(raw.Value), ",")
-	return result, err
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		raw, err := mc.Get(uaid)
+		if err != nil {
+			self.isFatal(err)
+			return nil, err
+		}
+	    result = strings.Split(string(raw.Value), ",")
+    	return result, err
 }
 
 func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
 	arr.Sort()
-	err = self.mc.Set(&memcache.Item{Key: uaid,
-		Value:      []byte(strings.Join(arr, ",")),
-		Expiration: 0})
-	self.isFatal(err)
-	return err
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		err = mc.Set(&memcache.Item{Key: uaid,
+			Value:      []byte(strings.Join(arr, ",")),
+			Expiration: 0})
+		if err != nil {
+			self.isFatal(err)
+		}
+		return err
 }
 
 func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
@@ -190,13 +208,15 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 		Value:      []byte(raw),
 		Expiration: int32(ttl)}
 
-	err = self.mc.Set(item)
-	if err != nil {
-		self.isFatal(err)
-		self.log.Error("storage",
-			fmt.Sprintf("Failure to set item %s {%s}", pk, item),
-			nil)
-	}
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		err = mc.Set(item)
+		if err != nil {
+			self.isFatal(err)
+			self.log.Error("storage",
+				fmt.Sprintf("Failure to set item %s {%s}", pk, item),
+				nil)
+		}
 	return err
 }
 
@@ -231,7 +251,7 @@ func New(opts util.JsMap, log *util.HekaLogger) *Storage {
 	}
 
 	log.Info("storage", "Creating new memcache handler", nil)
-	return &Storage{mc: memcache.New(config["memcache.server"].(string)),
+	return &Storage{mc: nil,
 		config: config,
 		log:    log,
 		thrash: 0}
@@ -389,14 +409,16 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		"Fetching items",
 		util.JsMap{"uaid": uaid,
 			"items": items})
-	recs, err := self.mc.GetMulti(items)
-	if err != nil {
-		self.isFatal(err)
-		self.log.Error("storage", "GetUpdate failed",
-			util.JsMap{"uaid": uaid,
-				"error": err})
-		return nil, err
-	}
+    mc := memcache.New(self.config["memcache.server"].(string))
+
+		recs, err := mc.GetMulti(items)
+		if err != nil {
+			self.isFatal(err)
+			self.log.Error("storage", "GetUpdate failed",
+				util.JsMap{"uaid": uaid,
+					"error": err})
+			return nil, err
+		}
 
 	var update util.JsMap
 	if len(recs) == 0 {
@@ -469,14 +491,18 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
 	//TODO, go through the results and nuke what's there, then call flush
 
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
 			expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
 			json.Unmarshal(ackPacket["expired"].([]byte), &expired)
 			for _, appid := range expired {
 				pk, _ := GenPK(uaid, appid)
-				err = self.mc.Delete(pk)
-				self.isFatal(err)
+					err = mc.Delete(pk)
+					if err != nil {
+						self.isFatal(err)
+					}
 			}
 		}
 	}
@@ -486,8 +512,10 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 			for _, rec := range ackPacket["updates"].([]interface{}) {
 				recmap := rec.(map[string]interface{})
 				pk, _ := GenPK(uaid, recmap["channelID"].(string))
-				err = self.mc.Delete(pk)
-				self.isFatal(err)
+					err = mc.Delete(pk)
+					if err != nil {
+						self.isFatal(err)
+					}
 			}
 		}
 	}
@@ -516,10 +544,12 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 		"SetUAIDHost",
 		util.JsMap{"uaid": uaid, "host": host})
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
-	err = self.mc.Set(&memcache.Item{Key: prefix + uaid,
-		Value:      []byte(host),
-		Expiration: int32(ttl)})
-	self.isFatal(err)
+    mc := memcache.New(self.config["memcache.server"].(string))
+    mc.Timeout = time.Second * 10
+		err = mc.Set(&memcache.Item{Key: prefix + uaid,
+			Value:      []byte(host),
+			Expiration: int32(ttl)})
+		self.isFatal(err)
 	return err
 }
 
@@ -536,7 +566,10 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		}
 	}(defaultHost)
 
-	item, err := self.mc.Get(prefix + uaid)
+	var item *memcache.Item
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		item, err = mc.Get(prefix + uaid)
 	if err != nil {
 		self.isFatal(err)
 		self.log.Error("storage",
@@ -557,24 +590,53 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 
 func (self *Storage) PurgeUAID(uaid string) (err error) {
 	appIDArray, err := self.fetchAppIDArray(uaid)
+    mc := memcache.New(self.config["memcache.server"].(string))
 	if err == nil && len(appIDArray) > 0 {
 		for _, appid := range appIDArray {
 			pk, _ := GenPK(uaid, appid)
-			self.mc.Delete(pk)
+				err = mc.Delete(pk)
 		}
 	}
-	self.mc.Delete(uaid)
+		err = mc.Delete(uaid)
 	self.DelUAIDHost(uaid)
 	return nil
 }
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	prefix := self.config["shard.prefix"].(string)
-	err = self.mc.Delete(prefix + uaid)
-	self.isFatal(err)
+    mc := memcache.New(self.config["memcache.server"].(string))
+    //mc.Timeout = time.Second * 10
+		err = mc.Delete(prefix + uaid)
+		self.isFatal(err)
 	return err
 }
 
+func (self *Storage) Status() (success bool, err error) {
+    defer func() {
+        if recv := recover(); recv != nil {
+            success = false
+            err = recv.(error)
+            return
+        }
+    }()
+
+    //Test memcache
+    fake_id, _ := util.GenUUID4()
+    key := "status_" + fake_id
+    mc := memcache.New(self.config["memcache.server"].(string))
+    err = mc.Set(&memcache.Item{Key: "status_" + fake_id,
+                                Value: []byte("test"),
+                                Expiration: 6})
+    if err != nil {
+        return false, err
+    }
+    item, err := mc.Get(key)
+    if err != nil || string(item.Value) != "test" {
+        return false, errors.New("Invalid value returned")
+    }
+    mc.Delete(key)
+    return true, nil
+}
 /*
 func (self *Storage) Handler(chan in) {
     for {

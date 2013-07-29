@@ -44,6 +44,7 @@ func main() {
 	// each websocket gets it's own handler.
 	http.HandleFunc("/update/", handlers.UpdateHandler)
 	http.HandleFunc("/status/", handlers.StatusHandler)
+	http.HandleFunc("/realstatus/", handlers.RealStatusHandler)
 	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server

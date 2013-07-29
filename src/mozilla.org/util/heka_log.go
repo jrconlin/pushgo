@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -25,6 +26,7 @@ type HekaLogger struct {
 	pid      int32
 	hostname string
 	conf     JsMap
+    tracer   bool
 }
 
 const (
@@ -42,10 +44,12 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	var sender client.Sender
 	var logname string
 	var err error
-	pid := int32(os.Getpid())
+    var tracer bool
+    pid := int32(os.Getpid())
 	encoder = nil
 	sender = nil
 	logname = ""
+    tracer = true
 
 	if _, ok = conf["heka.sender"]; !ok {
 		conf["heka.sender"] = "tcp"
@@ -58,6 +62,9 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	}
 	if _, ok = conf["heka.current_host"]; !ok {
 		conf["heka.current_host"], _ = os.Hostname()
+	}
+	if _, ok = conf["heka.show_caller"]; ok {
+        tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
@@ -73,11 +80,24 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		logname:  logname,
 		pid:      pid,
 		hostname: conf["heka.current_host"].(string),
-		conf:     conf}
+		conf:     conf,
+        tracer:   tracer}
 }
 
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+	if self.tracer {
+		if pc, file, line, ok := runtime.Caller(2); ok {
+			funk := runtime.FuncForPC(pc)
+			if fields == nil {
+				fields = JsMap{}
+			}
+			fields["caller"] = JsMap{
+				"file": file,
+				"line": line,
+				"name": funk.Name()}
+		}
+	}
 
 	var base_level int64
 
@@ -110,18 +130,18 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 		msg.SetPayload(payload)
 	}
 	for key, ival := range fields {
-        var field *message.Field
-        var err error
+		var field *message.Field
+		var err error
 		if ival == nil {
 			continue
 		}
 		if key == "" {
 			continue
 		}
-        field, err = message.NewField(key, ival, message.Field_RAW)
-        if err != nil {
-            field, err = message.NewField(key, fmt.Sprintf("%s", ival), message.Field_RAW)
-        }
+		field, err = message.NewField(key, ival, message.Field_RAW)
+		if err != nil {
+			field, err = message.NewField(key, fmt.Sprintf("%s", ival), message.Field_RAW)
+		}
 		msg.AddField(field)
 	}
 	err = self.encoder.EncodeMessageStream(msg, &stream)

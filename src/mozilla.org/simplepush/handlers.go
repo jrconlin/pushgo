@@ -11,6 +11,7 @@ import (
 	"mozilla.org/util"
 
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -74,7 +75,18 @@ func FixConfig(config util.JsMap) util.JsMap {
 		config["token_key"] = key
 	}
 
+	DEFAULT_MAX_CONNECTIONS := 1000
 	config["heka.current_host"] = config["shard.current_host"]
+	if _, ok := config["max_connections"]; ok {
+		var err error
+		val := config["max_connections"].(string)
+		config["max_connections"], err = strconv.ParseInt(val, 10, 0)
+		if err != nil {
+			config["max_connections"] = DEFAULT_MAX_CONNECTIONS
+		}
+	} else {
+		config["max_connections"] = DEFAULT_MAX_CONNECTIONS
+	}
 
 	return config
 
@@ -98,6 +110,24 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	// TODO: make sure all is well.
 	clientCount := len(Clients)
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
+}
+
+func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
+	clientCount := len(Clients)
+	maxClients := self.config["max_connections"].(int64)
+	okClients := int64(clientCount) < maxClients
+	mcStatus, err := self.store.Status()
+	ok := okClients && mcStatus
+	repMap := util.JsMap{"ok": ok,
+		"clientCount": clientCount,
+		"maxClients":  maxClients,
+		"mcstatus":    mcStatus}
+	if err != nil {
+		repMap["error"] = err.Error()
+	}
+	reply, err := json.Marshal(repMap)
+
+	resp.Write(reply)
 }
 
 func proxyNotification(host, path string) (err error) {
@@ -278,6 +308,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
+	if int64(len(Clients)) > self.config["max_connections"].(int64) {
+		self.logger.Error("handler", "Too Many Sockets!", nil)
+		return
+	}
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Scmd:   make(chan PushCommand),
@@ -287,10 +321,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Born:   timer}
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
-	defer func(log *util.HekaLogger) {
+	defer func(logger *util.HekaLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
-			log.Error("main", "Unknown error",
+			logger.Error("main", "Unknown error",
 				util.JsMap{"error": r.(error).Error()})
 		}
 	}(sock.Logger)
