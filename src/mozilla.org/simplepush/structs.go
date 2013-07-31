@@ -6,7 +6,7 @@ package simplepush
 
 import (
 	"code.google.com/p/go.net/websocket"
-	"mozilla.org/simplepush/storage"
+	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
 	"time"

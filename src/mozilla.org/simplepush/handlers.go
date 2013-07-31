@@ -7,8 +7,8 @@ package simplepush
 import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush/sperrors"
-	"mozilla.org/simplepush/storage"
-	"mozilla.org/util"
+	storage "mozilla.org/simplepush/storage/mcstorage"
+	mozutil "mozilla.org/util"
 
 	"encoding/base64"
 	"encoding/json"
@@ -48,13 +48,13 @@ func awsGetPublicHostname() (hostname string, err error) {
 	return
 }
 
-func FixConfig(config util.JsMap) util.JsMap {
+func FixConfig(config mozutil.JsMap) mozutil.JsMap {
 	if _, ok := config["shard.current_host"]; !ok {
 		currentHost := "localhost"
 		if val := os.Getenv("HOST"); len(val) > 0 {
 			currentHost = val
 		} else {
-			if util.MzGetFlag(config, "shard.use_aws_host") {
+			if mozutil.MzGetFlag(config, "shard.use_aws_host") {
 				var awsHost string
 				var err error
 				awsHost, err = awsGetPublicHostname()
@@ -80,10 +80,12 @@ func FixConfig(config util.JsMap) util.JsMap {
 	if _, ok := config["max_connections"]; ok {
 		var err error
 		val := config["max_connections"].(string)
-		config["max_connections"], err = strconv.ParseInt(val, 10, 0)
+        ival, err := strconv.ParseInt(val,10,0)
 		if err != nil {
 			config["max_connections"] = DEFAULT_MAX_CONNECTIONS
-		}
+		} else {
+            config["max_connections"] = int(ival)
+        }
 	} else {
 		config["max_connections"] = DEFAULT_MAX_CONNECTIONS
 	}
@@ -93,12 +95,12 @@ func FixConfig(config util.JsMap) util.JsMap {
 }
 
 type Handler struct {
-	config util.JsMap
-	logger *util.HekaLogger
+	config mozutil.JsMap
+	logger *mozutil.HekaLogger
 	store  *storage.Storage
 }
 
-func NewHandler(config util.JsMap, logger *util.HekaLogger, store *storage.Storage) *Handler {
+func NewHandler(config mozutil.JsMap, logger *mozutil.HekaLogger, store *storage.Storage) *Handler {
 	return &Handler{config: config,
 		logger: logger,
 		store:  store}
@@ -108,17 +110,24 @@ func NewHandler(config util.JsMap, logger *util.HekaLogger, store *storage.Stora
 func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
-	clientCount := len(Clients)
+	clientCount := ClientCount()
+    MuClient.Unlock()
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
+func ClientCount() (int) {
+    defer MuClient.Unlock()
+    MuClient.Lock()
+    return len (Clients)
+}
+
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
-	clientCount := len(Clients)
-	maxClients := self.config["max_connections"].(int64)
-	okClients := int64(clientCount) < maxClients
+	clientCount := ClientCount()
+	maxClients := self.config["max_connections"].(int)
+	okClients := clientCount < maxClients
 	mcStatus, err := self.store.Status()
 	ok := okClients && mcStatus
-	repMap := util.JsMap{"ok": ok,
+	repMap := mozutil.JsMap{"ok": ok,
 		"clientCount": clientCount,
 		"maxClients":  maxClients,
 		"mcstatus":    mcStatus}
@@ -162,7 +171,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	self.logger.Debug("main", "Config", self.config)
 
 	self.logger.Debug("update", "Handling Update",
-		util.JsMap{"path": req.URL.Path})
+		mozutil.JsMap{"path": req.URL.Path})
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
@@ -183,21 +192,21 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	pk := elements[len(elements)-1]
 	if len(pk) == 0 {
 		self.logger.Error("update", "No token, rejecting request",
-			util.JsMap{"remoteAddr": req.RemoteAddr,
+			mozutil.JsMap{"remoteAddr": req.RemoteAddr,
 				"path": req.URL.Path})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		return
 	}
 
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
-		self.logger.Debug("main", "Decoding key", util.JsMap{"token": token})
+		self.logger.Debug("main", "Decoding key", mozutil.JsMap{"token": token})
 		var err error
 		bpk, err := Decode(token.([]byte),
 			pk)
 		if err != nil {
 			self.logger.Error("update",
 				"Could not decode token",
-				util.JsMap{"primarykey": pk,
+				mozutil.JsMap{"primarykey": pk,
 					"remoteAddr": req.RemoteAddr,
 					"path":       req.URL.Path,
 					"error":      err})
@@ -211,7 +220,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if filter.Find([]byte(pk)) != nil {
 		self.logger.Error("update",
 			"Invalid token for update",
-			util.JsMap{"token": pk,
+			mozutil.JsMap{"token": pk,
 				"path": req.URL.Path})
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		return
@@ -221,7 +230,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if err != nil {
 		self.logger.Error("update",
 			"Could not resolve PK",
-			util.JsMap{"primaryKey": pk,
+			mozutil.JsMap{"primaryKey": pk,
 				"path":  req.URL.Path,
 				"error": err})
 		return
@@ -230,7 +239,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if appid == "" {
 		self.logger.Error("update",
 			"Incomplete primary key",
-			util.JsMap{"uaid": uaid,
+			mozutil.JsMap{"uaid": uaid,
 				"channelID":  appid,
 				"remoteAddr": req.RemoteAddr})
 		return
@@ -242,25 +251,25 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if port != "" && port != "80" {
 		port = ":" + port
 	}
-	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
+	currentHost := mozutil.MzGet(self.config, "shard.current_host", "localhost")
 	host, err := self.store.GetUAIDHost(uaid)
 	if err != nil {
 		self.logger.Error("update",
 			"Could not discover host for UAID",
-			util.JsMap{"uaid": uaid,
+			mozutil.JsMap{"uaid": uaid,
 				"error": err})
-		host = util.MzGet(self.config, "shard.defaultHost", "localhost")
+		host = mozutil.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
-	if util.MzGetFlag(self.config, "shard.doProxy") {
+	if mozutil.MzGetFlag(self.config, "shard.doProxy") {
 		if host != currentHost && host != "localhost" {
 			self.logger.Info("update",
 				"Proxying request for UAID",
-				util.JsMap{"uaid": uaid,
+				mozutil.JsMap{"uaid": uaid,
 					"destination": host + port})
 			err = proxyNotification(host+port, req.URL.Path)
 			if err != nil {
 				self.logger.Error("update",
-					"Proxy failed", util.JsMap{
+					"Proxy failed", mozutil.JsMap{
 						"uaid":        uaid,
 						"destination": host + port,
 						"error":       err})
@@ -271,7 +280,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	defer func(uaid, appid, path string, timer time.Time) {
 		self.logger.Info("timer", "Client Update complete",
-			util.JsMap{
+			mozutil.JsMap{
 				"uaid":      uaid,
 				"path":      req.URL.Path,
 				"channelID": appid,
@@ -280,12 +289,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	self.logger.Info("update",
 		"setting version for ChannelID",
-		util.JsMap{"uaid": uaid, "channelID": appid, "version": vers})
+		mozutil.JsMap{"uaid": uaid, "channelID": appid, "version": vers})
 	err = self.store.UpdateChannel(pk, vers)
 
 	if err != nil {
 		self.logger.Error("update", "Cound not update channel",
-			util.JsMap{"UAID": uaid,
+			mozutil.JsMap{"UAID": uaid,
 				"channelID": appid,
 				"version":   vers,
 				"error":     err})
@@ -296,7 +305,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
 	self.logger.Info("timer", "Client Update complete",
-		util.JsMap{"uaid": uaid,
+		mozutil.JsMap{"uaid": uaid,
 			"channelID": appid,
 			"duration":  time.Now().Sub(timer).Nanoseconds()})
 	// Ping the appropriate server
@@ -308,7 +317,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	timer := time.Now()
-	if int64(len(Clients)) > self.config["max_connections"].(int64) {
+	if ClientCount() > self.config["max_connections"].(int) {
 		self.logger.Error("handler", "Too Many Sockets!", nil)
 		return
 	}
@@ -321,11 +330,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Born:   timer}
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
-	defer func(logger *util.HekaLogger) {
+	defer func(logger *mozutil.HekaLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			logger.Error("main", "Unknown error",
-				util.JsMap{"error": r.(error).Error()})
+				mozutil.JsMap{"error": r.(error).Error()})
 		}
 	}(sock.Logger)
 
@@ -336,7 +345,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			result, args := HandleServerCommand(serv_cmd, &sock)
 			sock.Logger.Debug("main",
 				"Server Returning Result",
-				util.JsMap{"result": result,
+				mozutil.JsMap{"result": result,
 					"args": args})
 			sock.Scmd <- PushCommand{result, args}
 		}

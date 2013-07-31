@@ -7,7 +7,7 @@ package simplepush
 import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush/sperrors"
-	"mozilla.org/util"
+	mozutil "mozilla.org/util"
 	"runtime/debug"
 
 	"encoding/json"
@@ -25,10 +25,10 @@ var MissingChannelErr = errors.New("Missing channelID")
 //      these write back to the websocket.
 
 type Worker struct {
-	log    *util.HekaLogger
+	log    *mozutil.HekaLogger
 	state  int
 	filter *regexp.Regexp
-	config util.JsMap
+	config mozutil.JsMap
 }
 
 const (
@@ -42,7 +42,7 @@ const (
 	CHID_DEFAULT_MAX_NUM = 200
 )
 
-func NewWorker(config util.JsMap) *Worker {
+func NewWorker(config mozutil.JsMap) *Worker {
 	// Allow [0-9a-z_-]/i as valid ChannelID characters.
 	filter := regexp.MustCompile("[^\\w-]")
 	switch config["db.max_channels"].(type) {
@@ -63,13 +63,13 @@ func NewWorker(config util.JsMap) *Worker {
 		config["db.max_channels"] = CHID_DEFAULT_MAX_NUM
 	}
 
-	return &Worker{log: util.NewHekaLogger(config),
+	return &Worker{log: mozutil.NewHekaLogger(config),
 		state:  INACTIVE,
 		filter: filter,
 		config: config}
 }
 
-func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
+func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
@@ -77,30 +77,30 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 	var socket = sock.Socket
 	for {
 		var raw []byte
-		var buffer util.JsMap
+		var buffer mozutil.JsMap
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			self.log.Error("worker",
 				"Websocket Error",
-				util.JsMap{"error": err.Error()})
+				mozutil.JsMap{"error": err.Error()})
 			break
 		}
 		if len(raw) > 0 {
 			if len(raw) > 5 {
 				self.log.Info("worker",
 					"Socket receive",
-					util.JsMap{"raw": string(raw)})
+					mozutil.JsMap{"raw": string(raw)})
 			}
 			err := json.Unmarshal(raw, &buffer)
 			if err != nil {
 				self.log.Error("worker",
-					"Unparsable data", util.JsMap{"raw": raw})
+					"Unparsable data", mozutil.JsMap{"raw": raw})
 				break
 			}
 			if len(buffer) > 10 {
 				self.log.Info("worker",
 					"Socket send",
-					util.JsMap{"raw": buffer})
+					mozutil.JsMap{"raw": buffer})
 			}
 			// Only do something if there's something to do.
 			in <- buffer
@@ -114,8 +114,8 @@ func (self *Worker) sniffer(sock PushWS, in chan util.JsMap) {
 }
 
 // standardize the error reporting back to the client.
-func (self *Worker) handleError(sock PushWS, message util.JsMap, err error) (ret error) {
-	self.log.Info("worker", "Sending error", util.JsMap{"error": err})
+func (self *Worker) handleError(sock PushWS, message mozutil.JsMap, err error) (ret error) {
+	self.log.Info("worker", "Sending error", mozutil.JsMap{"error": err})
 	message["status"], message["error"] = sperrors.ErrToStatus(err)
 	return websocket.JSON.Send(sock.Socket, message)
 }
@@ -127,7 +127,7 @@ func (self *Worker) Run(sock PushWS) {
 	// Instantiate a websocket reader, a blocking operation
 	// (Remember, we need to be able to write out PUSH events
 	// as they happen.)
-	in := make(chan util.JsMap)
+	in := make(chan mozutil.JsMap)
 	go self.sniffer(sock, in)
 
 	if timeout_s, ok := self.config["socket.hello_timeout"]; ok {
@@ -148,7 +148,7 @@ func (self *Worker) Run(sock PushWS) {
 			// device (and potentially remotely wake it if that fails)
 			self.log.Info("worker",
 				"Client cmd",
-				util.JsMap{"cmd": cmd.Command})
+				mozutil.JsMap{"cmd": cmd.Command})
 
 			if cmd.Command == FLUSH {
 				self.log.Info("worker",
@@ -178,10 +178,10 @@ func (self *Worker) Run(sock PushWS) {
 			var messageType string
 			if mt, ok := buffer["messageType"]; !ok {
 				self.log.Info("worker", "Invalid message",
-					util.JsMap{"reason": "Missing messageType",
+					mozutil.JsMap{"reason": "Missing messageType",
 						"data": buffer})
 				self.handleError(sock,
-					util.JsMap{},
+					mozutil.JsMap{},
 					sperrors.UnknownCommandError)
 				break
 			} else {
@@ -232,7 +232,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			debug.PrintStack()
 			self.log.Error("worker",
 				"Unhandled error",
-				util.JsMap{"cmd": "hello", "error": r})
+				mozutil.JsMap{"cmd": "hello", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -243,10 +243,20 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 
 	var suggestedUAID string
 
-	data := buffer.(util.JsMap)
+	data := buffer.(mozutil.JsMap)
 	if _, ok := data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
+	}
+	if redir, ok := self.config["db.redirect"]; ok {
+        resp := mozutil.JsMap{
+			"messageType": data["messageType"],
+			"status":      302,
+			"redirect":    redir,
+			"uaid":        sock.Uaid}
+		self.log.Debug("worker", "sending redirect", resp)
+		websocket.JSON.Send(sock.Socket, resp)
+		return nil
 	}
 	suggestedUAID = data["uaid"].(string)
 	if data["channelIDs"] == nil {
@@ -287,17 +297,17 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	}
 	if forceReset {
 		self.log.Warn("worker", "Resetting UAID for device",
-			util.JsMap{"uaid": sock.Uaid})
+			mozutil.JsMap{"uaid": sock.Uaid})
 		if len(sock.Uaid) > 0 {
 			sock.Store.PurgeUAID(sock.Uaid)
 		}
-		sock.Uaid, _ = util.GenUUID4()
+		sock.Uaid, _ = mozutil.GenUUID4()
 	}
 	// register the sockets (NOOP)
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
 	cmd := PushCommand{Command: HELLO,
-		Arguments: util.JsMap{
+		Arguments: mozutil.JsMap{
 			"uaid":  sock.Uaid,
 			"chids": data["channelIDs"]}}
 	// blocking call back to the boss.
@@ -308,9 +318,9 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	}
 
 	self.log.Debug("worker", "sending response",
-		util.JsMap{"cmd": "hello", "error": err,
+		mozutil.JsMap{"cmd": "hello", "error": err,
 			"uaid": sock.Uaid})
-	websocket.JSON.Send(sock.Socket, util.JsMap{
+	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
 		"messageType": data["messageType"],
 		"status":      result.Command,
 		"uaid":        sock.Uaid})
@@ -329,7 +339,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
 				"Unhandled error",
-				util.JsMap{"cmd": "ack", "error": r})
+				mozutil.JsMap{"cmd": "ack", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -337,7 +347,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(util.JsMap)
+	data := buffer.(mozutil.JsMap)
 	if data["updates"] == nil {
 		return sperrors.MissingDataError
 	}
@@ -348,7 +358,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 		return nil
 	}
 	self.log.Debug("worker", "sending response",
-		util.JsMap{"cmd": "ack", "error": err})
+		mozutil.JsMap{"cmd": "ack", "error": err})
 	return err
 }
 
@@ -358,7 +368,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
 				"Unhandled error",
-				util.JsMap{"cmd": "register", "error": r})
+				mozutil.JsMap{"cmd": "register", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -366,7 +376,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(util.JsMap)
+	data := buffer.(mozutil.JsMap)
 	if data["channelID"] == nil {
 		return sperrors.InvalidDataError
 	}
@@ -390,9 +400,9 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	sock.Scmd <- cmd
 	result := <-sock.Scmd
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
-	endpoint := result.Arguments.(util.JsMap)["pushEndpoint"].(string)
+	endpoint := result.Arguments.(mozutil.JsMap)["pushEndpoint"].(string)
 	// return the info back to the socket
-	reply := util.JsMap{"messageType": data["messageType"],
+	reply := mozutil.JsMap{"messageType": data["messageType"],
 		"uaid":         sock.Uaid,
 		"status":       200,
 		"channelID":    data["channelID"],
@@ -408,7 +418,7 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
 				"Unhandled error",
-				util.JsMap{"cmd": "register", "error": r})
+				mozutil.JsMap{"cmd": "register", "error": r})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -416,7 +426,7 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 		self.log.Error("worker", "Unregister failed, missing sock.uaid", nil)
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(util.JsMap)
+	data := buffer.(mozutil.JsMap)
 	if data["channelID"] == nil {
 		self.log.Error("worker", "Unregister failed, missing channelID", nil)
 		return sperrors.MissingDataError
@@ -425,8 +435,8 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 	// Always return success for an UNREG.
 	sock.Store.DeleteAppID(sock.Uaid, appid, false)
 	self.log.Debug("worker", "sending response",
-		util.JsMap{"cmd": "unregister", "error": err})
-	websocket.JSON.Send(sock.Socket, util.JsMap{
+		mozutil.JsMap{"cmd": "unregister", "error": err})
+	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
 		"messageType": data["messageType"],
 		"status":      200,
 		"channelID":   appid})
@@ -441,7 +451,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	defer func(timer time.Time, sock PushWS) {
 		sock.Logger.Info("timer",
 			"Client flush completed",
-			util.JsMap{"duration": time.Now().Sub(timer).Nanoseconds(),
+			mozutil.JsMap{"duration": time.Now().Sub(timer).Nanoseconds(),
 				"uaid": sock.Uaid})
 	}(timer, sock)
 	if sock.Uaid == "" {
@@ -454,7 +464,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 	// Fetch the pending updates from #storage
 	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
 	if err != nil {
-		self.handleError(sock, util.JsMap{"messageType": messageType}, err)
+		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
 		return
 	}
 	if updates == nil {
@@ -466,8 +476,8 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 }
 
 func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
-	data := buffer.(util.JsMap)
-	websocket.JSON.Send(sock.Socket, util.JsMap{
+	data := buffer.(mozutil.JsMap)
+	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
 		"messageType": data["messageType"],
 		"status":      200})
 	return nil
@@ -477,10 +487,10 @@ func (self *Worker) Purge(sock PushWS, buffer interface{}) (err error) {
 	/*
 	   // If needed...
 	   sock.Scmd <- PushCommand{Command: PURGE,
-	       Arguments:util.JsMap{"uaid": sock.Uaid}}
+	       Arguments:mozutil.JsMap{"uaid": sock.Uaid}}
 	   result := <-sock.Scmd
 	*/
-	websocket.JSON.Send(sock.Socket, util.JsMap{})
+	websocket.JSON.Send(sock.Socket, mozutil.JsMap{})
 	return nil
 }
 

@@ -5,11 +5,12 @@
 package simplepush
 
 import (
-	"mozilla.org/simplepush/storage"
-	"mozilla.org/util"
+	storage "mozilla.org/simplepush/storage/mcstorage"
+	mozutil "mozilla.org/util"
 
 	"fmt"
 	"strings"
+    "sync"
 	"time"
 )
 
@@ -33,16 +34,17 @@ type Client struct {
 
 // Active clients
 var Clients map[string]*Client
+var MuClient sync.Mutex
 
 var serverSingleton *Serv
 
 type Serv struct {
-	config util.JsMap
-	log    *util.HekaLogger
+	config mozutil.JsMap
+	log    *mozutil.HekaLogger
 	key    []byte
 }
 
-func NewServer(config util.JsMap, logger *util.HekaLogger) *Serv {
+func NewServer(config mozutil.JsMap, logger *mozutil.HekaLogger) *Serv {
 	var key []byte
 	if k, ok := config["token_key"]; ok {
 		key = k.([]byte)
@@ -52,7 +54,7 @@ func NewServer(config util.JsMap, logger *util.HekaLogger) *Serv {
 		log: logger}
 }
 
-func InitServer(config util.JsMap, logger *util.HekaLogger) (err error) {
+func InitServer(config mozutil.JsMap, logger *mozutil.HekaLogger) (err error) {
 	serverSingleton = NewServer(config, logger)
 	return nil
 }
@@ -64,7 +66,7 @@ func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
 	return nil
 }
 
-func (self *Serv) Set_proprietary_info(args util.JsMap) (cp *ClientProprietary) {
+func (self *Serv) Set_proprietary_info(args mozutil.JsMap) (cp *ClientProprietary) {
 	// As noted in Bye, you may wish to store this info into a self-expiring
 	// semi-persistant storage system like memcache. This will allow device
 	// info to be fetched and acted upon after disconnects.
@@ -87,10 +89,10 @@ func (self *Serv) Set_proprietary_info(args util.JsMap) (cp *ClientProprietary) 
 }
 
 // A client connects!
-func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
 	var uaid string
 
-	args := cmd.Arguments.(util.JsMap)
+	args := cmd.Arguments.(mozutil.JsMap)
 	self.log.Info("server", "handling 'hello'", args)
 
 	// TODO: If the client needs to connect to a different server,
@@ -101,20 +103,20 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	// New connects overwrite previous connections.
 	// Raw client
 	if args["uaid"] == "" {
-		uaid, _ = util.GenUUID4()
+		uaid, _ = mozutil.GenUUID4()
 		self.log.Debug("server",
 			"Generating new UAID",
-			util.JsMap{"uaid": uaid})
+			mozutil.JsMap{"uaid": uaid})
 	} else {
 		uaid = args["uaid"].(string)
 		self.log.Debug("server",
 			"Using existing UAID",
-			util.JsMap{"uaid": uaid})
+			mozutil.JsMap{"uaid": uaid})
 		delete(args, "uaid")
 	}
 
 	prop := self.Set_proprietary_info(args)
-	self.log.Debug("server", "Proprietary Info", util.JsMap{"info": prop})
+	self.log.Debug("server", "Proprietary Info", mozutil.JsMap{"info": prop})
 
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
@@ -122,7 +124,9 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	client := &Client{PushWS: *sock,
 		UAID: uaid,
 		Prop: prop}
+    MuClient.Lock()
 	Clients[uaid] = client
+    MuClient.Unlock()
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -142,25 +146,27 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	uaid := sock.Uaid
-	self.log.Debug("server", "Cleaning up socket", util.JsMap{"uaid": uaid})
-	self.log.Info("timer", "Socket connection terminated", util.JsMap{
+	self.log.Debug("server", "Cleaning up socket", mozutil.JsMap{"uaid": uaid})
+	self.log.Info("timer", "Socket connection terminated", mozutil.JsMap{
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
+    defer MuClient.Unlock()
+    MuClient.Lock()
 	delete(Clients, uaid)
 }
 
-func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
 	// This is effectively a no-op, since we don't hold client session info
-	args := cmd.Arguments.(util.JsMap)
+	args := cmd.Arguments.(mozutil.JsMap)
 	args["status"] = 200
 	return 200, args
 }
 
-func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
 	var err error
-	args := cmd.Arguments.(util.JsMap)
+	args := cmd.Arguments.(mozutil.JsMap)
 	args["status"] = 200
 	if _, ok := self.config["pushEndpoint"]; !ok {
 		self.config["pushEndpoint"] = "http://localhost/update/<token>"
@@ -178,7 +184,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 		if err != nil {
 			self.log.Error("server",
 				"Token Encoding error",
-				util.JsMap{"uaid": sock.Uaid,
+				mozutil.JsMap{"uaid": sock.Uaid,
 					"channelID": args["channelID"]})
 			return 500, nil
 		}
@@ -193,7 +199,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 		"<current_host>", host, -1)
 	self.log.Info("server",
 		"Generated Endpoint",
-		util.JsMap{"uaid": sock.Uaid,
+		mozutil.JsMap{"uaid": sock.Uaid,
 			"channelID": args["channelID"],
 			"token":     token,
 			"endpoint":  args["pushEndpoint"]})
@@ -206,7 +212,7 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 		if r != nil {
 			self.log.Error("server",
 				"requestFlush failed",
-				util.JsMap{"error": r,
+				mozutil.JsMap{"error": r,
 					"uaid": client.UAID})
 			if client != nil {
 				self.ClientPing(client.Prop)
@@ -218,9 +224,9 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 	if client != nil {
 		self.log.Info("server",
 			"Requesting flush",
-			util.JsMap{"uaid": client.UAID})
+			mozutil.JsMap{"uaid": client.UAID})
 		client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
-			Arguments: &util.JsMap{"uaid": client.UAID}}
+			Arguments: &mozutil.JsMap{"uaid": client.UAID}}
 	}
 	return nil
 }
@@ -230,20 +236,20 @@ func Flush(client *Client) (err error) {
 	return serverSingleton.RequestFlush(client)
 }
 
-func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
 	result = 200
 	return
 }
 
-func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
+func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args mozutil.JsMap) {
 	self.log.Debug("server",
 		"Handling command",
-		util.JsMap{"cmd": cmd})
-	var ret util.JsMap
+		mozutil.JsMap{"cmd": cmd})
+	var ret mozutil.JsMap
 	if cmd.Arguments != nil {
-		args = cmd.Arguments.(util.JsMap)
+		args = cmd.Arguments.(mozutil.JsMap)
 	} else {
-		args = make(util.JsMap)
+		args = make(mozutil.JsMap)
 	}
 
 	switch int(cmd.Command) {
@@ -269,7 +275,7 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 	return result, args
 }
 
-func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
+func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args mozutil.JsMap) {
 	return serverSingleton.HandleCommand(cmd, sock)
 }
 

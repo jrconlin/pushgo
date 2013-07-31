@@ -7,8 +7,8 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush"
-	"mozilla.org/simplepush/storage"
-	"mozilla.org/util"
+	storage "mozilla.org/simplepush/storage/mcstorage"
+	mozutil "mozilla.org/util"
 
 	"flag"
 	"fmt"
@@ -16,7 +16,7 @@ import (
 	"net/http"
 )
 
-var logger *util.HekaLogger
+var logger *mozutil.HekaLogger
 var store *storage.Storage
 
 // -- main
@@ -26,12 +26,12 @@ func main() {
 
 	flag.StringVar(&configFile, "config", "config.ini", "Configuration File")
 	flag.Parse()
-	config := util.MzGetConfig(configFile)
+	config := mozutil.MzGetConfig(configFile)
 
     config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
-	logger = util.NewHekaLogger(config)
+	logger = mozutil.NewHekaLogger(config)
     store = storage.New(config, logger)
 
 	simplepush.Clients = make(map[string]*simplepush.Client)
@@ -48,8 +48,8 @@ func main() {
 	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server
-	host := util.MzGet(config, "host", "localhost")
-	port := util.MzGet(config, "port", "8080")
+	host := mozutil.MzGet(config, "host", "localhost")
+	port := mozutil.MzGet(config, "port", "8080")
 
 	// Hoist the main sail
 	logger.Info("main",
