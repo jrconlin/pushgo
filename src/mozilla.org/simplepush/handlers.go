@@ -111,7 +111,6 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := ClientCount()
-	MuClient.Unlock()
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
