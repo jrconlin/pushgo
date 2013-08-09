@@ -1,6 +1,6 @@
 #! /bin/bash
 set -e
-for env in "GOROOT" "GOBIN" ; do
+for env in "GOPATH" "GOBIN" ; do
     if [ -z "${!env}" ]; then
         echo "$env not defined. Is go installed?"
         exit 1
