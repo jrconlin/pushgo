@@ -80,12 +80,12 @@ func FixConfig(config mozutil.JsMap) mozutil.JsMap {
 	if _, ok := config["max_connections"]; ok {
 		var err error
 		val := config["max_connections"].(string)
-        ival, err := strconv.ParseInt(val,10,0)
+		ival, err := strconv.ParseInt(val, 10, 0)
 		if err != nil {
 			config["max_connections"] = DEFAULT_MAX_CONNECTIONS
 		} else {
-            config["max_connections"] = int(ival)
-        }
+			config["max_connections"] = int(ival)
+		}
 	} else {
 		config["max_connections"] = DEFAULT_MAX_CONNECTIONS
 	}
@@ -111,14 +111,14 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := ClientCount()
-    MuClient.Unlock()
+	MuClient.Unlock()
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
-func ClientCount() (int) {
-    defer MuClient.Unlock()
-    MuClient.Lock()
-    return len (Clients)
+func ClientCount() int {
+	defer MuClient.Unlock()
+	MuClient.Lock()
+	return len(Clients)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
