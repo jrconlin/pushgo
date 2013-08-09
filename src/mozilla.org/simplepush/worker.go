@@ -249,7 +249,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		data["uaid"] = ""
 	}
 	if redir, ok := self.config["db.redirect"]; ok {
-        resp := mozutil.JsMap{
+		resp := mozutil.JsMap{
 			"messageType": data["messageType"],
 			"status":      302,
 			"redirect":    redir,

@@ -10,7 +10,7 @@ import (
 
 	"fmt"
 	"strings"
-    "sync"
+	"sync"
 	"time"
 )
 
@@ -124,9 +124,9 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	client := &Client{PushWS: *sock,
 		UAID: uaid,
 		Prop: prop}
-    MuClient.Lock()
+	MuClient.Lock()
 	Clients[uaid] = client
-    MuClient.Unlock()
+	MuClient.Unlock()
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -150,8 +150,8 @@ func (self *Serv) Bye(sock *PushWS) {
 	self.log.Info("timer", "Socket connection terminated", mozutil.JsMap{
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
-    defer MuClient.Unlock()
-    MuClient.Lock()
+	defer MuClient.Unlock()
+	MuClient.Lock()
 	delete(Clients, uaid)
 }
 
@@ -277,6 +277,10 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args mozutil.JsMap) {
 	return serverSingleton.HandleCommand(cmd, sock)
+}
+
+func init() {
+	Clients = make(map[string]*Client)
 }
 
 // o4fs
