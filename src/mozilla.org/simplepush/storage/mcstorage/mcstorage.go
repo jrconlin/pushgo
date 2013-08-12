@@ -39,7 +39,6 @@ type Storage struct {
 	mc     gomc.Client
 	log    *util.HekaLogger
 	thrash int64
-	mcs    chan *memcache.Client
 }
 
 type StorageError struct {
