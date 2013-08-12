@@ -185,6 +185,7 @@ func (self *Worker) Run(sock PushWS) {
 			// Pull any remaining commands off, ensure we don't wait around
 			select {
 			case <-sock.Ccmd:
+				self.log.Info("worker", "Cleared messages from socket", nil)
 			default:
 			}
 			break

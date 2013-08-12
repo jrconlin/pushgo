@@ -16,6 +16,17 @@ milage may vary.
 libmemcached 1.2 *note* remove older, system installed versions of
 libmemcached, or you're going to have a bad time.
 
+To build memcached from source:
+
+1. Install following: bzr, automake, flex, bison, libtool, cloog-ppl
+    * bison must be >= 2.5. You can pull the latest compy from
+      http://ftp.gnu.org/gnu/bison/
+2. $ wget
+https://launchpad.net/libmemcached/1.0/1.0.17/+download/libmemcached-1.0.17.tar.gz
+3. $ cd libmemcached-1.0.17
+4. Follow steps listed in README.FIRST
+
+
 
 ## Installation
 To install this server:
