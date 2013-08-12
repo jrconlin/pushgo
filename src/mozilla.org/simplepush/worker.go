@@ -92,16 +92,16 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
 			sock.Socket.Close()
-            var cleaned bool = false
-            // Pull remaining commands off, ensure we don't wait around
-            select {
-            case <-sock.Ccmd:
-                cleaned = true
-            default:
-            }
-            if cleaned {
-                self.log.Info("worker", "Purged messages from channel", nil)
-            }
+			var cleaned bool = false
+			// Pull remaining commands off, ensure we don't wait around
+			select {
+			case <-sock.Ccmd:
+				cleaned = true
+			default:
+			}
+			if cleaned {
+				self.log.Info("worker", "Purged messages from channel", nil)
+			}
 			// Indicate we shut down successfully
 			self.wg.Done()
 			return
@@ -181,8 +181,8 @@ func (self *Worker) Run(sock PushWS) {
 		return
 	}(sock)
 
-    // Indicate we will accept a command
-    sock.Acmd <- true
+	// Indicate we will accept a command
+	sock.Acmd <- true
 
 	for {
 		// We should shut down?
@@ -191,16 +191,16 @@ func (self *Worker) Run(sock PushWS) {
 			// still running so that it shuts down
 			sock.Socket.Close()
 
-            var cleaned bool = false
-            //pull any remaining commands off, ensure we don't wait around
-            select {
-            case <-sock.Ccmd:
-                cleaned = true
-            default:
-            }
-            if cleaned {
-                self.log.Info("worker", "Cleared messages from socket", nil)
-            }
+			var cleaned bool = false
+			//pull any remaining commands off, ensure we don't wait around
+			select {
+			case <-sock.Ccmd:
+				cleaned = true
+			default:
+			}
+			if cleaned {
+				self.log.Info("worker", "Cleared messages from socket", nil)
+			}
 
 			break
 		}
@@ -224,8 +224,8 @@ func (self *Worker) Run(sock PushWS) {
 				}
 				// additional non-client commands are TBD.
 			}
-            // Indicate we will accept a command
-            sock.Acmd <- true
+			// Indicate we will accept a command
+			sock.Acmd <- true
 		case buffer := <-in:
 			if len(buffer) > 0 {
 				self.log.Info("worker",

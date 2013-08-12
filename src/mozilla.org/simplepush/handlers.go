@@ -138,9 +138,9 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Reque
 	if err != nil {
 		repMap["error"] = err.Error()
 	}
-    if msg != "" {
-        repMap["message"] = msg
-    }
+	if msg != "" {
+		repMap["message"] = msg
+	}
 	reply, err := json.Marshal(repMap)
 
 	resp.Write(reply)
@@ -331,7 +331,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Ccmd:   make(chan PushCommand, 1),
-        Acmd:   make(chan bool, 1),
+		Acmd:   make(chan bool, 1),
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}
