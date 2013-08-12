@@ -42,9 +42,10 @@ const (
 	CHID_DEFAULT_MAX_NUM = 200
 )
 
+// Allow [0-9a-z_-]/i as valid ChannelID characters.
+var workerFilter *regexp.Regexp = regexp.MustCompile("[^\\w-]")
+
 func NewWorker(config mozutil.JsMap) *Worker {
-	// Allow [0-9a-z_-]/i as valid ChannelID characters.
-	filter := regexp.MustCompile("[^\\w-]")
 	switch config["db.max_channels"].(type) {
 	case string:
 		vi, _ := config["db.max_channels"]
@@ -63,10 +64,12 @@ func NewWorker(config mozutil.JsMap) *Worker {
 		config["db.max_channels"] = CHID_DEFAULT_MAX_NUM
 	}
 
-	return &Worker{log: mozutil.NewHekaLogger(config),
+	return &Worker{
+		log:    mozutil.NewHekaLogger(config),
 		state:  INACTIVE,
-		filter: filter,
-		config: config}
+		filter: workerFilter,
+		config: config,
+	}
 }
 
 func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
@@ -309,10 +312,11 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	cmd := PushCommand{Command: HELLO,
 		Arguments: mozutil.JsMap{
 			"uaid":  sock.Uaid,
-			"chids": data["channelIDs"]}}
+			"chids": data["channelIDs"]},
+		Reply: make(chan PushCommand)}
 	// blocking call back to the boss.
 	sock.Scmd <- cmd
-	result := <-sock.Scmd
+	result := <-cmd.Reply
 	if err = sock.Store.SetUAIDHost(sock.Uaid); err != nil {
 		return err
 	}
@@ -396,9 +400,11 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	}
 	// have the server generate the callback URL.
 	cmd := PushCommand{Command: REGIS,
-		Arguments: data}
+		Arguments: data,
+		Reply:     make(chan PushCommand),
+	}
 	sock.Scmd <- cmd
-	result := <-sock.Scmd
+	result := <-cmd.Reply
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
 	endpoint := result.Arguments.(mozutil.JsMap)["pushEndpoint"].(string)
 	// return the info back to the socket

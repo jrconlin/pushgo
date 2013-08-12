@@ -338,17 +338,23 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	}(sock.Logger)
 
 	go NewWorker(self.config).Run(sock)
-	for {
+	ok := true
+	for ok {
 		select {
 		case serv_cmd := <-sock.Scmd:
+			if serv_cmd.Command == DIE {
+				ok = false
+				continue
+			}
 			result, args := HandleServerCommand(serv_cmd, &sock)
 			sock.Logger.Debug("main",
 				"Server Returning Result",
 				mozutil.JsMap{"result": result,
 					"args": args})
-			sock.Scmd <- PushCommand{result, args}
+			serv_cmd.Reply <- PushCommand{result, args, nil}
 		}
 	}
+	self.logger.Debug("main", "Server for client shutting down", nil)
 }
 
 // o4fs
