@@ -115,17 +115,19 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
-func ClientCount() int {
-	defer MuClient.Unlock()
-	MuClient.Lock()
-	return len(Clients)
-}
-
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
+	var okClients bool
+	var msg string
+
 	clientCount := ClientCount()
 	maxClients := self.config["max_connections"].(int)
-	okClients := clientCount < maxClients
+	if okClients = clientCount < maxClients; !okClients {
+		msg += "Exceeding max_connections, "
+	}
 	mcStatus, err := self.store.Status()
+	if !mcStatus {
+		msg += fmt.Sprintf(" Memcache error %s,", err)
+	}
 	ok := okClients && mcStatus
 	gcount := runtime.NumGoroutine()
 	repMap := mozutil.JsMap{"ok": ok,
@@ -136,6 +138,9 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Reque
 	if err != nil {
 		repMap["error"] = err.Error()
 	}
+    if msg != "" {
+        repMap["message"] = msg
+    }
 	reply, err := json.Marshal(repMap)
 
 	resp.Write(reply)
@@ -325,8 +330,8 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	}
 	sock := PushWS{Uaid: "",
 		Socket: ws,
-		Scmd:   make(chan PushCommand),
 		Ccmd:   make(chan PushCommand, 1),
+        Acmd:   make(chan bool, 1),
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}

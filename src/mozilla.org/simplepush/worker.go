@@ -91,7 +91,17 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 		if self.stopped {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
-			close(stopChan)
+			sock.Socket.Close()
+            var cleaned bool = false
+            // Pull remaining commands off, ensure we don't wait around
+            select {
+            case <-sock.Ccmd:
+                cleaned = true
+            default:
+            }
+            if cleaned {
+                self.log.Info("worker", "Purged messages from channel", nil)
+            }
 			// Indicate we shut down successfully
 			self.wg.Done()
 			return
@@ -171,12 +181,27 @@ func (self *Worker) Run(sock PushWS) {
 		return
 	}(sock)
 
+    // Indicate we will accept a command
+    sock.Acmd <- true
+
 	for {
 		// We should shut down?
 		if self.stopped {
 			// Closing the socket should interrupt the sniffer if it's
 			// still running so that it shuts down
 			sock.Socket.Close()
+
+            var cleaned bool = false
+            //pull any remaining commands off, ensure we don't wait around
+            select {
+            case <-sock.Ccmd:
+                cleaned = true
+            default:
+            }
+            if cleaned {
+                self.log.Info("worker", "Cleared messages from socket", nil)
+            }
+
 			break
 		}
 		select {
@@ -199,6 +224,8 @@ func (self *Worker) Run(sock PushWS) {
 				}
 				// additional non-client commands are TBD.
 			}
+            // Indicate we will accept a command
+            sock.Acmd <- true
 		case buffer := <-in:
 			if len(buffer) > 0 {
 				self.log.Info("worker",

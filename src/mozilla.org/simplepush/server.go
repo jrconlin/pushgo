@@ -8,6 +8,7 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	mozutil "mozilla.org/util"
 
+    "sync/atomic"
 	"fmt"
 	"strings"
 	"sync"
@@ -34,6 +35,9 @@ type Client struct {
 
 // Active clients
 var Clients map[string]*Client
+
+// go appears not to reduce map size on delete. yay.
+var cClients int32
 var MuClient sync.Mutex
 
 var serverSingleton *Serv
@@ -57,6 +61,14 @@ func NewServer(config mozutil.JsMap, logger *mozutil.HekaLogger) *Serv {
 func InitServer(config mozutil.JsMap, logger *mozutil.HekaLogger) (err error) {
 	serverSingleton = NewServer(config, logger)
 	return nil
+}
+
+func ClientCount() int {
+	/*	defer MuClient.Unlock()
+		MuClient.Lock()
+		return len(Clients)
+	*/
+	return int(cClients)
 }
 
 func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
@@ -126,6 +138,7 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 		Prop: prop}
 	MuClient.Lock()
 	Clients[uaid] = client
+    atomic.AddInt32(&cClients, 1)
 	MuClient.Unlock()
 
 	// We don't register the list of known ChannelIDs since we echo
@@ -153,6 +166,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
+    atomic.AddInt32(&cClients, -1)
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
@@ -225,8 +239,15 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 		self.log.Info("server",
 			"Requesting flush",
 			mozutil.JsMap{"uaid": client.UAID})
-		client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
-			Arguments: &mozutil.JsMap{"uaid": client.UAID}}
+        // Ensure we're allowed to send a command
+        select {
+        case <-client.PushWS.Acmd:
+            client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
+                Arguments: &mozutil.JsMap{"uaid": client.UAID}}
+        case <-time.After(time.Duration(50) * time.Millisecond):
+            self.log.Info("server", "Client unavailable to receive command",
+                mozutil.JsMap{"uaid": client.UAID})
+            }
 	}
 	return nil
 }
@@ -281,6 +302,7 @@ func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args mozuti
 
 func init() {
 	Clients = make(map[string]*Client)
+	cClients = 0
 }
 
 // o4fs

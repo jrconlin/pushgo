@@ -219,6 +219,11 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		config["memcache.server"] = "127.0.0.1:11211"
 	}
 
+    if _, ok = config["memcache.pool_size"]; !ok {
+        config["memcache.pool_size"] = "100"
+    }
+    config["memcache.pool_size"], _ =
+        strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0)
 	if _, ok = config["db.timeout_live"]; !ok {
 		config["db.timeout_live"] = "259200"
 	}
@@ -243,7 +248,8 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	logger.Info("storage", "Creating new gomc handler", nil)
 	mc, err := gomc.NewClient(strings.Split(
 		config["memcache.server"].(string), ","),
-		100, gomc.ENCODING_JSON)
+        int(config["memcache.pool_size"].(int64)),
+		gomc.ENCODING_JSON)
 	if err != nil {
 		logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
 			util.JsMap{"error": err})
