@@ -172,12 +172,21 @@ func (self *Worker) Run(sock PushWS) {
 		return
 	}(sock)
 
+	// Indicate we will accept a command
+	sock.Acmd <- true
+
 	for {
 		// We should shut down?
 		if self.stopped {
 			// Closing the socket should interrupt the sniffer if it's
 			// still running so that it shuts down
 			sock.Socket.Close()
+
+			// Pull any remaining commands off, ensure we don't wait around
+			select {
+			case <-sock.Ccmd:
+			default:
+			}
 			break
 		}
 
@@ -201,6 +210,9 @@ func (self *Worker) Run(sock PushWS) {
 				}
 				// additional non-client commands are TBD.
 			}
+			// Indicate we will accept a command
+			sock.Acmd <- true
+
 		case buffer := <-in:
 			if len(buffer) > 0 {
 				self.log.Info("worker",

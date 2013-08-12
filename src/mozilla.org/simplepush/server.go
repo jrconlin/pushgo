@@ -225,8 +225,16 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 		self.log.Info("server",
 			"Requesting flush",
 			mozutil.JsMap{"uaid": client.UAID})
-		client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
-			Arguments: &mozutil.JsMap{"uaid": client.UAID}}
+
+		// Ensure we're allowed to send a command
+		select {
+		case <-client.PushWS.Acmd:
+			client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
+				Arguments: &mozutil.JsMap{"uaid": client.UAID}}
+		case <-time.After(time.Duration(50) * time.Millisecond):
+			self.log.Info("server", "Client unavailable to recieve command",
+				mozutil.JsMap{"uaid": client.UAID})
+		}
 	}
 	return nil
 }
