@@ -323,7 +323,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Scmd:   make(chan PushCommand),
-		Ccmd:   make(chan PushCommand),
+		Ccmd:   make(chan PushCommand, 1),
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}
