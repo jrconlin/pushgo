@@ -37,7 +37,6 @@ type PushCommand struct {
 	// Use mutable int value
 	Command   int         //command type (UNREG, REGIS, ACK, etc)
 	Arguments interface{} //command arguments
-	Reply     chan PushCommand
 }
 
 type PushWS struct {

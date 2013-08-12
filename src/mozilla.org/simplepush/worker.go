@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,10 +26,12 @@ var MissingChannelErr = errors.New("Missing channelID")
 //      these write back to the websocket.
 
 type Worker struct {
-	log    *mozutil.HekaLogger
-	state  int
-	filter *regexp.Regexp
-	config mozutil.JsMap
+	log     *mozutil.HekaLogger
+	state   int
+	filter  *regexp.Regexp
+	config  mozutil.JsMap
+	stopped bool
+	wg      *sync.WaitGroup
 }
 
 const (
@@ -65,14 +68,16 @@ func NewWorker(config mozutil.JsMap) *Worker {
 	}
 
 	return &Worker{
-		log:    mozutil.NewHekaLogger(config),
-		state:  INACTIVE,
-		filter: workerFilter,
-		config: config,
+		stopped: false,
+		log:     mozutil.NewHekaLogger(config),
+		state:   INACTIVE,
+		filter:  workerFilter,
+		config:  config,
+		wg:      new(sync.WaitGroup),
 	}
 }
 
-func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
+func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bool) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
@@ -81,12 +86,25 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
 	for {
 		var raw []byte
 		var buffer mozutil.JsMap
+
+		// Were we told to shut down?
+		if self.stopped {
+			// Notify the main worker loop in case it didn't see the
+			// connection drop
+			close(stopChan)
+
+			// Indicate we shut down successfully
+			self.wg.Done()
+			return
+		}
+
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			self.log.Error("worker",
 				"Websocket Error",
 				mozutil.JsMap{"error": err.Error()})
-			break
+			self.stopped = true
+			continue
 		}
 		if len(raw) > 0 {
 			if len(raw) > 5 {
@@ -98,7 +116,8 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
 			if err != nil {
 				self.log.Error("worker",
 					"Unparsable data", mozutil.JsMap{"raw": raw})
-				break
+				self.stopped = true
+				continue
 			}
 			if len(buffer) > 10 {
 				self.log.Info("worker",
@@ -107,13 +126,8 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap) {
 			}
 			// Only do something if there's something to do.
 			in <- buffer
-
 		}
 	}
-	// Clean up the server side (This will delete records associated
-	// with the UAID.
-	sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
-	socket.Close()
 }
 
 // standardize the error reporting back to the client.
@@ -131,7 +145,13 @@ func (self *Worker) Run(sock PushWS) {
 	// (Remember, we need to be able to write out PUSH events
 	// as they happen.)
 	in := make(chan mozutil.JsMap)
-	go self.sniffer(sock, in)
+
+	// Setup the sniffer goroutine and increment a waitgroup for it
+	// along with a stopChan so it can notify us if it shut down
+	// suddenly
+	self.wg.Add(1)
+	stopChan := make(chan bool)
+	go self.sniffer(sock, in, stopChan)
 
 	if timeout_s, ok := self.config["socket.hello_timeout"]; ok {
 		timeout, _ := time.ParseDuration(timeout_s.(string))
@@ -144,8 +164,28 @@ func (self *Worker) Run(sock PushWS) {
 			})
 	}
 
+	defer func(sock PushWS) {
+		if r := recover(); r != nil {
+			sock.Logger.Error("worker", r.(error).Error(), nil)
+		}
+		sock.Socket.Close()
+		return
+	}(sock)
+
 	for {
+		// We should shut down?
+		if self.stopped {
+			// Closing the socket should interrupt the sniffer if its
+			// still running so that it shuts down
+			sock.Socket.Close()
+			break
+		}
+
 		select {
+		case <-stopChan:
+			// Notified by the sniffer that the connection is lost, which
+			// means stopped is set to true
+			continue
 		case cmd := <-sock.Ccmd:
 			// A new Push has happened. Flush out the data to the
 			// device (and potentially remotely wake it if that fails)
@@ -160,14 +200,6 @@ func (self *Worker) Run(sock PushWS) {
 				// additional non-client commands are TBD.
 			}
 		case buffer := <-in:
-			defer func(sock PushWS) {
-				if r := recover(); r != nil {
-					sock.Logger.Error("worker", r.(error).Error(), nil)
-				}
-				sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
-				sock.Socket.Close()
-				return
-			}(sock)
 			if len(buffer) > 0 {
 				self.log.Info("worker",
 					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
@@ -218,12 +250,14 @@ func (self *Worker) Run(sock PushWS) {
 			if err != nil {
 				self.log.Debug("worker", "Run returned error", nil)
 				self.handleError(sock, buffer, err)
-				break
+				self.stopped = true
+				continue
 			}
 		}
 	}
-	sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
-	sock.Socket.Close()
+	self.log.Debug("worker", "Waiting for sniffer to shut-down", nil)
+	self.wg.Wait()
+	self.log.Debug("worker", "Run has completed shut-down", nil)
 }
 
 // Associate the UAID for this socket connection (and flush any data that
@@ -309,14 +343,15 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// register the sockets (NOOP)
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
-	cmd := PushCommand{Command: HELLO,
+	cmd := PushCommand{
+		Command: HELLO,
 		Arguments: mozutil.JsMap{
 			"uaid":  sock.Uaid,
 			"chids": data["channelIDs"]},
-		Reply: make(chan PushCommand)}
+	}
 	// blocking call back to the boss.
-	sock.Scmd <- cmd
-	result := <-cmd.Reply
+	raw_result, args := HandleServerCommand(cmd, sock)
+	result := PushCommand{raw_result, args}
 	if err = sock.Store.SetUAIDHost(sock.Uaid); err != nil {
 		return err
 	}
@@ -399,12 +434,9 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 		return err
 	}
 	// have the server generate the callback URL.
-	cmd := PushCommand{Command: REGIS,
-		Arguments: data,
-		Reply:     make(chan PushCommand),
-	}
-	sock.Scmd <- cmd
-	result := <-cmd.Reply
+	cmd := PushCommand{Command: REGIS, Arguments: data}
+	raw_result, args := HandleServerCommand(cmd, &sock)
+	result := PushCommand{raw_result, args}
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
 	endpoint := result.Arguments.(mozutil.JsMap)["pushEndpoint"].(string)
 	// return the info back to the socket
@@ -464,8 +496,8 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 		self.log.Error("worker", "Undefined UAID for socket. Aborting.", nil)
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
-		sock.Scmd <- PushCommand{Command: DIE, Arguments: nil}
-		sock.Socket.Close()
+		self.stopped = true
+		return
 	}
 	// Fetch the pending updates from #storage
 	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
