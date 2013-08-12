@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -138,7 +137,6 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 		Prop: prop}
 	MuClient.Lock()
 	Clients[uaid] = client
-	atomic.AddInt32(&cClients, 1)
 	MuClient.Unlock()
 
 	// We don't register the list of known ChannelIDs since we echo
@@ -166,7 +164,6 @@ func (self *Serv) Bye(sock *PushWS) {
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
-	atomic.AddInt32(&cClients, -1)
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
