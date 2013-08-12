@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -126,10 +127,12 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Reque
 	okClients := clientCount < maxClients
 	mcStatus, err := self.store.Status()
 	ok := okClients && mcStatus
+	gcount := runtime.NumGoroutine()
 	repMap := mozutil.JsMap{"ok": ok,
 		"clientCount": clientCount,
 		"maxClients":  maxClients,
-		"mcstatus":    mcStatus}
+		"mcstatus":    mcStatus,
+		"goroutines":  gcount}
 	if err != nil {
 		repMap["error"] = err.Error()
 	}

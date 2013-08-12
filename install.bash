@@ -8,7 +8,7 @@ for env in "GOPATH" "GOBIN" ; do
 done
 export GOPATH=`pwd`
 echo "Installing required go libraries..."
-for req in `cat go_deps.lst`; do
+for req in `grep -v "^#" go_deps.lst`; do
     echo -n "   $req..."
     go get -v $req
     echo " done"

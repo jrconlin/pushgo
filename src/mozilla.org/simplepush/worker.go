@@ -21,6 +21,7 @@ import (
 )
 
 var MissingChannelErr = errors.New("Missing channelID")
+var BadUAIDErr = errors.New("Bad UAID")
 
 //    -- Workers
 //      these write back to the websocket.
@@ -68,13 +69,12 @@ func NewWorker(config mozutil.JsMap) *Worker {
 	}
 
 	return &Worker{
-		stopped: false,
 		log:     mozutil.NewHekaLogger(config),
 		state:   INACTIVE,
 		filter:  workerFilter,
 		config:  config,
-		wg:      new(sync.WaitGroup),
-	}
+		stopped: false,
+		wg:      new(sync.WaitGroup)}
 }
 
 func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bool) {
@@ -175,7 +175,7 @@ func (self *Worker) Run(sock PushWS) {
 	for {
 		// We should shut down?
 		if self.stopped {
-			// Closing the socket should interrupt the sniffer if its
+			// Closing the socket should interrupt the sniffer if it's
 			// still running so that it shuts down
 			sock.Socket.Close()
 			break
@@ -196,7 +196,9 @@ func (self *Worker) Run(sock PushWS) {
 			if cmd.Command == FLUSH {
 				self.log.Info("worker",
 					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
-				self.Flush(sock, 0)
+				if self.Flush(sock, 0) != nil {
+					break
+				}
 				// additional non-client commands are TBD.
 			}
 		case buffer := <-in:
@@ -257,7 +259,7 @@ func (self *Worker) Run(sock PushWS) {
 	}
 	self.log.Debug("worker", "Waiting for sniffer to shut-down", nil)
 	self.wg.Wait()
-	self.log.Debug("worker", "Run has completed shut-down", nil)
+	self.log.Debug("worker", "Run has completed a shut-down", nil)
 }
 
 // Associate the UAID for this socket connection (and flush any data that
@@ -366,7 +368,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
-		self.Flush(*sock, 0)
+		return self.Flush(*sock, 0)
 	}
 	return err
 }
@@ -393,8 +395,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
-		self.Flush(sock, 0)
-		return nil
+		return self.Flush(sock, 0)
 	}
 	self.log.Debug("worker", "sending response",
 		mozutil.JsMap{"cmd": "ack", "error": err})
@@ -482,7 +483,7 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
+func (self *Worker) Flush(sock PushWS, lastAccessed int64) error {
 	// flush pending data back to Client
 	messageType := "notification"
 	timer := time.Now()
@@ -497,20 +498,21 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) {
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
 		self.stopped = true
-		return
+		return nil
 	}
 	// Fetch the pending updates from #storage
 	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
 	if err != nil {
 		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
-		return
+		return err
 	}
 	if updates == nil {
-		return
+		return nil
 	}
 	updates["messageType"] = messageType
 	self.log.Debug("worker", "Flushing data back to socket", updates)
 	websocket.JSON.Send(sock.Socket, updates)
+	return nil
 }
 
 func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
