@@ -28,17 +28,17 @@ func main() {
 	flag.Parse()
 	config := mozutil.MzGetConfig(configFile)
 
-    config = simplepush.FixConfig(config)
+	config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	logger = mozutil.NewHekaLogger(config)
-    store = storage.New(config, logger)
+	store = storage.New(config, logger)
 
 	simplepush.Clients = make(map[string]*simplepush.Client)
 
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
-    handlers := simplepush.NewHandler(config, logger, store)
+	handlers := simplepush.NewHandler(config, logger, store)
 
 	// Register the handlers
 	// each websocket gets it's own handler.

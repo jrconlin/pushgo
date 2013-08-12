@@ -11,6 +11,12 @@ AWS instances, and reasonably light weight. Some other languages and
 approaches showed better overall performance, many showed worse. Your
 milage may vary.
 
+## System requirements.
+
+libmemcached 1.2 *note* remove older, system installed versions of
+libmemcached, or you're going to have a bad time.
+
+
 ## Installation
 To install this server:
 

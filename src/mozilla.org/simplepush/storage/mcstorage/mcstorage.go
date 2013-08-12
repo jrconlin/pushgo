@@ -11,13 +11,13 @@ package mcstorage
  */
 
 import (
-    "github.com/ianoshen/gomc"
+	"github.com/ianoshen/gomc"
 
 	"mozilla.org/simplepush/sperrors"
 	"mozilla.org/util"
 
 	"encoding/json"
-    "errors"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -62,15 +62,15 @@ func indexOf(list []string, val string) (index int) {
 func (self *Storage) isFatal(err error) bool {
 	// if it has anything to do with the connection, restart the server.
 	// this is crappy, crappy behavior, but it's what go wants.
-    if err == nil {
-        return false
-    }
-    if strings.Contains(err.Error(), "timeout") {
-        return false
-    }
-    if strings.Contains(err.Error(), "too many open files") {
-        return false
-    }
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "timeout") {
+		return false
+	}
+	if strings.Contains(err.Error(), "NOT FOUND") {
+		return false
+	}
 	switch err {
 	case nil:
 		return false
@@ -110,57 +110,57 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 		}
 	}()
 
-    mc := self.mc
-    //mc.Timeout = time.Second * 10
-        var item string
-		err = mc.Get(string(pk), &item)
-		if err != nil {
-			self.isFatal(err)
-			self.log.Error("storage",
-				"Get Failed",
-				util.JsMap{"primarykey": pk,
-					"error": err})
-			return nil, err
-		}
-
-		json.Unmarshal([]byte(item), &result)
-
-		if result == nil {
-			return nil, err
-		}
-
-		self.log.Debug("storage",
-			"Fetched",
+	mc := self.mc
+	//mc.Timeout = time.Second * 10
+	var item string
+	err = mc.Get(string(pk), &item)
+	if err != nil {
+		self.isFatal(err)
+		self.log.Error("storage",
+			"Get Failed",
 			util.JsMap{"primarykey": pk,
-				"value": item})
-		return result, err
+				"error": err})
+		return nil, err
+	}
+
+	json.Unmarshal([]byte(item), &result)
+
+	if result == nil {
+		return nil, err
+	}
+
+	self.log.Debug("storage",
+		"Fetched",
+		util.JsMap{"primarykey": pk,
+			"value": item})
+	return result, err
 }
 
 func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	if uaid == "" {
 		return result, nil
 	}
-    mc := self.mc
-    //mc.Timeout = time.Second * 10
-        var raw string
-		err = mc.Get(uaid, &raw)
-		if err != nil {
-			self.isFatal(err)
-			return nil, err
-		}
-	    result = strings.Split(raw, ",")
-    	return result, err
+	mc := self.mc
+	//mc.Timeout = time.Second * 10
+	var raw string
+	err = mc.Get(uaid, &raw)
+	if err != nil && err.Error() != "NOT FOUND" {
+		self.isFatal(err)
+		return nil, err
+	}
+	result = strings.Split(raw, ",")
+	return result, err
 }
 
 func (self *Storage) storeAppIDArray(uaid string, arr sort.StringSlice) (err error) {
 	arr.Sort()
-    mc := self.mc
-    //mc.Timeout = time.Second * 10
-		err = mc.Set(uaid, strings.Join(arr, ","), 0)
-		if err != nil {
-			self.isFatal(err)
-		}
-		return err
+	mc := self.mc
+	//mc.Timeout = time.Second * 10
+	err = mc.Set(uaid, strings.Join(arr, ","), 0)
+	if err != nil {
+		self.isFatal(err)
+	}
+	return err
 }
 
 func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
@@ -200,12 +200,12 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 		"Storing record",
 		util.JsMap{"primarykey": pk,
 			"record": raw})
-	err = self.mc.Set(pk, raw, time.Second * time.Duration(ttl))
+	err = self.mc.Set(pk, raw, time.Second*time.Duration(ttl))
 	if err != nil {
-	    self.isFatal(err)
-    	self.log.Error("storage",
-				fmt.Sprintf("Failure to set item %s {%s}", pk, raw),
-				nil)
+		self.isFatal(err)
+		self.log.Error("storage",
+			fmt.Sprintf("Failure to set item %s {%s}", pk, raw),
+			nil)
 	}
 	return err
 }
@@ -241,18 +241,18 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	}
 
 	logger.Info("storage", "Creating new gomc handler", nil)
-    mc, err := gomc.NewClient(strings.Split(
-            config["memcache.server"].(string),","),
-                         1, gomc.ENCODING_JSON)
-    if err != nil {
+	mc, err := gomc.NewClient(strings.Split(
+		config["memcache.server"].(string), ","),
+		100, gomc.ENCODING_JSON)
+	if err != nil {
 		logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
 			util.JsMap{"error": err})
-        log.Fatal("### RESTARTING ### %s", err)
-    }
-    mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
-    mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-    mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
-    mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+		log.Fatal("### RESTARTING ### %s", err)
+	}
+	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
+	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
 
 	return &Storage{mc: mc,
 		config: config,
@@ -261,7 +261,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 }
 
 func (self *Storage) Close() {
-    self.mc.Close()
+	self.mc.Close()
 }
 
 //TODO: Optimize this to decode the PK for updates
@@ -276,8 +276,8 @@ func (self *Storage) UpdateChannel(pk string, vers int64) (err error) {
 	rec, err = self.fetchRec(pk)
 
 	if err != nil {
-        self.log.Error("storage",
-            fmt.Sprintf("fetchRec %s err %s", pk, err), nil)
+		self.log.Error("storage",
+			fmt.Sprintf("fetchRec %s err %s", pk, err), nil)
 		return err
 	}
 
@@ -418,24 +418,24 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		"Fetching items",
 		util.JsMap{"uaid": uaid,
 			"items": items})
-    mc := self.mc
+	mc := self.mc
 	recs, err := mc.GetMulti(items)
-	if err != nil && err != errors.New("NOT FOUND"){
-			self.isFatal(err)
-			self.log.Error("storage", "GetUpdate failed",
-				util.JsMap{"uaid": uaid,
-					"error": err})
-			return nil, err
+	if err != nil && err.Error() != "NOT FOUND" {
+		self.isFatal(err)
+		self.log.Error("storage", "GetUpdate failed",
+			util.JsMap{"uaid": uaid,
+				"error": err})
+		return nil, err
 	}
 
-    // Result has no len or counter.
-    resCount := 0
-    for _, key := range items {
-        var i string
-        if err := recs.Get(key, &i); err == nil {
-            resCount = resCount + 1
-        }
-    }
+	// Result has no len or counter.
+	resCount := 0
+	for _, key := range items {
+		var i string
+		if err := recs.Get(key, &i); err == nil {
+			resCount = resCount + 1
+		}
+	}
 
 	var update util.JsMap
 	if resCount == 0 {
@@ -444,11 +444,11 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		return nil, err
 	}
 	for _, key := range items {
-        var val string
-        err := recs.Get(key, &val)
-        if err != nil {
-            continue
-        }
+		var val string
+		err := recs.Get(key, &val)
+		if err != nil {
+			continue
+		}
 		uaid, appid, err := ResolvePK(key)
 		self.log.Debug("storage",
 			"GetUpdates Fetched record ",
@@ -513,17 +513,17 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
 	//TODO, go through the results and nuke what's there, then call flush
 
-    mc := self.mc
+	mc := self.mc
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
 			expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
 			json.Unmarshal(ackPacket["expired"].([]byte), &expired)
 			for _, appid := range expired {
 				pk, _ := GenPK(uaid, appid)
-					err = mc.Delete(pk, time.Duration(0))
-					if err != nil {
-						self.isFatal(err)
-					}
+				err = mc.Delete(pk, time.Duration(0))
+				if err != nil {
+					self.isFatal(err)
+				}
 			}
 		}
 	}
@@ -533,10 +533,10 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 			for _, rec := range ackPacket["updates"].([]interface{}) {
 				recmap := rec.(map[string]interface{})
 				pk, _ := GenPK(uaid, recmap["channelID"].(string))
-					err = mc.Delete(pk, time.Duration(0))
-					if err != nil {
-						self.isFatal(err)
-					}
+				err = mc.Delete(pk, time.Duration(0))
+				if err != nil {
+					self.isFatal(err)
+				}
 			}
 		}
 	}
@@ -565,9 +565,9 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 		"SetUAIDHost",
 		util.JsMap{"uaid": uaid, "host": host})
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
-    mc := self.mc
-		err = mc.Set(prefix + uaid, host, time.Duration(ttl) * time.Second)
-		self.isFatal(err)
+	mc := self.mc
+	err = mc.Set(prefix+uaid, host, time.Duration(ttl)*time.Second)
+	self.isFatal(err)
 	return err
 }
 
@@ -584,9 +584,9 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		}
 	}(defaultHost)
 
-    mc := self.mc
-    var val string
-    err = mc.Get(prefix + uaid, &val)
+	mc := self.mc
+	var val string
+	err = mc.Get(prefix+uaid, &val)
 	if err != nil && err != errors.New("NOT FOUND") {
 		self.isFatal(err)
 		self.log.Error("storage",
@@ -607,50 +607,50 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 
 func (self *Storage) PurgeUAID(uaid string) (err error) {
 	appIDArray, err := self.fetchAppIDArray(uaid)
-    mc := self.mc
+	mc := self.mc
 	if err == nil && len(appIDArray) > 0 {
 		for _, appid := range appIDArray {
 			pk, _ := GenPK(uaid, appid)
-				err = mc.Delete(pk, time.Duration(0))
+			err = mc.Delete(pk, time.Duration(0))
 		}
 	}
-		err = mc.Delete(uaid, time.Duration(0))
+	err = mc.Delete(uaid, time.Duration(0))
 	self.DelUAIDHost(uaid)
 	return nil
 }
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	prefix := self.config["shard.prefix"].(string)
-    mc := self.mc
-    //mc.Timeout = time.Second * 10
-		err = mc.Delete(prefix + uaid, time.Duration(0))
-		self.isFatal(err)
+	mc := self.mc
+	//mc.Timeout = time.Second * 10
+	err = mc.Delete(prefix+uaid, time.Duration(0))
+	self.isFatal(err)
 	return err
 }
 
 func (self *Storage) Status() (success bool, err error) {
-    defer func() {
-        if recv := recover(); recv != nil {
-            success = false
-            err = recv.(error)
-            return
-        }
-    }()
+	defer func() {
+		if recv := recover(); recv != nil {
+			success = false
+			err = recv.(error)
+			return
+		}
+	}()
 
-    fake_id, _ := util.GenUUID4()
-    key := "status_" + fake_id
-    mc := self.mc
-    err = mc.Set("status_" + fake_id, "test", 6 * time.Second)
-    if err != nil {
-        return false, err
-    }
-    var val string
-    err = mc.Get(key, &val)
-    if err != nil || val != "test" {
-        return false, errors.New("Invalid value returned")
-    }
-    mc.Delete(key, time.Duration(0))
-    return true, nil
+	fake_id, _ := util.GenUUID4()
+	key := "status_" + fake_id
+	mc := self.mc
+	err = mc.Set("status_"+fake_id, "test", 6*time.Second)
+	if err != nil {
+		return false, err
+	}
+	var val string
+	err = mc.Get(key, &val)
+	if err != nil || val != "test" {
+		return false, errors.New("Invalid value returned")
+	}
+	mc.Delete(key, time.Duration(0))
+	return true, nil
 }
 
 // o4fs

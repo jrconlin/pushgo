@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -80,12 +81,12 @@ func FixConfig(config mozutil.JsMap) mozutil.JsMap {
 	if _, ok := config["max_connections"]; ok {
 		var err error
 		val := config["max_connections"].(string)
-        ival, err := strconv.ParseInt(val,10,0)
+		ival, err := strconv.ParseInt(val, 10, 0)
 		if err != nil {
 			config["max_connections"] = DEFAULT_MAX_CONNECTIONS
 		} else {
-            config["max_connections"] = int(ival)
-        }
+			config["max_connections"] = int(ival)
+		}
 	} else {
 		config["max_connections"] = DEFAULT_MAX_CONNECTIONS
 	}
@@ -111,14 +112,13 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) 
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := ClientCount()
-    MuClient.Unlock()
 	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
 }
 
-func ClientCount() (int) {
-    defer MuClient.Unlock()
-    MuClient.Lock()
-    return len (Clients)
+func ClientCount() int {
+	defer MuClient.Unlock()
+	MuClient.Lock()
+	return len(Clients)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
@@ -127,10 +127,12 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Reque
 	okClients := clientCount < maxClients
 	mcStatus, err := self.store.Status()
 	ok := okClients && mcStatus
+	gcount := runtime.NumGoroutine()
 	repMap := mozutil.JsMap{"ok": ok,
 		"clientCount": clientCount,
 		"maxClients":  maxClients,
-		"mcstatus":    mcStatus}
+		"mcstatus":    mcStatus,
+		"goroutines":  gcount}
 	if err != nil {
 		repMap["error"] = err.Error()
 	}
@@ -324,7 +326,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Scmd:   make(chan PushCommand),
-		Ccmd:   make(chan PushCommand),
+		Ccmd:   make(chan PushCommand, 1),
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}
@@ -338,18 +340,9 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		}
 	}(sock.Logger)
 
-	go NewWorker(self.config).Run(sock)
-	for {
-		select {
-		case serv_cmd := <-sock.Scmd:
-			result, args := HandleServerCommand(serv_cmd, &sock)
-			sock.Logger.Debug("main",
-				"Server Returning Result",
-				mozutil.JsMap{"result": result,
-					"args": args})
-			sock.Scmd <- PushCommand{result, args}
-		}
-	}
+	NewWorker(self.config).Run(sock)
+	HandleServerCommand(PushCommand{DIE, nil}, &sock)
+	self.logger.Debug("main", "Server for client shut-down", nil)
 }
 
 // o4fs
