@@ -77,7 +77,7 @@ func NewWorker(config mozutil.JsMap) *Worker {
 		wg:      new(sync.WaitGroup)}
 }
 
-func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bool) {
+func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap, stopChan chan bool) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
@@ -136,14 +136,14 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 }
 
 // standardize the error reporting back to the client.
-func (self *Worker) handleError(sock PushWS, message mozutil.JsMap, err error) (ret error) {
+func (self *Worker) handleError(sock *PushWS, message mozutil.JsMap, err error) (ret error) {
 	self.log.Info("worker", "Sending error", mozutil.JsMap{"error": err})
 	message["status"], message["error"] = sperrors.ErrToStatus(err)
 	return websocket.JSON.Send(sock.Socket, message)
 }
 
 // General workhorse loop for the websocket handler.
-func (self *Worker) Run(sock PushWS) {
+func (self *Worker) Run(sock *PushWS) {
 	var err error
 
 	// Instantiate a websocket reader, a blocking operation
@@ -169,7 +169,7 @@ func (self *Worker) Run(sock PushWS) {
 			})
 	}
 
-	defer func(sock PushWS) {
+	defer func(sock *PushWS) {
 		if r := recover(); r != nil {
 			sock.Logger.Error("worker", r.(error).Error(), nil)
 		}
@@ -246,7 +246,7 @@ func (self *Worker) Run(sock PushWS) {
 			buffer["messageType"] = strings.ToLower(messageType)
 			switch strings.ToLower(messageType) {
 			case "hello":
-				err = self.Hello(&sock, buffer)
+				err = self.Hello(sock, buffer)
 			case "ack":
 				err = self.Ack(sock, buffer)
 			case "register":
@@ -398,14 +398,14 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
-		return self.Flush(*sock, 0)
+		return self.Flush(sock, 0)
 	}
 	return err
 }
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
+func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
@@ -433,7 +433,7 @@ func (self *Worker) Ack(sock PushWS, buffer interface{}) (err error) {
 }
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
-func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
+func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
@@ -466,7 +466,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 	}
 	// have the server generate the callback URL.
 	cmd := PushCommand{Command: REGIS, Arguments: data}
-	raw_result, args := HandleServerCommand(cmd, &sock)
+	raw_result, args := HandleServerCommand(cmd, sock)
 	result := PushCommand{raw_result, args}
 	self.log.Debug("worker", fmt.Sprintf("Server returned %s", result), nil)
 	endpoint := result.Arguments.(mozutil.JsMap)["pushEndpoint"].(string)
@@ -482,7 +482,7 @@ func (self *Worker) Register(sock PushWS, buffer interface{}) (err error) {
 }
 
 // Unregister a ChannelID.
-func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
+func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			self.log.Error("worker",
@@ -513,11 +513,11 @@ func (self *Worker) Unregister(sock PushWS, buffer interface{}) (err error) {
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock PushWS, lastAccessed int64) error {
+func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 	// flush pending data back to Client
 	messageType := "notification"
 	timer := time.Now()
-	defer func(timer time.Time, sock PushWS) {
+	defer func(timer time.Time, sock *PushWS) {
 		sock.Logger.Info("timer",
 			"Client flush completed",
 			mozutil.JsMap{"duration": time.Now().Sub(timer).Nanoseconds(),
@@ -545,7 +545,7 @@ func (self *Worker) Flush(sock PushWS, lastAccessed int64) error {
 	return nil
 }
 
-func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
+func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	data := buffer.(mozutil.JsMap)
 	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
 		"messageType": data["messageType"],
@@ -553,7 +553,7 @@ func (self *Worker) Ping(sock PushWS, buffer interface{}) (err error) {
 	return nil
 }
 
-func (self *Worker) Purge(sock PushWS, buffer interface{}) (err error) {
+func (self *Worker) Purge(sock *PushWS, buffer interface{}) (err error) {
 	/*
 	   // If needed...
 	   sock.Scmd <- PushCommand{Command: PURGE,
