@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"runtime/pprof"
 )
 
 var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
+	profile    *string = flag.String("profile", "", "Profile file output")
 	logger     *mozutil.HekaLogger
 	store      *storage.Storage
 )
@@ -29,6 +32,15 @@ func main() {
 
 	config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
+
+	if *profile != "" {
+		f, err := os.Create(*profile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	logger = mozutil.NewHekaLogger(config)
 	store = storage.New(config, logger)
