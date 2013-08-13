@@ -27,6 +27,7 @@ type HekaLogger struct {
 	hostname string
 	conf     JsMap
 	tracer   bool
+	Enabled  bool
 }
 
 const (
@@ -81,7 +82,9 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		pid:      pid,
 		hostname: conf["heka.current_host"].(string),
 		conf:     conf,
-		tracer:   tracer}
+		tracer:   tracer,
+		Enabled:  true,
+	}
 }
 
 func addFields(msg *message.Message, fields JsMap) (err error) {
@@ -105,6 +108,10 @@ func addFields(msg *message.Message, fields JsMap) (err error) {
 
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+	if !self.Enabled {
+		return
+	}
+
 	var caller JsMap
 	if self.tracer {
 		if pc, file, line, ok := runtime.Caller(2); ok {

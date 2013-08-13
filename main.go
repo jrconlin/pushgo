@@ -24,6 +24,7 @@ var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
+	logging    *bool   = flag.Bool("logging", true, "Whether logging is enabled")
 	logger     *mozutil.HekaLogger
 	store      *storage.Storage
 )
@@ -59,6 +60,7 @@ func main() {
 	}
 
 	logger = mozutil.NewHekaLogger(config)
+	logger.Enabled = *logging
 	store = storage.New(config, logger)
 
 	// Initialize the common server.
