@@ -70,6 +70,12 @@ func ClientCount() int {
 	return int(cClients)
 }
 
+// report if there's a collision with the UAIDs
+func ClientCollision(uaid string) (collision bool) {
+    _, collision = Clients[uaid]
+    return collision
+}
+
 func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
 	// Perform whatever steps are needed to remotely wake the client.
 	// TODO: Perform whatever proprietary steps are required to remotely
