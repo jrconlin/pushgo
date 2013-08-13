@@ -142,6 +142,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 func (self *Storage) isFatal(err error) bool {
 	// if it has anything to do with the connection, restart the server.
 	// this is crappy, crappy behavior, but it's what go wants.
+    return false
 	if err == nil {
 		return false
 	}
