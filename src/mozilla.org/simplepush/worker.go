@@ -84,6 +84,7 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 	// reads to a separate go process.
 
 	var socket = sock.Socket
+
 	for {
 		var raw []byte
 		var buffer mozutil.JsMap
@@ -99,8 +100,12 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 			return
 		}
 
+		socket.SetReadDeadline(time.Now().Add(time.Duration(75) * time.Millisecond))
 		err := websocket.Message.Receive(socket, &raw)
 		if err != nil {
+			if strings.Contains(err.Error(), "i/o timeout") {
+				continue
+			}
 			self.log.Error("worker",
 				"Websocket Error",
 				mozutil.JsMap{"error": err.Error()})
@@ -179,10 +184,6 @@ func (self *Worker) Run(sock PushWS) {
 	for {
 		// We should shut down?
 		if self.stopped {
-			// Closing the socket should interrupt the sniffer if it's
-			// still running so that it shuts down
-			sock.Socket.Close()
-
 			// Pull any remaining commands off, ensure we don't wait around
 			select {
 			case <-sock.Ccmd:
@@ -273,6 +274,7 @@ func (self *Worker) Run(sock PushWS) {
 	}
 	self.log.Debug("worker", "Waiting for sniffer to shut-down", nil)
 	self.wg.Wait()
+	sock.Socket.Close()
 	self.log.Debug("worker", "Run has completed a shut-down", nil)
 }
 
