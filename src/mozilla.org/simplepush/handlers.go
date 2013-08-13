@@ -24,6 +24,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -335,6 +336,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   timer}
+	atomic.AddInt32(&cClients, 1)
 
 	sock.Logger.Info("main", "New socket connection detected", nil)
 	defer func(logger *mozutil.HekaLogger) {
@@ -343,10 +345,12 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			logger.Error("main", "Unknown error",
 				mozutil.JsMap{"error": r.(error).Error()})
 		}
+		// Clean-up the resources
+		HandleServerCommand(PushCommand{DIE, nil}, &sock)
+		atomic.AddInt32(&cClients, -1)
 	}(sock.Logger)
 
 	NewWorker(self.config).Run(sock)
-	HandleServerCommand(PushCommand{DIE, nil}, &sock)
 	self.logger.Debug("main", "Server for client shut-down", nil)
 }
 

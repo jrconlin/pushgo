@@ -82,6 +82,7 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
+
 	var socket = sock.Socket
 	for {
 		var raw []byte
@@ -91,7 +92,8 @@ func (self *Worker) sniffer(sock PushWS, in chan mozutil.JsMap, stopChan chan bo
 		if self.stopped {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
-			sock.Socket.Close()
+			close(stopChan)
+
 			// Indicate we shut down successfully
 			self.wg.Done()
 			return
@@ -181,7 +183,7 @@ func (self *Worker) Run(sock PushWS) {
 			// still running so that it shuts down
 			sock.Socket.Close()
 
-			//pull any remaining commands off, ensure we don't wait around
+			// Pull any remaining commands off, ensure we don't wait around
 			select {
 			case <-sock.Ccmd:
 				self.log.Info("worker", "Cleared messages from socket", nil)
@@ -190,10 +192,11 @@ func (self *Worker) Run(sock PushWS) {
 
 			break
 		}
+
 		select {
 		case <-stopChan:
-			// Notified by the sniffer thatn the connection is lost,
-			// which means stopped is set true
+			// Notified by the sniffer that the connection is lost, which
+			// means stopped is set true
 			continue
 		case cmd := <-sock.Ccmd:
 			// A new Push has happened. Flush out the data to the
@@ -212,6 +215,7 @@ func (self *Worker) Run(sock PushWS) {
 			}
 			// Indicate we will accept a command
 			sock.Acmd <- true
+
 		case buffer := <-in:
 			if len(buffer) > 0 {
 				self.log.Info("worker",
@@ -360,7 +364,8 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		Command: HELLO,
 		Arguments: mozutil.JsMap{
 			"uaid":  sock.Uaid,
-			"chids": data["channelIDs"]}}
+			"chids": data["channelIDs"]},
+	}
 	// blocking call back to the boss.
 	raw_result, args := HandleServerCommand(cmd, sock)
 	result := PushCommand{raw_result, args}

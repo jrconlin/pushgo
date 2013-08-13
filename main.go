@@ -34,8 +34,6 @@ func main() {
 	logger = mozutil.NewHekaLogger(config)
 	store = storage.New(config, logger)
 
-	simplepush.Clients = make(map[string]*simplepush.Client)
-
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
 	handlers := simplepush.NewHandler(config, logger, store)

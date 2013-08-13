@@ -200,6 +200,7 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 		"Storing record",
 		util.JsMap{"primarykey": pk,
 			"record": raw})
+
 	err = self.mc.Set(pk, raw, time.Second*time.Duration(ttl))
 	if err != nil {
 		self.isFatal(err)
