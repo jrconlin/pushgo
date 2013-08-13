@@ -190,6 +190,12 @@ func (self *Worker) Run(sock PushWS) {
 				self.log.Info("worker", "Cleared messages from socket", nil)
 			default:
 			}
+			// Pull any remaining buffers off
+			select {
+			case <-in:
+				self.log.Info("worker", "Cleared buffer from in chan", nil)
+			default:
+			}
 			break
 		}
 
