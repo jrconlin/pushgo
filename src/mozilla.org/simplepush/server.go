@@ -72,8 +72,8 @@ func ClientCount() int {
 
 // report if there's a collision with the UAIDs
 func ClientCollision(uaid string) (collision bool) {
-    _, collision = Clients[uaid]
-    return collision
+	_, collision = Clients[uaid]
+	return collision
 }
 
 func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
