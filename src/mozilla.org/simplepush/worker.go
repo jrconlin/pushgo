@@ -218,8 +218,8 @@ func (self *Worker) Run(sock *PushWS) {
 				mozutil.JsMap{"cmd": cmd.Command})
 
 			if cmd.Command == FLUSH {
-				self.log.Info("worker",
-					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
+				//self.log.Info("worker",
+				//	fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
 				if self.Flush(sock, 0) != nil {
 					break
 				}
@@ -234,11 +234,11 @@ func (self *Worker) Run(sock *PushWS) {
 				self.log.Info("worker", "Notified to stop", nil)
 				continue
 			}
-			if len(buffer) > 0 {
-				self.log.Info("worker",
-					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
-						len(buffer)), nil)
-			}
+			// if len(buffer) > 0 {
+			// 	self.log.Info("worker",
+			// 		fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
+			// 			len(buffer)), nil)
+			// }
 			if len(buffer) == 0 {
 				// Empty buffers are "pings"
 				buffer["messageType"] = "ping"
