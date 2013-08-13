@@ -3,4 +3,5 @@ if [ ! -e config.ini ]; then
     echo "Copying sample ini to config.ini"
     cp config.sample.ini config.ini
 fi
-LD_LIBRARY_PATH=/usr/local/lib GOPATH=`pwd` go run main.go
+echo LD_LIBRARY_PATH=/usr/local/lib GOPATH=`pwd` go run main.go $*
+LD_LIBRARY_PATH=/usr/local/lib GOPATH=`pwd` go run main.go $*

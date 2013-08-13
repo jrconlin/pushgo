@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+//	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,9 +123,10 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		int(config["memcache.pool_size"].(int64)),
 		gomc.ENCODING_JSON)
 	if err != nil {
-		logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
+		logger.Critical("storage", "CRITICAL HIT!",
 			util.JsMap{"error": err})
-		log.Fatal("### RESTARTING ### %s", err)
+        // make this a config option!
+		//log.Fatal("### RESTARTING ### %s", err)
 	}
 	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
@@ -156,7 +157,7 @@ func (self *Storage) isFatal(err error) bool {
 	default:
 		self.log.Critical("storage", "CRITICAL HIT! RESTARTING!",
 			util.JsMap{"error": err})
-		log.Fatal("### RESTARTING ### ", err)
+//		log.Fatal("### RESTARTING ### ", err)
 		return true
 	}
 }
@@ -437,7 +438,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 
 	// Result has no len or counter.
 	resCount := 0
-	var i string
+    var i string
 	for _, key := range items {
 		if err := recs.Get(key, &i); err == nil {
 			resCount = resCount + 1

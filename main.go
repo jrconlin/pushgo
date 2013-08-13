@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+    "os/signal"
 	"runtime/pprof"
 )
 
@@ -34,12 +35,26 @@ func main() {
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	if *profile != "" {
+        log.Printf("Creating profile...")
 		f, err := os.Create(*profile)
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer func() {
+            log.Printf("Closing profile...")
+             pprof.StopCPUProfile()
+        }()
 		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
+        c := make(chan os.Signal, 1)
+        signal.Notify(c, os.Interrupt)
+        go func(){
+            for sig := range c {
+                log.Printf("Captured %v", sig)
+                log.Printf("Terminating Profile")
+                pprof.StopCPUProfile()
+                os.Exit(1)
+            }
+        }()
 	}
 
 	logger = mozutil.NewHekaLogger(config)
