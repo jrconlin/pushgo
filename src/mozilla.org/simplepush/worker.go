@@ -189,12 +189,6 @@ func (self *Worker) Run(sock PushWS) {
 				self.log.Info("worker", "Cleared messages from socket", nil)
 			default:
 			}
-			// Pull any remaining buffers off
-			select {
-			case <-in:
-				self.log.Info("worker", "Cleared buffer from in chan", nil)
-			default:
-			}
 			break
 		}
 
@@ -278,7 +272,22 @@ func (self *Worker) Run(sock PushWS) {
 		}
 	}
 	self.log.Debug("worker", "Waiting for sniffer to shut-down", nil)
-	self.wg.Wait()
+	snifDone := make(chan bool)
+	go func() {
+		self.wg.Wait()
+		close(snifDone)
+	}()
+	// Wait for sniffer to shut-down in another goroutine and be ready
+	// to pull off any remaining buffers as needed until the sniffer
+	// finishes
+	waiting := true
+	for waiting {
+		select {
+		case _, waiting = <-snifDone:
+		case <-in:
+			self.log.Info("worker", "Cleared remaining buffer", nil)
+		}
+	}
 	sock.Socket.Close()
 	self.log.Debug("worker", "Run has completed a shut-down", nil)
 }
