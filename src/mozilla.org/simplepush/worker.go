@@ -49,7 +49,7 @@ const (
 // Allow [0-9a-z_-]/i as valid ChannelID characters.
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^\\w-]")
 
-func NewWorker(config mozutil.JsMap) *Worker {
+func NewWorker(config mozutil.JsMap, logger *mozutil.HekaLogger) *Worker {
 	switch config["db.max_channels"].(type) {
 	case string:
 		vi, _ := config["db.max_channels"]
@@ -69,7 +69,7 @@ func NewWorker(config mozutil.JsMap) *Worker {
 	}
 
 	return &Worker{
-		log:     mozutil.NewHekaLogger(config),
+		log:     logger,
 		state:   INACTIVE,
 		filter:  workerFilter,
 		config:  config,

@@ -350,7 +350,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		atomic.AddInt32(&cClients, -1)
 	}(sock.Logger)
 
-	NewWorker(self.config).Run(&sock)
+	NewWorker(self.config, self.logger).Run(&sock)
 	self.logger.Debug("main", "Server for client shut-down", nil)
 }
 
