@@ -27,7 +27,7 @@ type HekaLogger struct {
 	hostname string
 	conf     JsMap
 	tracer   bool
-    filter   int64
+	filter   int64
 }
 
 const (
@@ -46,7 +46,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	var logname string
 	var err error
 	var tracer bool
-    var filter int64
+	var filter int64
 	pid := int32(os.Getpid())
 	encoder = nil
 	sender = nil
@@ -68,7 +68,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.show_caller"]; ok {
 		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
-    filter, _ = strconv.ParseInt(MzGet(conf, "log.filter", "10"),0, 0 )
+	filter, _ = strconv.ParseInt(MzGet(conf, "log.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
@@ -85,7 +85,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		hostname: conf["heka.current_host"].(string),
 		conf:     conf,
 		tracer:   tracer,
-        filter:   filter}
+		filter:   filter}
 }
 
 func addFields(msg *message.Message, fields JsMap) (err error) {
@@ -150,16 +150,16 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	if len(payload) > 0 {
 		msg.SetPayload(payload)
 	}
-    /*
-	err = addFields(msg, fields)
-	if err != nil {
-		return err
-	}
-	err = addFields(msg, caller)
-	if err != nil {
-		return err
-	}
-    */
+	/*
+		err = addFields(msg, fields)
+		if err != nil {
+			return err
+		}
+		err = addFields(msg, caller)
+		if err != nil {
+			return err
+		}
+	*/
 	err = self.encoder.EncodeMessageStream(msg, &stream)
 	if err != nil {
 		log.Fatal("ERROR: Could not encode log message (%s)", err)

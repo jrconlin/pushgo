@@ -40,19 +40,19 @@ func main() {
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
 
 	if *profile != "" {
-        log.Printf("Creating profile...")
+		log.Printf("Creating profile...")
 		f, err := os.Create(*profile)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer func() {
-            log.Printf("Closing profile...")
-             pprof.StopCPUProfile()
-        }()
+			log.Printf("Closing profile...")
+			pprof.StopCPUProfile()
+		}()
 		pprof.StartCPUProfile(f)
 	}
-//  Disable logging for high capacity runs
-//	logger = mozutil.NewHekaLogger(config)
+	//  Disable logging for high capacity runs
+	//	logger = mozutil.NewHekaLogger(config)
 	if *memProfile != "" {
 		defer func() {
 			profFile, err := os.Create(*memProfile)
@@ -82,10 +82,10 @@ func main() {
 	port := mozutil.MzGet(config, "port", "8080")
 
 	// Hoist the main sail
-    if logger != nil {
-	logger.Info("main",
-		fmt.Sprintf("listening on %s:%s", host, port), nil)
-    }
+	if logger != nil {
+		logger.Info("main",
+			fmt.Sprintf("listening on %s:%s", host, port), nil)
+	}
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
@@ -102,9 +102,9 @@ func main() {
 			panic("ListenAndServe: " + err.Error())
 		}
 	case <-sigChan:
-        if logger != nil {
-    		logger.Info("main", "Recieved signal, shutting down.", nil)
-        }
+		if logger != nil {
+			logger.Info("main", "Recieved signal, shutting down.", nil)
+		}
 	}
 }
 
