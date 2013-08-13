@@ -15,7 +15,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime/pprof"
+	"syscall"
 )
 
 var (
@@ -24,6 +26,8 @@ var (
 	logger     *mozutil.HekaLogger
 	store      *storage.Storage
 )
+
+const SIGUSR1 = syscall.SIGUSR1
 
 // -- main
 func main() {
@@ -63,9 +67,23 @@ func main() {
 	// Hoist the main sail
 	logger.Info("main",
 		fmt.Sprintf("listening on %s:%s", host, port), nil)
-	err := http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
-	if err != nil {
-		panic("ListenAndServe: " + err.Error())
+
+	// wait for sigint
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGHUP, SIGUSR1)
+
+	errChan := make(chan error)
+	go func() {
+		errChan <- http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
+	}()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			panic("ListenAndServe: " + err.Error())
+		}
+	case <-sigChan:
+		logger.Info("main", "Recieved signal, shutting down.", nil)
 	}
 }
 
