@@ -43,7 +43,7 @@ var serverSingleton *Serv
 
 type Serv struct {
 	config mozutil.JsMap
-	log    *mozutil.HekaLogger
+	logger    *mozutil.HekaLogger
 	key    []byte
 }
 
@@ -54,7 +54,7 @@ func NewServer(config mozutil.JsMap, logger *mozutil.HekaLogger) *Serv {
 	}
 	return &Serv{config: config,
 		key: key,
-		log: logger}
+		logger: logger}
 }
 
 func InitServer(config mozutil.JsMap, logger *mozutil.HekaLogger) (err error) {
@@ -110,7 +110,9 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	var uaid string
 
 	args := cmd.Arguments.(mozutil.JsMap)
-	self.log.Info("server", "handling 'hello'", args)
+    if self.logger != nil {
+    	self.logger.Info("server", "handling 'hello'", args)
+    }
 
 	// TODO: If the client needs to connect to a different server,
 	// Look up the appropriate server (based on UAID)
@@ -121,19 +123,25 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	// Raw client
 	if args["uaid"] == "" {
 		uaid, _ = mozutil.GenUUID4()
-		self.log.Debug("server",
+        if self.logger != nil {
+		self.logger.Debug("server",
 			"Generating new UAID",
 			mozutil.JsMap{"uaid": uaid})
+        }
 	} else {
 		uaid = args["uaid"].(string)
-		self.log.Debug("server",
+        if self.logger != nil {
+		self.logger.Debug("server",
 			"Using existing UAID",
 			mozutil.JsMap{"uaid": uaid})
+        }
 		delete(args, "uaid")
 	}
 
 	prop := self.Set_proprietary_info(args)
-	self.log.Debug("server", "Proprietary Info", mozutil.JsMap{"info": prop})
+    if self.logger != nil {
+	self.logger.Debug("server", "Proprietary Info", mozutil.JsMap{"info": prop})
+}
 
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
@@ -163,10 +171,12 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	uaid := sock.Uaid
-	self.log.Debug("server", "Cleaning up socket", mozutil.JsMap{"uaid": uaid})
-	self.log.Info("timer", "Socket connection terminated", mozutil.JsMap{
+    if self.logger != nil {
+    	self.logger.Debug("server", "Cleaning up socket", mozutil.JsMap{"uaid": uaid})
+	    self.logger.Info("timer", "Socket connection terminated", mozutil.JsMap{
 		"uaid":     uaid,
 		"duration": time.Now().Sub(sock.Born).Nanoseconds()})
+    }
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
@@ -199,10 +209,12 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mo
 		btoken := []byte(token)
 		token, err = Encode(self.key, btoken)
 		if err != nil {
-			self.log.Error("server",
+            if self.logger != nil {
+			self.logger.Error("server",
 				"Token Encoding error",
 				mozutil.JsMap{"uaid": sock.Uaid,
 					"channelID": args["channelID"]})
+                }
 			return 500, nil
 		}
 
@@ -214,12 +226,14 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mo
 		self.config["port"].(string))
 	args["pushEndpoint"] = strings.Replace(args["pushEndpoint"].(string),
 		"<current_host>", host, -1)
-	self.log.Info("server",
+       if self.logger != nil {
+	self.logger.Info("server",
 		"Generated Endpoint",
 		mozutil.JsMap{"uaid": sock.Uaid,
 			"channelID": args["channelID"],
 			"token":     token,
 			"endpoint":  args["pushEndpoint"]})
+        }
 	return 200, args
 }
 
@@ -227,10 +241,12 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 	defer func(client *Client) {
 		r := recover()
 		if r != nil {
-			self.log.Error("server",
+            if self.logger != nil {
+			self.logger.Error("server",
 				"requestFlush failed",
 				mozutil.JsMap{"error": r,
 					"uaid": client.UAID})
+                }
 			if client != nil {
 				self.ClientPing(client.Prop)
 			}
@@ -239,9 +255,11 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 	}(client)
 
 	if client != nil {
-		self.log.Info("server",
+        if self.logger != nil {
+		self.logger.Info("server",
 			"Requesting flush",
 			mozutil.JsMap{"uaid": client.UAID})
+        }
 
 		// Ensure we're allowed to send a command
 		select {
@@ -249,8 +267,10 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 			client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
 				Arguments: &mozutil.JsMap{"uaid": client.UAID}}
 		case <-time.After(time.Duration(50) * time.Millisecond):
-			self.log.Info("server", "Client unavailable to recieve command",
+            if self.logger != nil {
+			self.logger.Info("server", "Client unavailable to recieve command",
 				mozutil.JsMap{"uaid": client.UAID})
+            }
 		}
 	}
 	return nil
@@ -267,9 +287,11 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments mo
 }
 
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args mozutil.JsMap) {
-	self.log.Debug("server",
+    if self.logger != nil {
+	self.logger.Debug("server",
 		"Handling command",
 		mozutil.JsMap{"cmd": cmd})
+    }
 	var ret mozutil.JsMap
 	if cmd.Arguments != nil {
 		args = cmd.Arguments.(mozutil.JsMap)
@@ -279,20 +301,30 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	switch int(cmd.Command) {
 	case HELLO:
-		self.log.Debug("server", "Handling HELLO event", nil)
+        if self.logger != nil {
+		self.logger.Debug("server", "Handling HELLO event", nil)
+    }
 		result, ret = self.Hello(cmd, sock)
 	case UNREG:
-		self.log.Debug("server", "Handling UNREG event", nil)
+        if self.logger != nil {
+		self.logger.Debug("server", "Handling UNREG event", nil)
+    }
 		result, ret = self.Unreg(cmd, sock)
 	case REGIS:
-		self.log.Debug("server", "Handling REGIS event", nil)
+        if self.logger != nil {
+		self.logger.Debug("server", "Handling REGIS event", nil)
+    }
 		result, ret = self.Regis(cmd, sock)
 	case DIE:
-		self.log.Debug("server", "Cleanup", nil)
+        if self.logger != nil {
+		self.logger.Debug("server", "Cleanup", nil)
+    }
 		self.Bye(sock)
 		return 0, nil
 	case PURGE:
-		self.log.Debug("Server", "Purge", nil)
+        if self.logger != nil {
+		self.logger.Debug("Server", "Purge", nil)
+    }
 		self.Purge(cmd, sock)
 	}
 

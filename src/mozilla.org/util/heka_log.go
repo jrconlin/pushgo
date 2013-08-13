@@ -27,6 +27,7 @@ type HekaLogger struct {
 	hostname string
 	conf     JsMap
 	tracer   bool
+    filter   int64
 }
 
 const (
@@ -45,6 +46,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	var logname string
 	var err error
 	var tracer bool
+    var filter int64
 	pid := int32(os.Getpid())
 	encoder = nil
 	sender = nil
@@ -66,6 +68,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.show_caller"]; ok {
 		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
+    filter, _ = strconv.ParseInt(MzGet(conf, "log.filter", "10"),0, 0 )
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
@@ -81,12 +84,12 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		pid:      pid,
 		hostname: conf["heka.current_host"].(string),
 		conf:     conf,
-		tracer:   tracer}
+		tracer:   tracer,
+        filter:   filter}
 }
 
 func addFields(msg *message.Message, fields JsMap) (err error) {
 	for key, ival := range fields {
-		log.Printf("adding %s => %s", key, ival)
 		var field *message.Field
 		if ival == nil {
 			continue
@@ -94,7 +97,7 @@ func addFields(msg *message.Message, fields JsMap) (err error) {
 		if key == "" {
 			continue
 		}
-		field, err = message.NewField(key, ival, fmt.Sprintf("%s", ival))
+		field, err = message.NewField(key, ival, ival.(string))
 		if err != nil {
 			return err
 		}
@@ -116,12 +119,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 		}
 	}
 
-	var base_level int64
-
-	base_level, _ = strconv.ParseInt(MzGet(self.conf, "log.filter", "10"),
-		10, 0)
-
-	if int(level) <= int(base_level) {
+	if int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
 			dump += fmt.Sprintf(" {%s}", fields)
@@ -130,7 +128,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
 				caller["line"], caller["name"])
 		}
-		log.Printf(dump)
+		log.Printf(payload)
 	}
 
 	// Don't send an error if there's nothing to do
@@ -151,6 +149,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	if len(payload) > 0 {
 		msg.SetPayload(payload)
 	}
+    /*
 	err = addFields(msg, fields)
 	if err != nil {
 		return err
@@ -159,6 +158,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	if err != nil {
 		return err
 	}
+    */
 	err = self.encoder.EncodeMessageStream(msg, &stream)
 	if err != nil {
 		log.Fatal("ERROR: Could not encode log message (%s)", err)

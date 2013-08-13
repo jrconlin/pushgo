@@ -48,19 +48,9 @@ func main() {
              pprof.StopCPUProfile()
         }()
 		pprof.StartCPUProfile(f)
-        c := make(chan os.Signal, 1)
-        signal.Notify(c, os.Interrupt)
-        go func(){
-            for sig := range c {
-                log.Printf("Captured %v", sig)
-                log.Printf("Terminating Profile")
-                pprof.StopCPUProfile()
-                os.Exit(1)
-            }
-        }()
 	}
 
-	logger = mozutil.NewHekaLogger(config)
+//	logger = mozutil.NewHekaLogger(config)
 	store = storage.New(config, logger)
 
 	// Initialize the common server.
@@ -79,8 +69,10 @@ func main() {
 	port := mozutil.MzGet(config, "port", "8080")
 
 	// Hoist the main sail
+    if logger != nil {
 	logger.Info("main",
 		fmt.Sprintf("listening on %s:%s", host, port), nil)
+    }
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
@@ -97,7 +89,9 @@ func main() {
 			panic("ListenAndServe: " + err.Error())
 		}
 	case <-sigChan:
-		logger.Info("main", "Recieved signal, shutting down.", nil)
+        if logger != nil {
+    		logger.Info("main", "Recieved signal, shutting down.", nil)
+        }
 	}
 }
 
