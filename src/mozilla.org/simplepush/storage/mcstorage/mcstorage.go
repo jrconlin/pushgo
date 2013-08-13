@@ -409,15 +409,18 @@ func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error)
 		if err != nil {
 			return err
 		}
-		rec, err := self.fetchRec(pk)
-		if err == nil {
-			rec["s"] = DELETED
-			err = self.storeRec(pk, rec)
-		} else {
-			if self.logger != nil {
-				self.logger.Error("storage",
-					"Could not delete Channel",
-					util.JsMap{"primarykey": pk, "error": err})
+		for x := 0; x < 3; x++ {
+			rec, err := self.fetchRec(pk)
+			if err == nil {
+				rec["s"] = DELETED
+				err = self.storeRec(pk, rec)
+				break
+			} else {
+				if self.logger != nil {
+					self.logger.Error("storage",
+						"Could not delete Channel",
+						util.JsMap{"primarykey": pk, "error": err})
+				}
 			}
 		}
 	} else {

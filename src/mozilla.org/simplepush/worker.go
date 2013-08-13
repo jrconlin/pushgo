@@ -190,7 +190,9 @@ func (self *Worker) Run(sock *PushWS) {
 		if r := recover(); r != nil {
 			if sock.Logger != nil {
 				sock.Logger.Error("worker", r.(error).Error(), nil)
-			}
+			} else {
+                log.Printf("Worker encountered unknown error '%s'", r)
+            }
 		}
 		sock.Socket.Close()
 		return
@@ -324,7 +326,9 @@ func (self *Worker) Run(sock *PushWS) {
 	self.wg.Wait()
 	if self.logger != nil {
 		self.logger.Debug("worker", "Run has completed a shut-down", nil)
-	}
+	} else {
+        log.Printf("Worker closing connection for %s", sock.Uaid)
+    }
 }
 
 // Associate the UAID for this socket connection (and flush any data that
