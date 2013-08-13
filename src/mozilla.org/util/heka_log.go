@@ -108,6 +108,7 @@ func addFields(msg *message.Message, fields JsMap) (err error) {
 
 //TODO: Change the last arg to be something like fields ...interface{}
 func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+
 	var caller JsMap
 	if self.tracer {
 		if pc, file, line, ok := runtime.Caller(2); ok {

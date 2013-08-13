@@ -23,6 +23,8 @@ import (
 var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
+	memProfile *string = flag.String("memProfile", "", "Profile file output")
+	logging    *bool   = flag.Bool("logging", true, "Whether logging is enabled")
 	logger     *mozutil.HekaLogger
 	store      *storage.Storage
 )
@@ -49,8 +51,19 @@ func main() {
         }()
 		pprof.StartCPUProfile(f)
 	}
-
+//  Disable logging for high capacity runs
 //	logger = mozutil.NewHekaLogger(config)
+	if *memProfile != "" {
+		defer func() {
+			profFile, err := os.Create(*memProfile)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			pprof.WriteHeapProfile(profFile)
+			profFile.Close()
+		}()
+	}
+
 	store = storage.New(config, logger)
 
 	// Initialize the common server.

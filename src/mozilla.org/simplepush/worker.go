@@ -230,8 +230,9 @@ func (self *Worker) Run(sock *PushWS) {
             }
 
 			if cmd.Command == FLUSH {
-				if self.logger != nil { self.logger.Info("worker",
-					fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
+				if self.logger != nil {
+                    self.logger.Info("worker",
+					    fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
                 }
 				if self.Flush(sock, 0) != nil {
 					break
@@ -249,12 +250,10 @@ func (self *Worker) Run(sock *PushWS) {
                 }
 				continue
 			}
-			if len(buffer) > 0 {
-				if self.logger != nil {
+			if len(buffer) > 0 && self.logger != nil {
                     self.logger.Info("worker",
 					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
 						len(buffer)), nil)
-                    }
 			}
 			if len(buffer) == 0 {
 				// Empty buffers are "pings"
