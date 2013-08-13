@@ -355,6 +355,9 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		if len(sock.Uaid) == 0 {
 			forceReset = forceReset || true
 		}
+        if ClientCollision(sock.Uaid) {
+            forceReset = true
+        }
 		if num := len(data["channelIDs"].([]interface{})); num > 0 {
 			// are there a suspicious number of channels?
 			if num > self.config["db.max_channels"].(int) {
