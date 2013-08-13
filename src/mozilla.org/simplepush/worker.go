@@ -77,38 +77,43 @@ func NewWorker(config mozutil.JsMap) *Worker {
 		wg:      new(sync.WaitGroup)}
 }
 
-func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap, stopChan chan bool) {
+func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
-	var socket = sock.Socket
+	var (
+		socket        = sock.Socket
+		raw    []byte = make([]byte, 300)
+		buffer mozutil.JsMap
+		err    error
+	)
 
 	for {
-		var raw []byte
-		var buffer mozutil.JsMap
+		raw = raw[:0]
+		err = nil
 
 		// Were we told to shut down?
 		if self.stopped {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
-			close(stopChan)
+			close(in)
 
 			// Indicate we shut down successfully
 			self.wg.Done()
 			return
 		}
 
-		socket.SetReadDeadline(time.Now().Add(time.Duration(75) * time.Millisecond))
-		err := websocket.Message.Receive(socket, &raw)
+		err = websocket.Message.Receive(socket, &raw)
 		if err != nil {
-			if strings.Contains(err.Error(), "i/o timeout") {
+			long_err := err.Error()
+			self.stopped = true
+			if strings.Contains(long_err, "EOF") || strings.Contains(long_err, "closed") {
 				continue
 			}
 			self.log.Error("worker",
 				"Websocket Error",
 				mozutil.JsMap{"error": err.Error()})
-			self.stopped = true
 			continue
 		}
 		if len(raw) > 0 {
@@ -155,8 +160,7 @@ func (self *Worker) Run(sock *PushWS) {
 	// along with a stopChan so it can notify us if it shut down
 	// suddenly
 	self.wg.Add(1)
-	stopChan := make(chan bool)
-	go self.sniffer(sock, in, stopChan)
+	go self.sniffer(sock, in)
 
 	if timeout_s, ok := self.config["socket.hello_timeout"]; ok {
 		timeout, _ := time.ParseDuration(timeout_s.(string))
@@ -180,24 +184,33 @@ func (self *Worker) Run(sock *PushWS) {
 	// Indicate we will accept a command
 	sock.Acmd <- true
 
+	var (
+		cmd    PushCommand
+		buffer mozutil.JsMap
+		ok     bool
+	)
+
 	for {
 		// We should shut down?
 		if self.stopped {
+			// Close the socket to force the sniffer down
+			sock.Socket.Close()
+
 			// Pull any remaining commands off, ensure we don't wait around
 			select {
 			case <-sock.Ccmd:
 				self.log.Info("worker", "Cleared messages from socket", nil)
 			default:
 			}
+			select {
+			case <-in:
+			default:
+			}
 			break
 		}
 
 		select {
-		case <-stopChan:
-			// Notified by the sniffer that the connection is lost, which
-			// means stopped is set to true
-			continue
-		case cmd := <-sock.Ccmd:
+		case cmd = <-sock.Ccmd:
 			// A new Push has happened. Flush out the data to the
 			// device (and potentially remotely wake it if that fails)
 			self.log.Info("worker",
@@ -215,7 +228,12 @@ func (self *Worker) Run(sock *PushWS) {
 			// Indicate we will accept a command
 			sock.Acmd <- true
 
-		case buffer := <-in:
+		case buffer, ok = <-in:
+			if !ok {
+				// Notified by the sniffer to stop
+				self.log.Info("worker", "Notified to stop", nil)
+				continue
+			}
 			if len(buffer) > 0 {
 				self.log.Info("worker",
 					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
@@ -272,23 +290,7 @@ func (self *Worker) Run(sock *PushWS) {
 		}
 	}
 	self.log.Debug("worker", "Waiting for sniffer to shut-down", nil)
-	snifDone := make(chan bool)
-	go func() {
-		self.wg.Wait()
-		close(snifDone)
-	}()
-	// Wait for sniffer to shut-down in another goroutine and be ready
-	// to pull off any remaining buffers as needed until the sniffer
-	// finishes
-	waiting := true
-	for waiting {
-		select {
-		case _, waiting = <-snifDone:
-		case <-in:
-			self.log.Info("worker", "Cleared remaining buffer", nil)
-		}
-	}
-	sock.Socket.Close()
+	self.wg.Wait()
 	self.log.Debug("worker", "Run has completed a shut-down", nil)
 }
 
