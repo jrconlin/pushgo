@@ -5,18 +5,22 @@ import (
 	"net/http"
 )
 
-var ChannelExistsError = errors.New("Channel Already Exists")
-var InvalidChannelError = errors.New("No Channel ID Specified")
-var InvalidCommandError = errors.New("Invalid Command")
-var InvalidDataError = errors.New("An Invalid value was specified")
-var InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
-var MissingDataError = errors.New("Missing required fields for command")
-var NoChannelError = errors.New("No Channel ID Specified")
-var NoDataToStoreError = errors.New("No Data to Store")
-var NoRecordWarning = errors.New("No record found")
-var ServerError = errors.New("An unknown Error occured")
-var UnknownCommandError = errors.New("Unknown command")
+var (
+	ChannelExistsError     = errors.New("Channel Already Exists")
+	InvalidChannelError    = errors.New("No Channel ID Specified")
+	InvalidCommandError    = errors.New("Invalid Command")
+	InvalidDataError       = errors.New("An Invalid value was specified")
+	InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
+	MissingDataError       = errors.New("Missing required fields for command")
+	NoChannelError         = errors.New("No Channel ID Specified")
+	NoDataToStoreError     = errors.New("No Data to Store")
+	NoRecordWarning        = errors.New("No record found")
+	ServerError            = errors.New("An unknown Error occured")
+	UnknownCommandError    = errors.New("Unknown command")
+)
 
+// Transform an error into a HTTP status int and message suitable for
+// printing to the web
 func ErrToStatus(err error) (status int, message string) {
 	status = 200
 	if err != nil {

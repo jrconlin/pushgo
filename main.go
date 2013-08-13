@@ -16,17 +16,16 @@ import (
 	"net/http"
 )
 
-var logger *mozutil.HekaLogger
-var store *storage.Storage
+var (
+	configFile *string = flag.String("config", "config.ini", "Configuration File")
+	logger     *mozutil.HekaLogger
+	store      *storage.Storage
+)
 
 // -- main
 func main() {
-
-	var configFile string
-
-	flag.StringVar(&configFile, "config", "config.ini", "Configuration File")
 	flag.Parse()
-	config := mozutil.MzGetConfig(configFile)
+	config := mozutil.MzGetConfig(*configFile)
 
 	config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])

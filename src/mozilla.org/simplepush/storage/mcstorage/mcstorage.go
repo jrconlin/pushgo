@@ -50,6 +50,8 @@ func (e *StorageError) Error() string {
 	return "StorageError: " + e.err.Error()
 }
 
+// Returns the location of a string in a slice of strings or -1 if
+// the string isn't present in the slice
 func indexOf(list []string, val string) (index int) {
 	for index, v := range list {
 		if v == val {
@@ -57,6 +59,83 @@ func indexOf(list []string, val string) (index int) {
 		}
 	}
 	return -1
+}
+
+// Returns a new slice with the string at position pos removed or
+// an equivilant slice if the pos is not in the bounds of the slice
+func remove(list []string, pos int) (res []string) {
+	if pos < 0 || pos == len(list) {
+		return list
+	}
+	return append(list[:pos], list[pos+1:]...)
+}
+
+func ResolvePK(pk string) (uaid, appid string, err error) {
+	items := strings.SplitN(pk, ".", 2)
+	if len(items) < 2 {
+		return pk, "", nil
+	}
+	return items[0], items[1], nil
+}
+
+func GenPK(uaid, appid string) (pk string, err error) {
+	pk = fmt.Sprintf("%s.%s", uaid, appid)
+	return pk, nil
+}
+
+func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
+	config = opts
+	var ok bool
+
+	if _, ok = config["memcache.server"]; !ok {
+		config["memcache.server"] = "127.0.0.1:11211"
+	}
+
+	if _, ok = config["memcache.pool_size"]; !ok {
+		config["memcache.pool_size"] = "100"
+	}
+	config["memcache.pool_size"], _ =
+		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0)
+	if _, ok = config["db.timeout_live"]; !ok {
+		config["db.timeout_live"] = "259200"
+	}
+
+	if _, ok = config["db.timeout_reg"]; !ok {
+		config["db.timeout_reg"] = "10800"
+	}
+
+	if _, ok = config["db.timeout_del"]; !ok {
+		config["db.timeout_del"] = "86400"
+	}
+	if _, ok = config["shard.default_host"]; !ok {
+		config["shard.default_host"] = "localhost"
+	}
+	if _, ok = config["shard.current_host"]; !ok {
+		config["shard.current_host"] = config["shard.default_host"]
+	}
+	if _, ok = config["shard.prefix"]; !ok {
+		config["shard.prefix"] = "_h-"
+	}
+
+	logger.Info("storage", "Creating new gomc handler", nil)
+	mc, err := gomc.NewClient(strings.Split(
+		config["memcache.server"].(string), ","),
+		int(config["memcache.pool_size"].(int64)),
+		gomc.ENCODING_JSON)
+	if err != nil {
+		logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
+			util.JsMap{"error": err})
+		log.Fatal("### RESTARTING ### %s", err)
+	}
+	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
+	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+
+	return &Storage{mc: mc,
+		config: config,
+		log:    logger,
+		thrash: 0}
 }
 
 func (self *Storage) isFatal(err error) bool {
@@ -80,19 +159,6 @@ func (self *Storage) isFatal(err error) bool {
 		log.Fatal("### RESTARTING ### ", err)
 		return true
 	}
-}
-
-func ResolvePK(pk string) (uaid, appid string, err error) {
-	items := strings.SplitN(pk, ".", 2)
-	if len(items) < 2 {
-		return pk, "", nil
-	}
-	return items[0], items[1], nil
-}
-
-func GenPK(uaid, appid string) (pk string, err error) {
-	pk = fmt.Sprintf("%s.%s", uaid, appid)
-	return pk, nil
 }
 
 func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
@@ -211,62 +277,6 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 	return err
 }
 
-func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
-
-	config = opts
-	var ok bool
-
-	if _, ok = config["memcache.server"]; !ok {
-		config["memcache.server"] = "127.0.0.1:11211"
-	}
-
-	if _, ok = config["memcache.pool_size"]; !ok {
-		config["memcache.pool_size"] = "100"
-	}
-	config["memcache.pool_size"], _ =
-		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0)
-	if _, ok = config["db.timeout_live"]; !ok {
-		config["db.timeout_live"] = "259200"
-	}
-
-	if _, ok = config["db.timeout_reg"]; !ok {
-		config["db.timeout_reg"] = "10800"
-	}
-
-	if _, ok = config["db.timeout_del"]; !ok {
-		config["db.timeout_del"] = "86400"
-	}
-	if _, ok = config["shard.default_host"]; !ok {
-		config["shard.default_host"] = "localhost"
-	}
-	if _, ok = config["shard.current_host"]; !ok {
-		config["shard.current_host"] = config["shard.default_host"]
-	}
-	if _, ok = config["shard.prefix"]; !ok {
-		config["shard.prefix"] = "_h-"
-	}
-
-	logger.Info("storage", "Creating new gomc handler", nil)
-	mc, err := gomc.NewClient(strings.Split(
-		config["memcache.server"].(string), ","),
-		int(config["memcache.pool_size"].(int64)),
-		gomc.ENCODING_JSON)
-	if err != nil {
-		logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
-			util.JsMap{"error": err})
-		log.Fatal("### RESTARTING ### %s", err)
-	}
-	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
-	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
-
-	return &Storage{mc: mc,
-		config: config,
-		log:    logger,
-		thrash: 0}
-}
-
 func (self *Storage) Close() {
 	self.mc.Close()
 }
@@ -356,16 +366,6 @@ func (self *Storage) RegisterAppID(uaid, appid string, vers int64) (err error) {
 		return err
 	}
 	return nil
-}
-
-func remove(list []string, pos int) (res []string) {
-	if pos < 0 {
-		return list
-	}
-	if pos == len(list) {
-		return list[:pos]
-	}
-	return append(list[:pos], list[pos+1:]...)
 }
 
 func (self *Storage) DeleteAppID(uaid, appid string, clearOnly bool) (err error) {

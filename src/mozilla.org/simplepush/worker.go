@@ -189,14 +189,13 @@ func (self *Worker) Run(sock PushWS) {
 				self.log.Info("worker", "Cleared messages from socket", nil)
 			default:
 			}
-
 			break
 		}
 
 		select {
 		case <-stopChan:
 			// Notified by the sniffer that the connection is lost, which
-			// means stopped is set true
+			// means stopped is set to true
 			continue
 		case cmd := <-sock.Ccmd:
 			// A new Push has happened. Flush out the data to the
