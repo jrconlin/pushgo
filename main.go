@@ -23,6 +23,7 @@ import (
 var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
+	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logger     *mozutil.HekaLogger
 	store      *storage.Storage
 )
@@ -44,6 +45,17 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
+	}
+
+	if *memProfile != "" {
+		defer func() {
+			profFile, err := os.Create(*memProfile)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			pprof.WriteHeapProfile(profFile)
+			profFile.Close()
+		}()
 	}
 
 	logger = mozutil.NewHekaLogger(config)
