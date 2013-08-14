@@ -97,7 +97,7 @@ func addFields(msg *message.Message, fields JsMap) (err error) {
 		if key == "" {
 			continue
 		}
-		field, err = message.NewField(key, ival, ival.(string))
+		field, err = message.NewField(key, ival, fmt.Sprintf("%s", ival))
 		if err != nil {
 			return err
 		}

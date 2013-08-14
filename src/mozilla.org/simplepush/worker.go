@@ -68,9 +68,6 @@ func NewWorker(config mozutil.JsMap, logger *mozutil.HekaLogger) *Worker {
 			pingInterval = int64(pDir.Seconds())
 		}
 	}
-	if pingInterval == 0 {
-		pingInterval = int64((time.Duration(20) * time.Second).Seconds())
-	}
 
 	return &Worker{
 		logger:      logger,
@@ -419,7 +416,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		}
 		if num := len(data["channelIDs"].([]interface{})); num > 0 {
 			// are there a suspicious number of channels?
-			if num > self.config["db.max_channels"].(int) {
+			if int64(num) > self.maxChannels {
 				forceReset = forceReset || true
 			}
 			if !sock.Store.IsKnownUaid(sock.Uaid) {
@@ -645,7 +642,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 }
 
 func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
-	if int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
+	if self.pingInt > 0 && int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		if self.logger != nil {
 			self.logger.Error("worker", fmt.Sprintf("Client sending too many pings %s", source), nil)
