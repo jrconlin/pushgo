@@ -187,7 +187,8 @@ func (self *Worker) Run(sock *PushWS) {
 			func() {
 				if sock.Uaid == "" {
 					if self.logger != nil {
-						self.logger.Error("worker", "Idle hello. Closing socket", nil)
+						self.logger.Error("worker",
+							"Idle connection. Closing socket", nil)
 					}
 					sock.Socket.Close()
 				}
@@ -321,6 +322,8 @@ func (self *Worker) Run(sock *PushWS) {
 			if err != nil {
 				if self.logger != nil {
 					self.logger.Debug("worker", "Run returned error", nil)
+				} else {
+					log.Printf("Unknown error occurred %s", err)
 				}
 				self.handleError(sock, buffer, err)
 				self.stopped = true
@@ -620,6 +623,8 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 		if self.logger != nil {
 			self.logger.Error("worker",
 				"Undefined UAID for socket. Aborting.", nil)
+		} else {
+			log.Printf("Undefined UAID for socket. Aborting")
 		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
