@@ -129,7 +129,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
 				caller["line"], caller["name"])
 		}
-		log.Printf(payload)
+		log.Printf(dump)
 	}
 
 	// Don't send an error if there's nothing to do
@@ -150,16 +150,14 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	if len(payload) > 0 {
 		msg.SetPayload(payload)
 	}
-	/*
-		err = addFields(msg, fields)
-		if err != nil {
-			return err
-		}
-		err = addFields(msg, caller)
-		if err != nil {
-			return err
-		}
-	*/
+	err = addFields(msg, fields)
+	if err != nil {
+		return err
+	}
+	err = addFields(msg, caller)
+	if err != nil {
+		return err
+	}
 	err = self.encoder.EncodeMessageStream(msg, &stream)
 	if err != nil {
 		log.Fatal("ERROR: Could not encode log message (%s)", err)

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"strconv"
 	"syscall"
 )
 
@@ -52,7 +53,12 @@ func main() {
 		pprof.StartCPUProfile(f)
 	}
 	//  Disable logging for high capacity runs
-	//	logger = mozutil.NewHekaLogger(config)
+	if v, ok := config["logger.enable"]; ok {
+		if v, _ := strconv.ParseBool(v.(string)); v {
+			logger = mozutil.NewHekaLogger(config)
+			logger.Info("main", "Enabling full logger", nil)
+		}
+	}
 	if *memProfile != "" {
 		defer func() {
 			profFile, err := os.Create(*memProfile)

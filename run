@@ -4,4 +4,4 @@ if [ ! -e config.ini ]; then
     cp config.sample.ini config.ini
 fi
 GOPATH=`pwd` go build main.go
-LD_LIBRARY_PATH=/usr/local/lib GOPATH=`pwd` ./main
+GOPATH=`pwd` ./main

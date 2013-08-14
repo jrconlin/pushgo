@@ -24,9 +24,9 @@ To build memcached from source:
 2. $ wget
 https://launchpad.net/libmemcached/1.0/1.0.17/+download/libmemcached-1.0.17.tar.gz
 3. $ cd libmemcached-1.0.17
-4. Follow steps listed in README.FIRST
-
-
+    * $ configure --prefix=/usr
+    * $ make
+    * $ sudo make install
 
 ## Installation
 To install this server:
