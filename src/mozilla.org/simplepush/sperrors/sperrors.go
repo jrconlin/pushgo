@@ -17,6 +17,7 @@ var (
 	NoRecordWarning        = errors.New("No record found")
 	ServerError            = errors.New("An unknown Error occured")
 	UnknownCommandError    = errors.New("Unknown command")
+	TooManyPingsError      = errors.New("Client sent too many pings")
 )
 
 // Transform an error into a HTTP status int and message suitable for
@@ -35,7 +36,8 @@ func ErrToStatus(err error) (status int, message string) {
 			NoChannelError,
 			InvalidCommandError,
 			InvalidDataError,
-			UnknownCommandError:
+			UnknownCommandError,
+			TooManyPingsError:
 			status = 401
 			message = "Invalid Command"
 		default:

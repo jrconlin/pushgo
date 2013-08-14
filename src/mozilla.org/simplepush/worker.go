@@ -105,6 +105,7 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 		if self.stopped {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
+			log.Printf("Stopping...")
 			close(in)
 
 			// Indicate we shut down successfully
@@ -650,9 +651,9 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 			self.logger.Error("worker", fmt.Sprintf("Client sending too many pings %s", source), nil)
 		} else {
 			log.Printf("Worker: Client sending too many pings. %s", source)
-			err = sock.Socket.Close()
-			return err
 		}
+		self.stopped = true
+		return sperrors.TooManyPingsError
 	}
 	data := buffer.(mozutil.JsMap)
 	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
