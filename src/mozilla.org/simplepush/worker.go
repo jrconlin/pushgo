@@ -462,14 +462,9 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// 	"messageType": data["messageType"],
 	// 	"status":      result.Command,
 	// 	"uaid":        sock.Uaid})
-	msg := make([]byte, 0, 40)
-	msg = append(msg, "{\"messageType\":\""...)
-	msg = append(msg, data["messageType"].(string)...)
-	msg = append(msg, "\",\"status\":"...)
-	msg = append(msg, strconv.FormatInt(int64(result.Command), 10)...)
-	msg = append(msg, ",\"uaid\":\""...)
-	msg = append(msg, sock.Uaid...)
-	msg = append(msg, "\"}"...)
+	msg := []byte("{\"messageType\":\"" + data["messageType"].(string) +
+		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
+		",\"uaid\":\"" + sock.Uaid + "\"}")
 	_, err = sock.Socket.Write(msg)
 
 	self.state = ACTIVE
