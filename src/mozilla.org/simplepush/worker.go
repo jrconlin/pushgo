@@ -182,7 +182,7 @@ func (self *Worker) Run(sock *PushWS) {
 	self.wg.Add(1)
 	go self.sniffer(sock, in)
 
-	if timeout_s, ok := self.config["socket.hello_timeout"]; ok {
+	if timeout_s, ok := self.config["client.hello_timeout"]; ok {
 		timeout, _ := time.ParseDuration(timeout_s.(string))
 		time.AfterFunc(timeout,
 			func() {

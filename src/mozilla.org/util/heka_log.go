@@ -68,7 +68,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.show_caller"]; ok {
 		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
-	filter, _ = strconv.ParseInt(MzGet(conf, "log.filter", "10"), 0, 0)
+	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
