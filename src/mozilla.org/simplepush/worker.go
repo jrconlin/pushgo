@@ -87,9 +87,10 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	var (
-		socket        = sock.Socket
-		raw    []byte = make([]byte, 1024)
-		err    error
+		socket          = sock.Socket
+		raw      []byte = make([]byte, 1024)
+		eofCount int    = 0
+		err      error
 	)
 
 	for {
@@ -114,7 +115,10 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			long_err := err.Error()
 			// do not close on EOF
 			if strings.Contains(long_err, "EOF") {
-				continue
+				eofCount = eofCount + 1
+				if eofCount < 5 {
+					continue
+				}
 			}
 			// but close on other errors
 			self.stopped = true
@@ -126,6 +130,7 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			continue
 		}
 		if len(raw) > 0 {
+			eofCount = 0
 			//ignore {} pings for logging purposes.
 			if len(raw) > 5 {
 				if self.logger != nil {
