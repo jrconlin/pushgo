@@ -28,12 +28,15 @@ var BadUAIDErr = errors.New("Bad UAID")
 //      these write back to the websocket.
 
 type Worker struct {
-	logger  *mozutil.HekaLogger
-	state   int
-	filter  *regexp.Regexp
-	config  mozutil.JsMap
-	stopped bool
-	wg      *sync.WaitGroup
+	logger      *mozutil.HekaLogger
+	state       int
+	filter      *regexp.Regexp
+	config      mozutil.JsMap
+	stopped     bool
+	maxChannels int64
+	lastPing    time.Time
+	pingInt     int64
+	wg          *sync.WaitGroup
 }
 
 const (
@@ -51,31 +54,34 @@ const (
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^\\w-]")
 
 func NewWorker(config mozutil.JsMap, logger *mozutil.HekaLogger) *Worker {
-	switch config["db.max_channels"].(type) {
-	case string:
-		vi, _ := config["db.max_channels"]
-		if val, err := strconv.Atoi(vi.(string)); err != nil {
-			config["db.max_channels"] = val
+	var maxChannels int64
+	var pingInterval int64
+
+	if v, ok := config["db.max_channels"]; ok {
+		maxChannels, _ = strconv.ParseInt(v.(string), 0, 0)
+	}
+	if maxChannels == 0 {
+		maxChannels = CHID_DEFAULT_MAX_NUM
+	}
+	if v, ok := config["client.min_ping_interval"]; ok {
+		if pDir, err := time.ParseDuration(v.(string)); err != nil {
+			pingInterval = int64(pDir.Seconds())
 		}
-	case int:
-		config["db.max_channels"] = config["db.max_channels"].(int)
-	case int16:
-		config["db.max_channels"] = int(config["db.max_channels"].(int16))
-	case int32:
-		config["db.max_channels"] = int(config["db.max_channels"].(int32))
-	case int64:
-		config["db.max_channels"] = int(config["db.max_channels"].(int64))
-	default:
-		config["db.max_channels"] = CHID_DEFAULT_MAX_NUM
+	}
+	if pingInterval == 0 {
+		pingInterval = int64((time.Duration(20) * time.Second).Seconds())
 	}
 
 	return &Worker{
-		logger:  logger,
-		state:   INACTIVE,
-		filter:  workerFilter,
-		config:  config,
-		stopped: false,
-		wg:      new(sync.WaitGroup)}
+		logger:      logger,
+		state:       INACTIVE,
+		filter:      workerFilter,
+		config:      config,
+		stopped:     false,
+		lastPing:    time.Now(),
+		pingInt:     pingInterval,
+		maxChannels: maxChannels,
+		wg:          new(sync.WaitGroup)}
 }
 
 func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
@@ -85,12 +91,13 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 	// reads to a separate go process.
 	var (
 		socket        = sock.Socket
-		raw    []byte = make([]byte, 300)
-		buffer mozutil.JsMap
+		raw    []byte = make([]byte, 1024)
 		err    error
 	)
 
 	for {
+		// declare buffer here so that the struct is cleared between msgs.
+		var buffer mozutil.JsMap
 		raw = raw[:0]
 		err = nil
 
@@ -104,7 +111,6 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			self.wg.Done()
 			return
 		}
-
 		err = websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			long_err := err.Error()
@@ -120,11 +126,13 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			continue
 		}
 		if len(raw) > 0 {
+			//ignore {} pings for logging purposes.
 			if len(raw) > 5 {
 				if self.logger != nil {
 					self.logger.Info("worker",
 						"Socket receive",
-						mozutil.JsMap{"raw": string(raw)})
+						mozutil.JsMap{"raw": string(raw),
+							"buffer": buffer})
 				}
 			}
 			err := json.Unmarshal(raw, &buffer)
@@ -636,6 +644,16 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 }
 
 func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
+	if int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
+		source := sock.Socket.Config().Origin
+		if self.logger != nil {
+			self.logger.Error("worker", fmt.Sprintf("Client sending too many pings %s", source), nil)
+		} else {
+			log.Printf("Worker: Client sending too many pings. %s", source)
+			err = sock.Socket.Close()
+			return err
+		}
+	}
 	data := buffer.(mozutil.JsMap)
 	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
 		"messageType": data["messageType"],
