@@ -112,10 +112,12 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 		err = websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			long_err := err.Error()
-			self.stopped = true
-			if strings.Contains(long_err, "EOF") || strings.Contains(long_err, "closed") {
+			// do not close on EOF
+			if strings.Contains(long_err, "EOF") {
 				continue
 			}
+			// but close on other errors
+			self.stopped = true
 			if self.logger != nil {
 				self.logger.Error("worker",
 					"Websocket Error",
