@@ -147,9 +147,6 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
-    if len(servers) > 1 {
-        mc.SetBehavior(gomc.BEHAVIOR_NUMBER_OF_REPLICAS, 2)
-    }
 
 	return &Storage{mc: mc,
 		config: config,
