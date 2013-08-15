@@ -480,6 +480,11 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 	mc := self.mc
 	recs, err := mc.GetMulti(items)
 	if err != nil {
+		if err.Error() == "NOT FOUND" {
+			// Return the blank results map with no error since there are no
+			// results
+			return results, nil
+		}
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage", "GetUpdate failed",
