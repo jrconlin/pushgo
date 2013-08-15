@@ -81,7 +81,7 @@ func NewWorker(config mozutil.JsMap, logger *mozutil.HekaLogger) *Worker {
 		wg:          new(sync.WaitGroup)}
 }
 
-func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
+func (self *Worker) sniffer(sock *PushWS) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
@@ -104,10 +104,6 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
 			log.Printf("Stopping...")
-			close(in)
-
-			// Indicate we shut down successfully
-			self.wg.Done()
 			return
 		}
 		err = websocket.Message.Receive(socket, &raw)
@@ -129,35 +125,98 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			}
 			continue
 		}
-		if len(raw) > 0 {
-			eofCount = 0
-			//ignore {} pings for logging purposes.
-			if len(raw) > 5 {
-				if self.logger != nil {
-					self.logger.Info("worker",
-						"Socket receive",
-						mozutil.JsMap{"raw": string(raw),
-							"buffer": buffer})
-				}
-			}
-			err := json.Unmarshal(raw, &buffer)
-			if err != nil {
-				if self.logger != nil {
-					self.logger.Error("worker",
-						"Unparsable data", mozutil.JsMap{"raw": raw})
-				}
-				self.stopped = true
-				continue
-			}
+		if len(raw) <= 0 {
+			continue
+		}
+
+		eofCount = 0
+		//ignore {} pings for logging purposes.
+		if len(raw) > 5 {
 			if self.logger != nil {
-				if len(buffer) > 10 {
-					self.logger.Info("worker",
-						"Socket send",
-						mozutil.JsMap{"raw": buffer})
-				}
+				self.logger.Info("worker",
+					"Socket receive",
+					mozutil.JsMap{"raw": string(raw),
+						"buffer": buffer})
 			}
-			// Only do something if there's something to do.
-			in <- buffer
+		}
+		err := json.Unmarshal(raw, &buffer)
+		if err != nil {
+			if self.logger != nil {
+				self.logger.Error("worker",
+					"Unparsable data", mozutil.JsMap{"raw": raw})
+			}
+			self.stopped = true
+			continue
+		}
+		if self.logger != nil {
+			if len(buffer) > 10 {
+				self.logger.Info("worker",
+					"Socket send",
+					mozutil.JsMap{"raw": buffer})
+			}
+		}
+
+		if len(buffer) > 0 && self.logger != nil {
+			self.logger.Info("worker",
+				fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
+					len(buffer)), nil)
+		}
+		if len(buffer) == 0 {
+			// Empty buffers are "pings"
+			buffer["messageType"] = "ping"
+		}
+		// process the client commands
+		var messageType string
+		if mt, ok := buffer["messageType"]; !ok {
+			if self.logger != nil {
+				self.logger.Info("worker", "Invalid message",
+					mozutil.JsMap{"reason": "Missing messageType",
+						"data": buffer})
+			}
+			self.handleError(sock,
+				mozutil.JsMap{},
+				sperrors.UnknownCommandError)
+			self.stopped = true
+			continue
+		} else {
+			switch mt.(type) {
+			case string:
+				messageType = mt.(string)
+			default:
+				messageType = ""
+			}
+		}
+		buffer["messageType"] = strings.ToLower(messageType)
+		switch strings.ToLower(messageType) {
+		case "hello":
+			err = self.Hello(sock, buffer)
+		case "ack":
+			err = self.Ack(sock, buffer)
+		case "register":
+			err = self.Register(sock, buffer)
+		case "unregister":
+			err = self.Unregister(sock, buffer)
+		case "ping":
+			err = self.Ping(sock, buffer)
+		case "purge":
+			err = self.Purge(sock, buffer)
+		default:
+			if self.logger != nil {
+				self.logger.Warn("worker",
+					"Bad command",
+					buffer)
+			}
+			err = sperrors.UnknownCommandError
+		}
+		if err != nil {
+			if self.logger != nil {
+				self.logger.Debug("worker", "Run returned error", nil)
+			} else {
+				log.Printf("Unknown error occurred %s", err)
+			}
+			self.handleError(sock, buffer, err)
+			self.stopped = true
+			continue
 		}
 	}
 }
@@ -173,19 +232,6 @@ func (self *Worker) handleError(sock *PushWS, message mozutil.JsMap, err error) 
 
 // General workhorse loop for the websocket handler.
 func (self *Worker) Run(sock *PushWS) {
-	var err error
-
-	// Instantiate a websocket reader, a blocking operation
-	// (Remember, we need to be able to write out PUSH events
-	// as they happen.)
-	in := make(chan mozutil.JsMap)
-
-	// Setup the sniffer goroutine and increment a waitgroup for it
-	// along with a stopChan so it can notify us if it shut down
-	// suddenly
-	self.wg.Add(1)
-	go self.sniffer(sock, in)
-
 	if timeout_s, ok := self.config["client.hello_timeout"]; ok {
 		timeout, _ := time.ParseDuration(timeout_s.(string))
 		time.AfterFunc(timeout,
@@ -212,140 +258,9 @@ func (self *Worker) Run(sock *PushWS) {
 		return
 	}(sock)
 
-	// Indicate we will accept a command
-	sock.Acmd <- true
+	self.sniffer(sock)
+	sock.Socket.Close()
 
-	var (
-		cmd    PushCommand
-		buffer mozutil.JsMap
-		ok     bool
-	)
-
-	for {
-		// We should shut down?
-		if self.stopped {
-			// Close the socket to force the sniffer down
-			sock.Socket.Close()
-
-			// Pull any remaining commands off, ensure we don't wait around
-			select {
-			case <-sock.Ccmd:
-				if self.logger != nil {
-					self.logger.Info("worker", "Cleared messages from socket", nil)
-				}
-			default:
-			}
-			select {
-			case <-in:
-			default:
-			}
-			break
-		}
-
-		select {
-		case cmd = <-sock.Ccmd:
-			// A new Push has happened. Flush out the data to the
-			// device (and potentially remotely wake it if that fails)
-			if self.logger != nil {
-				self.logger.Info("worker",
-					"Client cmd",
-					mozutil.JsMap{"cmd": cmd.Command})
-			}
-
-			if cmd.Command == FLUSH {
-				args := cmd.Arguments.(mozutil.JsMap)
-				channel := args["channel"].(string)
-				version := args["version"].(int64)
-				if self.logger != nil {
-					self.logger.Info("worker",
-						fmt.Sprintf("Flushing... %s:%s:%d",
-							sock.Uaid,
-							channel,
-							version), nil)
-				}
-				if self.Flush(sock, 0, channel, version) != nil {
-					break
-				}
-				// additional non-client commands are TBD.
-			}
-			// Indicate we will accept a command
-			sock.Acmd <- true
-
-		case buffer, ok = <-in:
-			if !ok {
-				// Notified by the sniffer to stop
-				if self.logger != nil {
-					self.logger.Info("worker", "Notified to stop", nil)
-				}
-				continue
-			}
-			if len(buffer) > 0 && self.logger != nil {
-				self.logger.Info("worker",
-					fmt.Sprintf("Client Read buffer, %s %d\n", buffer,
-						len(buffer)), nil)
-			}
-			if len(buffer) == 0 {
-				// Empty buffers are "pings"
-				buffer["messageType"] = "ping"
-			}
-			// process the client commands
-			var messageType string
-			if mt, ok := buffer["messageType"]; !ok {
-				if self.logger != nil {
-					self.logger.Info("worker", "Invalid message",
-						mozutil.JsMap{"reason": "Missing messageType",
-							"data": buffer})
-				}
-				self.handleError(sock,
-					mozutil.JsMap{},
-					sperrors.UnknownCommandError)
-				break
-			} else {
-				switch mt.(type) {
-				case string:
-					messageType = mt.(string)
-				default:
-					messageType = ""
-				}
-			}
-			buffer["messageType"] = strings.ToLower(messageType)
-			switch strings.ToLower(messageType) {
-			case "hello":
-				err = self.Hello(sock, buffer)
-			case "ack":
-				err = self.Ack(sock, buffer)
-			case "register":
-				err = self.Register(sock, buffer)
-			case "unregister":
-				err = self.Unregister(sock, buffer)
-			case "ping":
-				err = self.Ping(sock, buffer)
-			case "purge":
-				err = self.Purge(sock, buffer)
-			default:
-				if self.logger != nil {
-					self.logger.Warn("worker",
-						"Bad command",
-						buffer)
-				}
-				err = sperrors.UnknownCommandError
-			}
-			if err != nil {
-				if self.logger != nil {
-					self.logger.Debug("worker", "Run returned error", nil)
-				} else {
-					log.Printf("Unknown error occurred %s", err)
-				}
-				self.handleError(sock, buffer, err)
-				self.stopped = true
-				continue
-			}
-		}
-	}
-	if self.logger != nil {
-		self.logger.Debug("worker", "Waiting for sniffer to shut-down", nil)
-	}
-	self.wg.Wait()
 	if self.logger != nil {
 		self.logger.Debug("worker", "Run has completed a shut-down", nil)
 	} else {
@@ -456,8 +371,10 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	cmd := PushCommand{
 		Command: HELLO,
 		Arguments: mozutil.JsMap{
-			"uaid":  sock.Uaid,
-			"chids": data["channelIDs"]},
+			"worker": self,
+			"uaid":   sock.Uaid,
+			"chids":  data["channelIDs"],
+		},
 	}
 	// blocking call back to the boss.
 	raw_result, args := HandleServerCommand(cmd, sock)

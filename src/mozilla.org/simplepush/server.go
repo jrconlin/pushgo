@@ -27,6 +27,7 @@ type ClientProprietary struct {
 
 type Client struct {
 	// client descriptor info.
+	Worker *Worker
 	PushWS PushWS             `json:"-"`
 	UAID   string             `json:"uaid"`
 	Prop   *ClientProprietary `json:"-"`
@@ -104,7 +105,7 @@ func (self *Serv) Set_proprietary_info(args mozutil.JsMap) (cp *ClientProprietar
 }
 
 // A client connects!
-func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
+func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {
 	var uaid string
 
 	args := cmd.Arguments.(mozutil.JsMap)
@@ -144,9 +145,12 @@ func (self *Serv) Hello(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
 	sock.Uaid = uaid
-	client := &Client{PushWS: *sock,
-		UAID: uaid,
-		Prop: prop}
+	client := &Client{
+		Worker: worker,
+		PushWS: *sock,
+		UAID:   uaid,
+		Prop:   prop,
+	}
 	MuClient.Lock()
 	Clients[uaid] = client
 	MuClient.Unlock()
@@ -261,19 +265,8 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 					"version": version})
 		}
 
-		// Ensure we're allowed to send a command
-		select {
-		case <-client.PushWS.Acmd:
-			client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
-				Arguments: mozutil.JsMap{"uaid": client.UAID,
-					"channel": channel,
-					"version": version}}
-		case <-time.After(time.Duration(50) * time.Millisecond):
-			if self.logger != nil {
-				self.logger.Info("server", "Client unavailable to recieve command",
-					mozutil.JsMap{"uaid": client.UAID})
-			}
-		}
+		// Attempt to send the command
+		client.Worker.Flush(&client.PushWS, 0, channel, version)
 	}
 	return nil
 }
@@ -306,7 +299,8 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		if self.logger != nil {
 			self.logger.Debug("server", "Handling HELLO event", nil)
 		}
-		result, ret = self.Hello(cmd, sock)
+		worker := args["worker"].(*Worker)
+		result, ret = self.Hello(worker, cmd, sock)
 	case UNREG:
 		if self.logger != nil {
 			self.logger.Debug("server", "Handling UNREG event", nil)

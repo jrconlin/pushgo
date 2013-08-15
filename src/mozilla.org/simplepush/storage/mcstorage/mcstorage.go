@@ -458,8 +458,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 	appIDArray, err := self.fetchAppIDArray(uaid)
 
 	var updates []map[string]interface{}
-	var expired []string
-	var items []string
+
+	expired := make([]string, 0, 20)
+	items := make([]string, 0, 20)
 
 	for _, appid := range appIDArray {
 		pk, _ := GenPK(uaid, appid)
@@ -474,7 +475,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 	}
 	mc := self.mc
 	recs, err := mc.GetMulti(items)
-	if err != nil && err.Error() != "NOT FOUND" {
+	if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage", "GetUpdate failed",
