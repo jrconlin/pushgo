@@ -652,7 +652,6 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		if updates == nil {
 			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
 		}
-		log.Printf("##### force flushing %s: %s: %d", sock.Uaid, channel, version)
 		mod := false
 		upds := updates["updates"].([]map[string]interface{})
 		for i := range upds {
@@ -663,7 +662,6 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 			}
 		}
 		if !mod {
-			log.Printf("### Forcing update for %s:%s:%d",
 				sock.Uaid, channel, version)
 			upds = append(upds, mozutil.JsMap{"channelID": channel,
 				"version": version})
