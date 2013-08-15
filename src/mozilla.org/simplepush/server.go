@@ -237,7 +237,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	return 200, args
 }
 
-func (self *Serv) RequestFlush(client *Client) (err error) {
+func (self *Serv) RequestFlush(client *Client, channel string, version int64) (err error) {
 	defer func(client *Client) {
 		r := recover()
 		if r != nil {
@@ -258,14 +258,18 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 		if self.logger != nil {
 			self.logger.Info("server",
 				"Requesting flush",
-				mozutil.JsMap{"uaid": client.UAID})
+				mozutil.JsMap{"uaid": client.UAID,
+					"channel": channel,
+					"version": version})
 		}
 
 		// Ensure we're allowed to send a command
 		select {
 		case <-client.PushWS.Acmd:
 			client.PushWS.Ccmd <- PushCommand{Command: FLUSH,
-				Arguments: &mozutil.JsMap{"uaid": client.UAID}}
+				Arguments: mozutil.JsMap{"uaid": client.UAID,
+					"channel": channel,
+					"version": version}}
 		case <-time.After(time.Duration(50) * time.Millisecond):
 			if self.logger != nil {
 				self.logger.Info("server", "Client unavailable to recieve command",
@@ -276,9 +280,9 @@ func (self *Serv) RequestFlush(client *Client) (err error) {
 	return nil
 }
 
-func Flush(client *Client) (err error) {
+func Flush(client *Client, channel string, version int64) (err error) {
 	// Ask the central service to flush for a given client.
-	return serverSingleton.RequestFlush(client)
+	return serverSingleton.RequestFlush(client, channel, version)
 }
 
 func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments mozutil.JsMap) {

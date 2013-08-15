@@ -253,11 +253,17 @@ func (self *Worker) Run(sock *PushWS) {
 			}
 
 			if cmd.Command == FLUSH {
+				args := cmd.Arguments.(mozutil.JsMap)
+				channel := args["channel"].(string)
+				version := args["version"].(int64)
 				if self.logger != nil {
 					self.logger.Info("worker",
-						fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
+						fmt.Sprintf("Flushing... %s:%s:%d",
+							sock.Uaid,
+							channel,
+							version), nil)
 				}
-				if self.Flush(sock, 0) != nil {
+				if self.Flush(sock, 0, channel, version) != nil {
 					break
 				}
 				// additional non-client commands are TBD.
@@ -472,7 +478,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
-		return self.Flush(sock, 0)
+		return self.Flush(sock, 0, "", 0)
 	}
 	return err
 }
@@ -503,7 +509,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
-		return self.Flush(sock, 0)
+		return self.Flush(sock, 0, "", 0)
 	}
 	if self.logger != nil {
 		self.logger.Debug("worker", "sending response",
@@ -612,7 +618,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
+func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) error {
 	// flush pending data back to Client
 	messageType := "notification"
 	timer := time.Now()
@@ -641,6 +647,28 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 	if err != nil {
 		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
 		return err
+	}
+	if channel != "" {
+		if updates == nil {
+			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
+		}
+		log.Printf("##### force flushing %s: %s: %d", sock.Uaid, channel, version)
+		mod := false
+		upds := updates["updates"].([]map[string]interface{})
+		for i := range upds {
+			if upds[i]["channelID"].(string) == channel {
+				upds[i]["version"] = version
+				mod = true
+				break
+			}
+		}
+		if !mod {
+			log.Printf("### Forcing update for %s:%s:%d",
+				sock.Uaid, channel, version)
+			upds = append(upds, mozutil.JsMap{"channelID": channel,
+				"version": version})
+		}
+		updates["updates"] = upds
 	}
 	if updates == nil {
 		return nil

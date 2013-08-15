@@ -132,7 +132,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	}
 	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
+	//mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
 	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
 
 	return &Storage{mc: mc,
