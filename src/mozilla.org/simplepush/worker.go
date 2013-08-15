@@ -662,7 +662,6 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 			}
 		}
 		if !mod {
-				sock.Uaid, channel, version)
 			upds = append(upds, mozutil.JsMap{"channelID": channel,
 				"version": version})
 		}
