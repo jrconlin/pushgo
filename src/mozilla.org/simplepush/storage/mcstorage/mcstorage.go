@@ -444,8 +444,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 	appIDArray, err := self.fetchAppIDArray(uaid)
 
 	var updates []map[string]interface{}
-	var expired []string
-	var items []string
+
+	expired := make([]string, 0, 20)
+	items := make([]string, 0, 20)
 
 	for _, appid := range appIDArray {
 		pk, _ := GenPK(uaid, appid)
@@ -472,8 +473,8 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 
 	// Result has no len or counter.
 	resCount := 0
+	var i string
 	for _, key := range items {
-		i := ""
 		if err := recs.Get(key, &i); err == nil {
 			resCount = resCount + 1
 		}
