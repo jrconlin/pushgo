@@ -91,18 +91,16 @@ func (self *Serv) Set_proprietary_info(args mozutil.JsMap) (cp *ClientProprietar
 	// Since it's possible that every device provider may use different means
 	// to remotely activate devices, this is left as an excercise for the
 	// reader.
-	ip := ""
-	port := ""
-	lastContact := time.Now()
+	cp = new(ClientProprietary)
+	cp.LastContact = time.Now()
 
 	if args["ip"] != nil {
-		ip = args["ip"].(string)
+		cp.Ip = args["ip"].(string)
 	}
 	if args["port"] != nil {
-		port = args["port"].(string)
+		cp.Port = args["port"].(string)
 	}
-
-	return &ClientProprietary{ip, port, lastContact}
+	return
 }
 
 // A client connects!
