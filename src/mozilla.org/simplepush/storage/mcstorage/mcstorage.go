@@ -32,7 +32,15 @@ const (
 	REGISTERED
 )
 
-var config util.JsMap
+var (
+	config        util.JsMap
+	no_whitespace *strings.Replacer = strings.NewReplacer(" ", "",
+		"\x09", "",
+		"\x0a", "",
+		"\x0b", "",
+		"\x0c", "",
+		"\x0d", "")
+)
 
 type Storage struct {
 	config util.JsMap
@@ -120,8 +128,12 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	if logger != nil {
 		logger.Info("storage", "Creating new gomc handler", nil)
 	}
-	mc, err := gomc.NewClient(strings.Split(
-		config["memcache.server"].(string), ","),
+	// do NOT include any spaces
+	servers := strings.Split(
+		no_whitespace.Replace(config["memcache.server"].(string)),
+		",")
+	logger.Info("storage", fmt.Sprintf("memcache servers::: %v", servers), nil)
+	mc, err := gomc.NewClient(servers,
 		int(config["memcache.pool_size"].(int64)),
 		gomc.ENCODING_JSON)
 	if err != nil {
@@ -130,10 +142,12 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		// make this a config option!
 		//log.Fatal("### RESTARTING ### %s", err)
 	}
+	// internally hash key using MD5 (for key distribution)
 	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-	//mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
-	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+	mc.SetBehavior(gomc.BEHAVIOR_NUMBER_OF_REPLICAS, 2)
 
 	return &Storage{mc: mc,
 		config: config,
