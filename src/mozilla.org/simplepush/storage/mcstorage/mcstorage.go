@@ -461,7 +461,7 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 	}
 	mc := self.mc
 	recs, err := mc.GetMulti(items)
-	if err != nil && err.Error() != "NOT FOUND" {
+	if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage", "GetUpdate failed",
@@ -473,9 +473,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 
 	// Result has no len or counter.
 	resCount := 0
+	var i string
 	for _, key := range items {
-		i := ""
-		if err := recs.Get(key, i); err == nil {
+		if err := recs.Get(key, &i); err == nil {
 			resCount = resCount + 1
 		}
 	}
