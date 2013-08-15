@@ -410,6 +410,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			debug.PrintStack()
 			if self.logger != nil {
 				self.logger.Error("worker",
 					"Unhandled error",
@@ -420,7 +421,6 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 			err = sperrors.InvalidDataError
 		}
 	}()
-
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}

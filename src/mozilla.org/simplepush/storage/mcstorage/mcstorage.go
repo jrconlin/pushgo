@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	//	"log"
+	//"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,22 +132,46 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	servers := strings.Split(
 		no_whitespace.Replace(config["memcache.server"].(string)),
 		",")
-	logger.Info("storage", fmt.Sprintf("memcache servers::: %v", servers), nil)
 	mc, err := gomc.NewClient(servers,
 		int(config["memcache.pool_size"].(int64)),
 		gomc.ENCODING_JSON)
 	if err != nil {
 		logger.Critical("storage", "CRITICAL HIT!",
 			util.JsMap{"error": err})
-		// make this a config option!
-		//log.Fatal("### RESTARTING ### %s", err)
 	}
 	// internally hash key using MD5 (for key distribution)
-	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
+	mc.SetBehavior(gomc.BEHAVIOR_KETAMA_HASH, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
-
+	if v, ok := config["memcache.recv_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.send_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.poll_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.retry_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
 	return &Storage{mc: mc,
 		config: config,
 		logger: logger,
@@ -175,7 +199,6 @@ func (self *Storage) isFatal(err error) bool {
 			self.logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
 				util.JsMap{"error": err})
 		}
-		//		log.Fatal("### RESTARTING ### ", err)
 		return true
 	}
 }
@@ -235,7 +258,7 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	//mc.Timeout = time.Second * 10
 	var raw string
 	err = mc.Get(uaid, &raw)
-	if err != nil && err.Error() != "NOT FOUND" {
+	if err != nil {
 		self.isFatal(err)
 		return nil, err
 	}
@@ -530,7 +553,6 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		case float64(LIVE):
 			var fvers float64
 			var ok bool
-			// log.Printf("Adding record... %s", appid)
 			newRec := make(util.JsMap)
 			newRec["channelID"] = appid
 			fvers, ok = update["v"].(float64)
@@ -586,13 +608,15 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 	mc := self.mc
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
-			expired := make([]string, strings.Count(ackPacket["expired"].(string), ",")+1)
-			json.Unmarshal(ackPacket["expired"].([]byte), &expired)
-			for _, appid := range expired {
-				pk, _ := GenPK(uaid, appid)
-				err = mc.Delete(pk, time.Duration(0))
-				if err != nil {
-					self.isFatal(err)
+			if cnt := len(ackPacket["expired"].([]interface{})); cnt > 0 {
+				expired := make([]string, cnt)
+				json.Unmarshal(ackPacket["expired"].([]byte), &expired)
+				for _, appid := range expired {
+					pk, _ := GenPK(uaid, appid)
+					err = mc.Delete(pk, time.Duration(0))
+					if err != nil {
+						self.isFatal(err)
+					}
 				}
 			}
 		}
@@ -639,6 +663,11 @@ func (self *Storage) SetUAIDHost(uaid string) (err error) {
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
 	mc := self.mc
 	err = mc.Set(prefix+uaid, host, time.Duration(ttl)*time.Second)
+	if err != nil {
+		if strings.Contains("NOT FOUND", err.Error()) {
+			err = nil
+		}
+	}
 	self.isFatal(err)
 	return err
 }
@@ -671,6 +700,9 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 					"error": err})
 		}
 		return defaultHost, err
+	}
+	if val == "" {
+		val = defaultHost
 	}
 	if self.logger != nil {
 		self.logger.Debug("storage",
