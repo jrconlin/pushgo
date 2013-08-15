@@ -207,8 +207,8 @@ func (self *Worker) Run(sock *PushWS) {
 			} else {
 				log.Printf("Worker encountered unknown error '%s'", r)
 			}
+			sock.Socket.Close()
 		}
-		sock.Socket.Close()
 		return
 	}(sock)
 
@@ -471,10 +471,15 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			mozutil.JsMap{"cmd": "hello", "error": err,
 				"uaid": sock.Uaid})
 	}
-	websocket.JSON.Send(sock.Socket, mozutil.JsMap{
-		"messageType": data["messageType"],
-		"status":      result.Command,
-		"uaid":        sock.Uaid})
+	// websocket.JSON.Send(sock.Socket, mozutil.JsMap{
+	// 	"messageType": data["messageType"],
+	// 	"status":      result.Command,
+	// 	"uaid":        sock.Uaid})
+	msg := []byte("{\"messageType\":\"" + data["messageType"].(string) +
+		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
+		",\"uaid\":\"" + sock.Uaid + "\"}")
+	_, err = sock.Socket.Write(msg)
+
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
