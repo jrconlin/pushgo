@@ -40,10 +40,8 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid   string           // id
-	Socket *websocket.Conn  // Remote connection
-	Ccmd   chan PushCommand // client command channel
-	Acmd   chan bool        // command slots
+	Uaid   string          // id
+	Socket *websocket.Conn // Remote connection
 	Store  *storage.Storage
 	Logger *util.HekaLogger
 	Born   time.Time
