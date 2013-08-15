@@ -473,9 +473,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 
 	// Result has no len or counter.
 	resCount := 0
-	var i string
 	for _, key := range items {
-		if err := recs.Get(key, &i); err == nil {
+		i := ""
+		if err := recs.Get(key, i); err == nil {
 			resCount = resCount + 1
 		}
 	}
