@@ -202,8 +202,8 @@ func (self *Worker) Run(sock *PushWS) {
 			} else {
 				log.Printf("Worker encountered unknown error '%s'", r)
 			}
+			sock.Socket.Close()
 		}
-		sock.Socket.Close()
 		return
 	}(sock)
 
