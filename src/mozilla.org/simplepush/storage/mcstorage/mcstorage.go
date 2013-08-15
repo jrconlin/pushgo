@@ -132,8 +132,8 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	}
 	mc.SetBehavior(gomc.BEHAVIOR_HASH, uint64(gomc.HASH_MD5))
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+	//mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
+	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
 
 	return &Storage{mc: mc,
 		config: config,
@@ -283,7 +283,7 @@ func (self *Storage) storeRec(pk string, rec util.JsMap) (err error) {
 				"record": raw})
 	}
 
-	err = self.mc.Set(pk, raw, time.Second*time.Duration(ttl))
+	err = self.mc.Set(pk, raw, time.Duration(ttl)*time.Second)
 	if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
@@ -310,7 +310,7 @@ func (self *Storage) UpdateChannel(pk string, vers int64) (err error) {
 
 	rec, err = self.fetchRec(pk)
 
-	if err != nil {
+	if err != nil && err.Error() != "NOT FOUND" {
 		if self.logger != nil {
 			self.logger.Error("storage",
 				fmt.Sprintf("fetchRec %s err %s", pk, err), nil)

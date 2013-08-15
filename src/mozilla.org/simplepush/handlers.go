@@ -181,6 +181,15 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		self.logger.Debug("update", "Handling Update",
 			mozutil.JsMap{"path": req.URL.Path})
 	}
+	if self.logger != nil {
+		self.logger.Info("update", "=========== UPDATE ====", nil)
+	}
+
+	defer func() {
+		if self.logger != nil {
+			self.logger.Info("update", "+++++++++++++ DONE +++", nil)
+		}
+	}()
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
@@ -333,15 +342,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
-	if self.logger != nil {
-		self.logger.Info("timer", "Client Update complete",
-			mozutil.JsMap{"uaid": uaid,
-				"channelID": appid,
-				"duration":  time.Now().Sub(timer).Nanoseconds()})
-	}
 	// Ping the appropriate server
 	if client, ok := Clients[uaid]; ok {
-		Flush(client)
+		Flush(client, appid, int64(vers))
 	}
 	return
 }

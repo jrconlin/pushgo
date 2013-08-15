@@ -68,9 +68,6 @@ func NewWorker(config mozutil.JsMap, logger *mozutil.HekaLogger) *Worker {
 			pingInterval = int64(pDir.Seconds())
 		}
 	}
-	if pingInterval == 0 {
-		pingInterval = int64((time.Duration(20) * time.Second).Seconds())
-	}
 
 	return &Worker{
 		logger:      logger,
@@ -90,9 +87,10 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	var (
-		socket        = sock.Socket
-		raw    []byte = make([]byte, 1024)
-		err    error
+		socket          = sock.Socket
+		raw      []byte = make([]byte, 1024)
+		eofCount int    = 0
+		err      error
 	)
 
 	for {
@@ -115,10 +113,15 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 		err = websocket.Message.Receive(socket, &raw)
 		if err != nil {
 			long_err := err.Error()
-			self.stopped = true
-			if strings.Contains(long_err, "EOF") || strings.Contains(long_err, "closed") {
-				continue
+			// do not close on EOF
+			if strings.Contains(long_err, "EOF") {
+				eofCount = eofCount + 1
+				if eofCount < 5 {
+					continue
+				}
 			}
+			// but close on other errors
+			self.stopped = true
 			if self.logger != nil {
 				self.logger.Error("worker",
 					"Websocket Error",
@@ -127,6 +130,7 @@ func (self *Worker) sniffer(sock *PushWS, in chan mozutil.JsMap) {
 			continue
 		}
 		if len(raw) > 0 {
+			eofCount = 0
 			//ignore {} pings for logging purposes.
 			if len(raw) > 5 {
 				if self.logger != nil {
@@ -188,7 +192,8 @@ func (self *Worker) Run(sock *PushWS) {
 			func() {
 				if sock.Uaid == "" {
 					if self.logger != nil {
-						self.logger.Error("worker", "Idle hello. Closing socket", nil)
+						self.logger.Error("worker",
+							"Idle connection. Closing socket", nil)
 					}
 					sock.Socket.Close()
 				}
@@ -248,11 +253,17 @@ func (self *Worker) Run(sock *PushWS) {
 			}
 
 			if cmd.Command == FLUSH {
+				args := cmd.Arguments.(mozutil.JsMap)
+				channel := args["channel"].(string)
+				version := args["version"].(int64)
 				if self.logger != nil {
 					self.logger.Info("worker",
-						fmt.Sprintf("Flushing... %s", sock.Uaid), nil)
+						fmt.Sprintf("Flushing... %s:%s:%d",
+							sock.Uaid,
+							channel,
+							version), nil)
 				}
-				if self.Flush(sock, 0) != nil {
+				if self.Flush(sock, 0, channel, version) != nil {
 					break
 				}
 				// additional non-client commands are TBD.
@@ -322,6 +333,8 @@ func (self *Worker) Run(sock *PushWS) {
 			if err != nil {
 				if self.logger != nil {
 					self.logger.Debug("worker", "Run returned error", nil)
+				} else {
+					log.Printf("Unknown error occurred %s", err)
 				}
 				self.handleError(sock, buffer, err)
 				self.stopped = true
@@ -419,7 +432,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		}
 		if num := len(data["channelIDs"].([]interface{})); num > 0 {
 			// are there a suspicious number of channels?
-			if num > self.config["db.max_channels"].(int) {
+			if int64(num) > self.maxChannels {
 				forceReset = forceReset || true
 			}
 			if !sock.Store.IsKnownUaid(sock.Uaid) {
@@ -470,7 +483,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
-		return self.Flush(sock, 0)
+		return self.Flush(sock, 0, "", 0)
 	}
 	return err
 }
@@ -501,7 +514,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	err = sock.Store.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
-		return self.Flush(sock, 0)
+		return self.Flush(sock, 0, "", 0)
 	}
 	if self.logger != nil {
 		self.logger.Debug("worker", "sending response",
@@ -610,7 +623,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
+func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) error {
 	// flush pending data back to Client
 	messageType := "notification"
 	timer := time.Now()
@@ -626,6 +639,8 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 		if self.logger != nil {
 			self.logger.Error("worker",
 				"Undefined UAID for socket. Aborting.", nil)
+		} else {
+			log.Printf("Undefined UAID for socket. Aborting")
 		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
@@ -637,6 +652,25 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 	if err != nil {
 		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
 		return err
+	}
+	if channel != "" {
+		if updates == nil {
+			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
+		}
+		mod := false
+		upds := updates["updates"].([]map[string]interface{})
+		for i := range upds {
+			if upds[i]["channelID"].(string) == channel {
+				upds[i]["version"] = version
+				mod = true
+				break
+			}
+		}
+		if !mod {
+			upds = append(upds, mozutil.JsMap{"channelID": channel,
+				"version": version})
+		}
+		updates["updates"] = upds
 	}
 	if updates == nil {
 		return nil
@@ -650,7 +684,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64) error {
 }
 
 func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
-	if int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
+	if self.pingInt > 0 && int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		if self.logger != nil {
 			self.logger.Error("worker", fmt.Sprintf("Client sending too many pings %s", source), nil)
