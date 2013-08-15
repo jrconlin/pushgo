@@ -33,6 +33,7 @@ const (
 )
 
 var config util.JsMap
+var
 
 type Storage struct {
 	config util.JsMap
@@ -128,7 +129,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
         "\x0c", "",
         "\x0d", "")
     servers := strings.Split(
-           no_witespace.Replace(config["memcache.server"].(string)),
+           no_whitespace.Replace(config["memcache.server"].(string)),
            ",")
     logger.Info("storage", fmt.Sprintf("memcache servers::: %v", servers), nil)
 	mc, err := gomc.NewClient(servers,
