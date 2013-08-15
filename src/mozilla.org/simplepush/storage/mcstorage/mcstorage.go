@@ -132,7 +132,9 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	servers := strings.Split(
 		no_whitespace.Replace(config["memcache.server"].(string)),
 		",")
-	logger.Info("storage", fmt.Sprintf("memcache servers::: %v", servers), nil)
+	if logger != nil {
+		logger.Info("storage", fmt.Sprintf("memcache servers::: %v", servers), nil)
+	}
 	mc, err := gomc.NewClient(servers,
 		int(config["memcache.pool_size"].(int64)),
 		gomc.ENCODING_JSON)
