@@ -618,6 +618,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	return nil
 }
 
+// TESTING func, purge associated records for this UAID
 func (self *Worker) Purge(sock *PushWS, buffer interface{}) (err error) {
 	/*
 	   // If needed...

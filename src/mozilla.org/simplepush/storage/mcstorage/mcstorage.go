@@ -142,8 +142,9 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	// internally hash key using MD5 (for key distribution)
 	mc.SetBehavior(gomc.BEHAVIOR_KETAMA_HASH, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-	mc.SetBehavior(gomc.BEHAVIOR_NOREPLY, 1)
 	mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+    // NOTE! do NOT set BEHAVIOR_NOREPLY + Binary. This will cause
+    // libmemcache to drop into an infinite loop.
 	if v, ok := config["memcache.recv_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err == nil {
