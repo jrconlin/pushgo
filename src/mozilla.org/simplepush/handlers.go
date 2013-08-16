@@ -275,6 +275,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+    log.Printf("<< %s.%s = %d", uaid, appid, vers)
+
 	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)
 	}
