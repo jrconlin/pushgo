@@ -225,7 +225,10 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 	//mc.Timeout = time.Second * 10
 	var item string
 	err = mc.Get(string(pk), &item)
-	if err != nil {
+	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
+            err = nil
+    }
+    if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage",
@@ -235,6 +238,9 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 		}
 		return nil, err
 	}
+    if item == "" {
+        return nil, err
+    }
 
 	json.Unmarshal([]byte(item), &result)
 
@@ -267,7 +273,9 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
         }
 		return nil, err
 	}
-	result = strings.Split(raw, ",")
+    if raw != "" {
+    	result = strings.Split(raw, ",")
+    }
 	return result, err
 }
 
@@ -516,6 +524,10 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		}
 	}
 
+    if recs == nil {
+        return nil, err
+    }
+
 	// Result has no len or counter.
 	resCount := 0
 	var i string
@@ -643,6 +655,10 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 			}
 		}
 	}
+
+    if strings.Contains("NOT FOUND", err.Error()) {
+        err = nil
+    }
 
 	if err != nil {
 		return err
