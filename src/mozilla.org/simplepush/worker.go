@@ -263,8 +263,6 @@ func (self *Worker) Run(sock *PushWS) {
 
 	if self.logger != nil {
 		self.logger.Debug("worker", "Run has completed a shut-down", nil)
-	} else {
-		log.Printf("Worker closing connection for %s", sock.Uaid)
 	}
 }
 
