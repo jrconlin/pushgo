@@ -592,9 +592,9 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	if updates == nil {
 		return nil
 	}
-    prefix := ">>"
+    prefix := "+>"
     if mod {
-        prefix = "+>"
+        prefix = ">>"
     }
 
     if channel != "" {
