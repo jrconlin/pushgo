@@ -212,7 +212,8 @@ func (self *Worker) sniffer(sock *PushWS) {
 			if self.logger != nil {
 				self.logger.Debug("worker", "Run returned error", nil)
 			} else {
-				log.Printf("Unknown error occurred %s", err)
+				log.Printf("sniffer:%s Unknown error occurred %s",
+					messageType, err)
 			}
 			self.handleError(sock, buffer, err)
 			self.stopped = true

@@ -226,9 +226,9 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 	var item string
 	err = mc.Get(string(pk), &item)
 	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
-            err = nil
-    }
-    if err != nil {
+		err = nil
+	}
+	if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage",
@@ -238,9 +238,9 @@ func (self *Storage) fetchRec(pk string) (result util.JsMap, err error) {
 		}
 		return nil, err
 	}
-    if item == "" {
-        return nil, err
-    }
+	if item == "" {
+		return nil, err
+	}
 
 	json.Unmarshal([]byte(item), &result)
 
@@ -266,16 +266,16 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	var raw string
 	err = mc.Get(uaid, &raw)
 	if err != nil {
-        if strings.Contains("NOT FOUND", err.Error()) {
-            return result, nil
-        } else {
-    		self.isFatal(err)
-        }
+		if strings.Contains("NOT FOUND", err.Error()) {
+			return result, nil
+		} else {
+			self.isFatal(err)
+		}
 		return nil, err
 	}
-    if raw != "" {
-    	result = strings.Split(raw, ",")
-    }
+	if raw != "" {
+		result = strings.Split(raw, ",")
+	}
 	return result, err
 }
 
@@ -524,9 +524,9 @@ func (self *Storage) GetUpdates(uaid string, lastAccessed int64) (results util.J
 		}
 	}
 
-    if recs == nil {
-        return nil, err
-    }
+	if recs == nil {
+		return nil, err
+	}
 
 	// Result has no len or counter.
 	resCount := 0
@@ -656,9 +656,9 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 		}
 	}
 
-    if strings.Contains("NOT FOUND", err.Error()) {
-        err = nil
-    }
+	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
+		err = nil
+	}
 
 	if err != nil {
 		return err
@@ -759,9 +759,9 @@ func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	mc := self.mc
 	//mc.Timeout = time.Second * 10
 	err = mc.Delete(prefix+uaid, time.Duration(0))
-    if err != nil && strings.Contains("NOT FOUND", err.Error()) {
-        err = nil
-    }
+	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
+		err = nil
+	}
 	self.isFatal(err)
 	return err
 }

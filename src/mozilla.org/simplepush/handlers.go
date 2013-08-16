@@ -374,7 +374,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 				logger.Error("main", "Unknown error",
 					mozutil.JsMap{"error": r.(error).Error()})
 			} else {
-				log.Printf("Unknown Error: %s", r.(error).Error())
+				log.Printf("Socket Unknown Error: %s", r.(error).Error())
 			}
 		}
 		// Clean-up the resources
