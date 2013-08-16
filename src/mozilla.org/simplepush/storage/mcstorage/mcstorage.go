@@ -260,7 +260,11 @@ func (self *Storage) fetchAppIDArray(uaid string) (result []string, err error) {
 	var raw string
 	err = mc.Get(uaid, &raw)
 	if err != nil {
-		self.isFatal(err)
+        if strings.Contains("NOT FOUND", err.Error()) {
+            return result, nil
+        } else {
+    		self.isFatal(err)
+        }
 		return nil, err
 	}
 	result = strings.Split(raw, ",")
@@ -739,6 +743,9 @@ func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	mc := self.mc
 	//mc.Timeout = time.Second * 10
 	err = mc.Delete(prefix+uaid, time.Duration(0))
+    if err != nil && strings.Contains("NOT FOUND", err.Error()) {
+        err = nil
+    }
 	self.isFatal(err)
 	return err
 }
