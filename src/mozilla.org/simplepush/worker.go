@@ -103,7 +103,8 @@ func (self *Worker) sniffer(sock *PushWS) {
 		if self.stopped {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
-			log.Printf("Stopping...")
+			log.Printf("Stopping %s %dns...", sock.Uaid,
+				time.Now().Sub(sock.Born).Nanoseconds())
 			return
 		}
 		err = websocket.Message.Receive(socket, &raw)
