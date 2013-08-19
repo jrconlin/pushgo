@@ -20,11 +20,12 @@ import (
     "encoding/hex"
 	"errors"
 	"fmt"
-	//"log"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+    "bytes"
 )
 
 const (
@@ -55,8 +56,20 @@ type Storage struct {
 // and space matters in MC.
 type cr struct {
     S int8      //State
-    v uint64    // Version
+    V uint64    // Version
     L int64 // Last touched
+}
+
+type ia [][]byte
+
+func (self ia) Len() int {
+    return len(self)
+}
+func (self ia) Swap(i, j int) {
+    self[i], self[j] = self[j], self[i]
+}
+func (self ia) Less(i, j int) bool {
+    return bytes.Compare(self[i], self[j]) < 0
 }
 
 type StorageError struct {
@@ -70,9 +83,9 @@ func (e *StorageError) Error() string {
 
 // Returns the location of a string in a slice of strings or -1 if
 // the string isn't present in the slice
-func indexOf(list []string, val string) (index int) {
+func indexOf(list ia, val []byte) (index int) {
 	for index, v := range list {
-		if v == val {
+		if bytes.Equal(v, val) {
 			return index
 		}
 	}
@@ -81,7 +94,7 @@ func indexOf(list []string, val string) (index int) {
 
 // Returns a new slice with the string at position pos removed or
 // an equivilant slice if the pos is not in the bounds of the slice
-func remove(list []string, pos int) (res []string) {
+func remove(list [][]byte, pos int) (res [][]byte) {
 	if pos < 0 || pos == len(list) {
 		return list
 	}
@@ -102,7 +115,13 @@ func GenPK(uaid, chid string) (pk string, err error) {
 }
 
 func cleanID(id string) ([]byte) {
-    return hex.Decode(strings.TrimSpace(strings.Replace(id, "-", "", -1)))
+    log.Printf("Cleaning %s", id)
+    res, err := hex.DecodeString(strings.TrimSpace(strings.Replace(id, "-", "", -1)))
+    if err == nil {
+        return res
+    }
+    return nil
+
 }
 
 func binPKFromStrings(uaid, chid string) (pk []byte, err error) {
@@ -246,11 +265,11 @@ func (self *Storage) isFatal(err error) bool {
 	}
 }
 
-func (self *Storage) fetchRec(pk []byte) (result cr, err error) {
-    result = cr{}
-	if pk == "" {
+func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
+    result = &cr{}
+	if pk == nil {
 		err = sperrors.InvalidPrimaryKeyError
-		return result, err
+		return nil, err
 	}
 
 	defer func() {
@@ -267,7 +286,7 @@ func (self *Storage) fetchRec(pk []byte) (result cr, err error) {
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
-	err = mc.Get(string(pk), &result)
+	err = mc.Get(string(pk), result)
 	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
 		err = nil
 	}
@@ -279,7 +298,7 @@ func (self *Storage) fetchRec(pk []byte) (result cr, err error) {
 				util.JsMap{"primarykey": hex.EncodeToString(pk),
 					"error": err})
 		}
-		return result, err
+		return nil, err
 	}
 
 	if self.logger != nil {
@@ -291,14 +310,14 @@ func (self *Storage) fetchRec(pk []byte) (result cr, err error) {
 	return result, err
 }
 
-func (self *Storage) fetchAppIDArray(uaid []byte) (result [][]byte, err error) {
+func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 	if uaid == nil {
 		return result, nil
 	}
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
-	err = mc.Get(uaid, &result)
+	err = mc.Get(string(uaid), &result)
 	if err != nil {
 		if strings.Contains("NOT FOUND", err.Error()) {
 			return result, nil
@@ -310,19 +329,22 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result [][]byte, err error) {
 	return result, err
 }
 
-func (self *Storage) storeAppIDArray(uaid []byte, arr [][]byte) (err error) {
+func (self *Storage) storeAppIDArray(uaid []byte, arr ia) (err error) {
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
-	err = mc.Set(uaid, arr, 0)
+    // sort the array
+    sort.Sort(arr)
+    log.Printf("Storing... %x: %v", uaid, arr)
+	err = mc.Set(string(uaid), arr, 0)
 	if err != nil {
 		self.isFatal(err)
 	}
 	return err
 }
 
-func (self *Storage) storeRec(pk []byte, rec cr) (err error) {
-	if pk == "" {
+func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
+	if pk == nil {
 		return sperrors.InvalidPrimaryKeyError
 	}
 
@@ -332,7 +354,7 @@ func (self *Storage) storeRec(pk []byte, rec cr) (err error) {
 	}
 
 	var ttls string
-	switch rec["s"] {
+	switch rec.S {
 	case DELETED:
 		ttls = config["db.timeout_del"].(string)
 	case REGISTERED:
@@ -340,19 +362,19 @@ func (self *Storage) storeRec(pk []byte, rec cr) (err error) {
 	default:
 		ttls = config["db.timeout_live"].(string)
 	}
-	rec["l"] = time.Now().UTC().Unix()
+    rec.L = time.Now().UTC().Unix()
 
 	ttl, err := strconv.ParseInt(ttls, 0, 0)
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Storing record",
 			util.JsMap{"primarykey": pk,
-				"record": raw})
+				"record": fmt.Sprintf("%v",rec)})
 	}
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 
-	err = mc.Set(pk, rec, time.Duration(ttl)*time.Second)
+	err = mc.Set(string(pk), rec, time.Duration(ttl)*time.Second)
 	if err != nil {
 		self.isFatal(err)
 		if self.logger != nil {
@@ -374,23 +396,22 @@ func (self *Storage) UpdateChannel(pks string, vers int64) (err error) {
     if err != nil {
         return err
     }
-    self.binUpdateChannel(pk, vers)
+    return self.binUpdateChannel(pk, vers)
 }
 
 //TODO: Optimize this to decode the PK for updates
 func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 
-	var rec util.JsMap
-    var cRec channelRec
+    var cRec *cr
 
 	if len(pk) == 0 {
 		return sperrors.InvalidPrimaryKeyError
 	}
 
-    suaid, schid, err := ResolvePK(pk)
-    uaid := cleanID(suaid)
-    chid := cleanID(schid)
-    pk := binGenPk(uaid, chid)
+    pks := hex.EncodeToString(pk)
+    uaid, chid, err := binResolvePK(pk)
+    suaid := hex.EncodeToString(uaid)
+    schid := hex.EncodeToString(chid)
 
 	cRec, err = self.fetchRec(pk)
 
@@ -402,15 +423,15 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 		return err
 	}
 
-	if cRec != nil
+	if cRec != nil {
 		if self.logger != nil {
 			self.logger.Debug("storage", fmt.Sprintf("Found record for %s", pks), nil)
 		}
 		if cRec.S != DELETED {
-			newRecord := make(cr)
-			newRecord.V = vers
-			newRecord.S = LIVE
-			newRecord.L = time.Now().UTC().Unix()
+			newRecord := &cr{
+                V: uint64(vers),
+                S: LIVE,
+                L: time.Now().UTC().Unix() }
 			err = self.storeRec(pk, newRecord)
 			if err != nil {
 				return err
@@ -437,19 +458,22 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 	return err
 }
 
-func (self *Storage) RegisterAppId(uaid, chid string, vers int64) (err error) {
+func (self *Storage) RegisterAppID(uaid, chid string, vers int64) (err error) {
     return self.binRegisterAppID(cleanID(uaid), cleanID(chid), vers)
 }
 
 func (self *Storage) binRegisterAppID(uaid, chid []byte, vers int64) (err error) {
 
-	var rec util.JsMap
+	var rec *cr
+
+    log.Printf("uaid, chid : %x %x", string(uaid), string(chid) )
 
 	if len(chid) == 0 {
 		return sperrors.NoChannelError
 	}
 
 	appIDArray, err := self.fetchAppIDArray(uaid)
+    log.Printf("appIDArray %v", appIDArray)
 	// Yep, this should eventually be optimized to a faster scan.
 	if appIDArray != nil {
 		appIDArray = remove(appIDArray, indexOf(appIDArray, chid))
@@ -459,11 +483,11 @@ func (self *Storage) binRegisterAppID(uaid, chid []byte, vers int64) (err error)
 		return err
 	}
 
-	rec = make(cr)
-	rec.S = REGISTERED
-	rec.L = time.Now().UTC().Unix()
+	rec = &cr{
+        S: REGISTERED,
+        L: time.Now().UTC().Unix()}
 	if vers != 0 {
-		rec.V = vers
+		rec.V = uint64(vers)
 		rec.S = LIVE
 	}
 
@@ -481,7 +505,7 @@ func (self *Storage) binRegisterAppID(uaid, chid []byte, vers int64) (err error)
 
 func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error) {
 
-	if len(chid) == 0 {
+	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
 
@@ -492,8 +516,9 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 	if err != nil {
 		return err
 	}
-	pos := sort.SearchStrings(appIDArray, chid)
-	if pos > -1 {
+	pos := sort.Search(len(appIDArray),
+        func(i int) bool { return bytes.Compare(appIDArray[i],chid) >= 0})
+	if pos < len(appIDArray) && bytes.Equal(appIDArray[pos],chid) {
 		self.storeAppIDArray(uaid, remove(appIDArray, pos))
 		pk, err := binGenPK(uaid, chid)
 		if err != nil {
@@ -523,9 +548,7 @@ func (self *Storage) IsKnownUaid(suaid string) bool {
 	if self.logger != nil {
 		self.logger.Debug("storage", "IsKnownUaid", util.JsMap{"uaid": suaid})
 	}
-
-    suid
-	_, err := self.fetchAppIDArray(uaid)
+	_, err := self.fetchAppIDArray(cleanID(suaid))
 	if err == nil {
 		return true
 	}
@@ -545,12 +568,13 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	for _, chid := range appIDArray {
 		pk, _ := binGenPK(uaid, chid)
 		// TODO: Puke on error
-		items = append(items, pk)
+        log.Printf("Getting... %x", pk )
+		items = append(items, string(pk))
 	}
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Fetching items",
-			util.JsMap{"uaid": uaid,
+			util.JsMap{"uaid": fmt.Sprintf("%x",uaid),
 				"items": items})
 	}
 	mc := <-self.mcs
@@ -577,11 +601,13 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 
 	// Result has no len or counter.
 	resCount := 0
-	var i string
+	var i cr
 	for _, key := range items {
 		if err := recs.Get(key, &i); err == nil {
 			resCount = resCount + 1
-		}
+		} else {
+            log.Printf("GET err: %s", err)
+        }
 	}
 
 	var update util.JsMap
@@ -598,12 +624,13 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		if err != nil {
 			continue
 		}
-		uaid, chid, err := binResolvePK(key)
+		suaid, schid, err := ResolvePK(key)
+        chid := cleanID(schid)
 		if self.logger != nil {
 			self.logger.Debug("storage",
 				"GetUpdates Fetched record ",
-				util.JsMap{"uaid": hex.EncodeToString(uaid),
-					"value": fmt.Sprintf("%v", cr)})
+				util.JsMap{"uaid": suaid,
+					"value": fmt.Sprintf("%v", val)})
 		}
 		if err != nil {
 			return nil, err
@@ -618,38 +645,26 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		// Apparently float64(1) != int(1).
 		switch val.S {
 		case LIVE:
-			var fvers float64
-			var ok bool
+			var vers uint64
 			newRec := make(util.JsMap)
-			newRec["channelID"] = chid
-			fvers, ok = update
-			if !ok {
-				var cerr error
-				if self.logger != nil {
-					self.logger.Warn("storage",
-						"GetUpdates Possibly bad version",
-						util.JsMap{"update": update})
-				}
-				fvers, cerr = strconv.ParseFloat(update["v"].(string), 0)
-				if cerr != nil {
-					if self.logger != nil {
-						self.logger.Error("storage",
+			newRec["channelID"] = hex.EncodeToString(chid)
+			vers = val.V
+            if vers == 0 {
+                vers = uint64(time.Now().UTC().Unix())
+				self.logger.Error("storage",
 							"GetUpdates Using Timestamp",
 							util.JsMap{"update": update})
-					}
-					fvers = float64(time.Now().UTC().Unix())
-				}
-			}
-			newRec["version"] = int64(fvers)
+            }
+			newRec["version"] = vers
 			updates = append(updates, newRec)
-		case float64(DELETED):
+		case DELETED:
 			if self.logger != nil {
 				self.logger.Info("storage",
 					"GetUpdates Deleting record",
 					util.JsMap{"update": update})
 			}
-			expired = append(expired, chid)
-		case float64(REGISTERED):
+			expired = append(expired, hex.EncodeToString(chid))
+		case REGISTERED:
 			// Item registered, but not yet active. Ignore it.
 		default:
 			if self.logger != nil {
@@ -789,18 +804,19 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	return string(val), nil
 }
 
-func (self *Storage) PurgeUAID(uaid string) (err error) {
+func (self *Storage) PurgeUAID(suaid string) (err error) {
+    uaid := cleanID(suaid)
 	appIDArray, err := self.fetchAppIDArray(uaid)
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 	if err == nil && len(appIDArray) > 0 {
 		for _, chid := range appIDArray {
-			pk, _ := GenPK(uaid, chid)
-			err = mc.Delete(pk, time.Duration(0))
+			pk, _ := binGenPK(uaid, chid)
+			err = mc.Delete(string(pk), time.Duration(0))
 		}
 	}
-	err = mc.Delete(uaid, time.Duration(0))
-	self.DelUAIDHost(uaid)
+	err = mc.Delete(string(uaid), time.Duration(0))
+	self.DelUAIDHost(suaid)
 	return nil
 }
 
