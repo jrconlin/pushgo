@@ -93,13 +93,30 @@ func main() {
 			fmt.Sprintf("listening on %s:%s", host, port), nil)
 	}
 
+	var certFile string
+	var keyFile string
+	if name, ok := config["ssl.certfile"]; ok {
+		certFile = name.(string)
+	}
+	if name, ok := config["ssl.keyfile"]; ok {
+		keyFile = name.(string)
+	}
+
 	// wait for sigint
 	sigChan := make(chan os.Signal)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGHUP, SIGUSR1)
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
+		addr := host + ":" + port
+		if len(certFile) > 0 && len(keyFile) > 0 {
+			if logger != nil {
+				logger.Info("main", "Using TLS", nil)
+			}
+			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, nil)
+		} else {
+			errChan <- http.ListenAndServe(addr, nil)
+		}
 	}()
 
 	select {
