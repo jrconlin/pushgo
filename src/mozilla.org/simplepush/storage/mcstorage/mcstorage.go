@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	//"log"
+	"bufio"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +80,61 @@ func remove(list []string, pos int) (res []string) {
 	return append(list[:pos], list[pos+1:]...)
 }
 
+func getElastiCacheEndpoints(configEndpoint string) (string, error) {
+	c, err := net.Dial("tcp", configEndpoint)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+
+	reader, writer := bufio.NewReader(c), bufio.NewWriter(c)
+	writer.Write([]byte("config get cluster\r\n"))
+	writer.Flush()
+
+	reader.ReadString('\n')
+	reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", nil
+	}
+
+	endPoints := strings.Split(line, " ")
+	if len(endPoints) < 1 {
+		return "", errors.New("Elasticache returned no endPoints")
+	}
+
+	retEndpoints := make([]string, 0)
+	for _, v := range endPoints {
+		endPoint := strings.Split(v, "|")
+		if len(endPoint) < 3 {
+			continue
+		}
+		retEndpoints = append(retEndpoints, fmt.Sprintf("%s:%s", endPoint[1], strings.TrimSpace(endPoint[2])))
+	}
+	return strings.Join(retEndpoints, ","), nil
+}
+
+func getElastiCacheEndpointsTimeout(configEndpoint string, seconds int) (string, error) {
+	type strErr struct {
+		ep  string
+		err error
+	}
+
+	ch := make(chan strErr)
+
+	go func() {
+		ep, err := getElastiCacheEndpoints(configEndpoint)
+		ch <- strErr{ep, err}
+	}()
+	select {
+	case se := <-ch:
+		return se.ep, se.err
+	case <-time.After(time.Duration(seconds) * time.Second):
+		return "", errors.New("Elasticache config timeout")
+	}
+
+}
+
 func ResolvePK(pk string) (uaid, appid string, err error) {
 	items := strings.SplitN(pk, ".", 2)
 	if len(items) < 2 {
@@ -94,6 +151,19 @@ func GenPK(uaid, appid string) (pk string, err error) {
 func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	config = opts
 	var ok bool
+
+	if configEndpoint, ok := config["elasticache.config_endpoint"]; ok {
+		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint.(string), 2)
+		if err == nil {
+			config["memcache.server"] = memcacheEndpoint
+		} else {
+			fmt.Println(err)
+			if logger != nil {
+				logger.Error("storage", "Elastisearch error.",
+					util.JsMap{"error": err})
+			}
+		}
+	}
 
 	if _, ok = config["memcache.server"]; !ok {
 		config["memcache.server"] = "127.0.0.1:11211"
