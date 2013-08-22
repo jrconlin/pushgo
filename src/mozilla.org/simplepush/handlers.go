@@ -28,6 +28,8 @@ import (
 	"time"
 )
 
+var toomany int32=0
+
 func awsGetPublicHostname() (hostname string, err error) {
 	req := &http.Request{Method: "GET",
 		URL: &url.URL{
@@ -109,14 +111,28 @@ func NewHandler(config mozutil.JsMap, logger *mozutil.HekaLogger, store *storage
 }
 
 // VIP response
-func (self *Handler) StatusHandler(resp http.ResponseWriter, req *http.Request) {
+func (self *Handler) StatusHandler(resp http.ResponseWriter,
+	req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := ClientCount()
-	resp.Write([]byte(fmt.Sprintf("{\"status\":\"OK\",\"clients\":%d}", clientCount)))
+	maxClients := self.config["max_connections"].(int)
+	ok := clientCount < maxClients
+	OK := "OK"
+	if !ok {
+		OK = "NOPE"
+	}
+	reply := fmt.Sprintf("{\"status\":\"%s\",\"clients\":%d}",
+		OK, clientCount)
+	if !ok {
+		http.Error(resp, reply, http.StatusServiceUnavailable)
+	} else {
+		resp.Write([]byte(reply))
+	}
 }
 
-func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Request) {
+func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
+	req *http.Request) {
 	var okClients bool
 	var msg string
 
@@ -144,7 +160,11 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter, req *http.Reque
 	}
 	reply, err := json.Marshal(repMap)
 
-	resp.Write(reply)
+	if ok {
+		resp.Write(reply)
+	} else {
+		http.Error(resp, string(reply), http.StatusServiceUnavailable)
+	}
 }
 
 func proxyNotification(host, path string) (err error) {
@@ -173,6 +193,21 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	var err error
 	var port string
 	var vers int64
+
+	if ClientCount() > self.config["max_connections"].(int) {
+		if self.logger != nil {
+            if toomany == 0 {
+                atomic.StoreInt32(&toomany, 1)
+			    self.logger.Error("handler", "Socket Count Exceeded", nil)
+            }
+		}
+		http.Error(resp, "{\"error\": \"Server unavailable\"}",
+			http.StatusServiceUnavailable)
+		return
+	}
+    if toomany != 0 {
+        atomic.StoreInt32(&toomany, 0)
+    }
 
 	timer := time.Now()
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
@@ -275,7 +310,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-    log.Printf("<< %s.%s = %d", uaid, appid, vers)
+	log.Printf("<< %s.%s = %d", uaid, appid, vers)
 
 	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)
@@ -352,13 +387,23 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	timer := time.Now()
 	if ClientCount() > self.config["max_connections"].(int) {
 		if self.logger != nil {
-			self.logger.Error("handler", "Too Many Sockets!", nil)
+            if toomany == 0 {
+                // Don't flood the error log.
+                atomic.StoreInt32(&toomany, 1)
+			    self.logger.Error("handler", "Socket Count Exceeded", nil)
+            }
 		}
+        websocket.JSON.Send(ws, mozutil.JsMap{
+            "status":http.StatusServiceUnavailable,
+            "error":"Server Unavailable"})
 		return
 	}
+    if toomany != 0 {
+        atomic.StoreInt32(&toomany, 0)
+    }
+	timer := time.Now()
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,
