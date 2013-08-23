@@ -566,7 +566,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	}
 	// Fetch the pending updates from #storage
 	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
-    mod := false
+	mod := false
 	if err != nil {
 		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
 		return err
@@ -592,14 +592,14 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	if updates == nil {
 		return nil
 	}
-    prefix := "+>"
-    if mod {
-        prefix = ">>"
-    }
+	prefix := "+>"
+	if mod {
+		prefix = ">>"
+	}
 
-    if channel != "" {
-        log.Printf("%s %s.%s = %d",prefix, sock.Uaid, channel, version)
-    }
+	if channel != "" {
+		log.Printf("%s %s.%s = %d", prefix, sock.Uaid, channel, version)
+	}
 	updates["messageType"] = messageType
 	if self.logger != nil {
 		self.logger.Debug("worker", "Flushing data back to socket", updates)

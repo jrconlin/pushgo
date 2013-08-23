@@ -7,8 +7,9 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"mozilla.org/simplepush"
+	"mozilla.org/simplepush/router"
 	storage "mozilla.org/simplepush/storage/mcstorage"
-	mozutil "mozilla.org/util"
+	"mozilla.org/util"
 
 	"flag"
 	"fmt"
@@ -26,7 +27,7 @@ var (
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *bool   = flag.Bool("logging", true, "Whether logging is enabled")
-	logger     *mozutil.HekaLogger
+	logger     *util.HekaLogger
 	store      *storage.Storage
 )
 
@@ -35,7 +36,7 @@ const SIGUSR1 = syscall.SIGUSR1
 // -- main
 func main() {
 	flag.Parse()
-	config := mozutil.MzGetConfig(*configFile)
+	config := util.MzGetConfig(*configFile)
 
 	config = simplepush.FixConfig(config)
 	log.Printf("CurrentHost: %s", config["shard.current_host"])
@@ -55,9 +56,13 @@ func main() {
 	//  Disable logging for high capacity runs
 	if v, ok := config["logger.enable"]; ok {
 		if v, _ := strconv.ParseBool(v.(string)); v {
-			logger = mozutil.NewHekaLogger(config)
+			logger = util.NewHekaLogger(config)
 			logger.Info("main", "Enabling full logger", nil)
 		}
+	}
+	router := &router.Router{
+		Port: util.MzGet(config, "shard.port", "3000"),
+        Logger: logger,
 	}
 	if *memProfile != "" {
 		defer func() {
@@ -74,7 +79,7 @@ func main() {
 
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
-	handlers := simplepush.NewHandler(config, logger, store)
+	handlers := simplepush.NewHandler(config, logger, store, router)
 
 	// Register the handlers
 	// each websocket gets it's own handler.
@@ -84,8 +89,8 @@ func main() {
 	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server
-	host := mozutil.MzGet(config, "host", "localhost")
-	port := mozutil.MzGet(config, "port", "8080")
+	host := util.MzGet(config, "host", "localhost")
+	port := util.MzGet(config, "port", "8080")
 
 	// Hoist the main sail
 	if logger != nil {
@@ -119,6 +124,8 @@ func main() {
 		}
 	}()
 
+	go router.HandleUpdates(updater)
+
 	select {
 	case err := <-errChan:
 		if err != nil {
@@ -129,6 +136,16 @@ func main() {
 			logger.Info("main", "Recieved signal, shutting down.", nil)
 		}
 	}
+}
+
+func updater(update *router.Update) (err error) {
+	log.Printf("UPDATE::: %s", update)
+	pk, _ := storage.GenPK(update.Uaid, update.Chid)
+	err = store.UpdateChannel(pk, update.Vers)
+	if client, ok := simplepush.Clients[update.Uaid]; ok {
+		simplepush.Flush(client, update.Chid, int64(update.Vers))
+	}
+	return nil
 }
 
 // 04fs

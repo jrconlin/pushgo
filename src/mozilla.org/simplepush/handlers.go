@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"code.google.com/p/go.net/websocket"
+	"mozilla.org/simplepush/router"
 	"mozilla.org/simplepush/sperrors"
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	mozutil "mozilla.org/util"
@@ -102,12 +103,15 @@ type Handler struct {
 	config mozutil.JsMap
 	logger *mozutil.HekaLogger
 	store  *storage.Storage
+	router *router.Router
 }
 
-func NewHandler(config mozutil.JsMap, logger *mozutil.HekaLogger, store *storage.Storage) *Handler {
+func NewHandler(config mozutil.JsMap, logger *mozutil.HekaLogger,
+	store *storage.Storage, router *router.Router) *Handler {
 	return &Handler{config: config,
 		logger: logger,
-		store:  store}
+		store:  store,
+		router: router}
 }
 
 // VIP response
@@ -290,7 +294,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	uaid, appid, err := storage.ResolvePK(pk)
+	uaid, chid, err := storage.ResolvePK(pk)
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update",
@@ -302,18 +306,18 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if appid == "" {
+	if chid == "" {
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Incomplete primary key",
 				mozutil.JsMap{"uaid": uaid,
-					"channelID":  appid,
+					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
 		return
 	}
 
-	log.Printf("<< %s.%s = %d", uaid, appid, vers)
+	log.Printf("<< %s.%s = %d", uaid, chid, vers)
 
 	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)
@@ -340,35 +344,49 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					mozutil.JsMap{"uaid": uaid,
 						"destination": host + port})
 			}
-			proto := "http"
-			if len(mozutil.MzGet(self.config, "ssl.certfile", "")) > 0 {
-				proto = "https"
+			// Use tcp routing.
+			if mozutil.MzGetFlag(self.config, "shard.router") {
+				// If there was an error routing the update, don't
+				// tell the AppServer. Chances are it's temporary, and
+				// the client will get the update on next refresh/reconnect
+				self.router.SendUpdate(host, uaid, chid, vers)
+			} else {
+				proto := "http"
+				if len(mozutil.MzGet(self.config, "ssl.certfile", "")) > 0 {
+					proto = "https"
+				}
+
+				err = proxyNotification(proto, host+port, req.URL.Path, vers)
+				if err != nil && self.logger != nil {
+					self.logger.Error("update",
+						"Proxy failed", mozutil.JsMap{
+							"uaid":        uaid,
+							"destination": host + port,
+							"error":       err})
+				}
 			}
-			err = proxyNotification(proto, host+port, req.URL.Path, vers)
-			if err != nil && self.logger != nil {
-				self.logger.Error("update",
-					"Proxy failed", mozutil.JsMap{
-						"uaid":        uaid,
-						"destination": host + port,
-						"error":       err})
+			if err != nil {
+				http.Error(resp, err.Error(), 500)
+			} else {
+				resp.Write([]byte("Ok"))
 			}
 			return
 		}
 	}
 
 	if self.logger != nil {
-		defer func(uaid, appid, path string, timer time.Time) {
+		defer func(uaid, chid, path string, timer time.Time) {
 			self.logger.Info("timer", "Client Update complete",
 				mozutil.JsMap{
 					"uaid":      uaid,
 					"path":      req.URL.Path,
-					"channelID": appid,
+					"channelID": chid,
 					"duration":  time.Now().Sub(timer).Nanoseconds()})
-		}(uaid, appid, req.URL.Path, timer)
+		}(uaid, chid, req.URL.Path, timer)
 
 		self.logger.Info("update",
 			"setting version for ChannelID",
-			mozutil.JsMap{"uaid": uaid, "channelID": appid, "version": vers})
+			mozutil.JsMap{"uaid": uaid, "channelID": chid, "version": vers})
 	}
 	err = self.store.UpdateChannel(pk, vers)
 
@@ -376,7 +394,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update", "Cound not update channel",
 				mozutil.JsMap{"UAID": uaid,
-					"channelID": appid,
+					"channelID": chid,
 					"version":   vers,
 					"error":     err})
 		}
@@ -388,7 +406,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Write([]byte("{}"))
 	// Ping the appropriate server
 	if client, ok := Clients[uaid]; ok {
-		Flush(client, appid, int64(vers))
+		Flush(client, chid, int64(vers))
 	}
 	return
 }
