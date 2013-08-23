@@ -4,4 +4,4 @@ if [ ! -e config.ini ]; then
     cp config.sample.ini config.ini
 fi
 GOPATH=`pwd` go build main.go
-GOPATH=`pwd` ./main
+GOPATH=`pwd` ./main $*

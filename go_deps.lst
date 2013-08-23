@@ -4,5 +4,3 @@ code.google.com/p/go.net/websocket
 github.com/ianoshen/gomc
 github.com/mozilla-services/heka/client
 github.com/mozilla-services/heka/message
-# following requires libzmq (2.1/2.2)
-github.com/pebbe/zmq2
