@@ -220,6 +220,10 @@ func keycode(key []byte) string {
 	// return string(key)
 	return base64.StdEncoding.EncodeToString(key)
 }
+func keydecode(key string) []byte {
+	ret, _ := base64.StdEncoding.DecodeString(key)
+	return ret
+}
 
 func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	config = opts
@@ -458,8 +462,8 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Storing record",
-			util.JsMap{"primarykey": pk,
-				"record": fmt.Sprintf("%v", rec)})
+			util.JsMap{"primarykey": keycode(pk),
+				"record": fmt.Sprintf("%d,%d,%d", rec.L, rec.S, rec.V)})
 	}
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
@@ -707,13 +711,13 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		if err != nil {
 			continue
 		}
-		suaid, schid, err := ResolvePK(key)
-		chid := cleanID(schid)
+		uaid, chid, err := binResolvePK(keydecode(key))
 		if self.logger != nil {
 			self.logger.Debug("storage",
 				"GetUpdates Fetched record ",
-				util.JsMap{"uaid": suaid,
-					"value": fmt.Sprintf("%v", val)})
+				util.JsMap{"uaid": keycode(uaid),
+					"chid":  keycode(chid),
+					"value": fmt.Sprintf("%d,%d,%d", val.L, val.S, val.V)})
 		}
 		if err != nil {
 			return nil, err
@@ -787,10 +791,13 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 			}
 		}
 	}
-	if _, ok := ackPacket["updates"]; ok {
-		if ackPacket["updates"] != nil {
+	if p, ok := ackPacket["updates"]; ok {
+		if p != nil {
 			// unspool the loaded records.
-			for _, rec := range ackPacket["updates"].([]interface{}) {
+			for _, rec := range p.([]interface{}) {
+				if rec == nil {
+					continue
+				}
 				recmap := rec.(map[string]interface{})
 				pk, _ := GenPK(uaid, recmap["channelID"].(string))
 				err = mc.Delete(pk, time.Duration(0))

@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"mozilla.org/util"
 	"net"
-    "mozilla.org/util"
 )
 
 type Router struct {
-	Port string
-    Logger *util.HekaLogger
+	Port   string
+	Logger *util.HekaLogger
 }
 
 type Route struct {
@@ -70,9 +70,9 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 		}
 		update := Update{}
 		json.Unmarshal(buf[:n], &update)
-        if len(update.Uaid) == 0 {
-            continue
-        }
+		if len(update.Uaid) == 0 {
+			continue
+		}
 		updater(&update)
 	}
 	if err != nil {

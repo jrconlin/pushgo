@@ -197,8 +197,15 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mo
 	var err error
 	args := cmd.Arguments.(mozutil.JsMap)
 	args["status"] = 200
-	if _, ok := self.config["pushEndpoint"]; !ok {
-		self.config["pushEndpoint"] = "http://localhost/update/<token>"
+	var endPoint string
+	if _, ok := self.config["push.endpoint"]; !ok {
+		if _, ok := self.config["pushEndpoint"]; !ok {
+			endPoint = "http://localhost/update/<token>"
+		} else {
+			endPoint = self.config["pushEndpoint"].(string)
+		}
+	} else {
+		endPoint = self.config["push.endpoint"].(string)
 	}
 	// Generate the call back URL
 	token, err := storage.GenPK(sock.Uaid,
@@ -222,19 +229,18 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments mo
 
 	}
 	// cheezy variable replacement.
-	args["pushEndpoint"] = strings.Replace(self.config["pushEndpoint"].(string),
-		"<token>", token, -1)
+	endPoint = strings.Replace(endPoint, "<token>", token, -1)
 	host := fmt.Sprintf("%s:%s", self.config["shard.current_host"].(string),
 		self.config["port"].(string))
-	args["pushEndpoint"] = strings.Replace(args["pushEndpoint"].(string),
-		"<current_host>", host, -1)
+	endPoint = strings.Replace(endPoint, "<current_host>", host, -1)
+	args["push.endpoint"] = endPoint
 	if self.logger != nil {
 		self.logger.Info("server",
 			"Generated Endpoint",
 			mozutil.JsMap{"uaid": sock.Uaid,
 				"channelID": args["channelID"],
 				"token":     token,
-				"endpoint":  args["pushEndpoint"]})
+				"endpoint":  endPoint})
 	}
 	return 200, args
 }

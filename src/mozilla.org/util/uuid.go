@@ -9,7 +9,7 @@ package util
 import (
 	"crypto/rand"
 	"encoding/hex"
-    "strings"
+	"strings"
 )
 
 func GenUUID4() (string, error) {
@@ -28,9 +28,9 @@ func GenUUID4() (string, error) {
 }
 
 func ScanUUID(uuids string) ([]byte, error) {
-    // scan a UUID and return it as byte array
-    trimmed := strings.TrimSpace(strings.Replace(uuids, "-", "", -1))
-    return hex.DecodeString(trimmed)
+	// scan a UUID and return it as byte array
+	trimmed := strings.TrimSpace(strings.Replace(uuids, "-", "", -1))
+	return hex.DecodeString(trimmed)
 }
 
 // o4fs

@@ -484,7 +484,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 		self.logger.Debug("worker",
 			fmt.Sprintf("Server returned %s", result), nil)
 	}
-	endpoint := result.Arguments.(mozutil.JsMap)["pushEndpoint"].(string)
+	endpoint := result.Arguments.(mozutil.JsMap)["push.endpoint"].(string)
 	// return the info back to the socket
 	reply := mozutil.JsMap{"messageType": data["messageType"],
 		"uaid":         sock.Uaid,
@@ -576,28 +576,36 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
 		}
 		upds := updates["updates"].([]map[string]interface{})
+		pdsLen := 0
+		oupds := make([]map[string]interface{}, len(upds)+1)
 		for i := range upds {
-			if upds[i]["channelID"].(string) == channel {
-				upds[i]["version"] = version
+			rec := upds[i]
+			if rec["channelID"].(string) == channel {
+				rec["version"] = version
 				mod = true
-				break
 			}
+			if len(rec["channelID"].(string)) == 0 {
+				continue
+				pdsLen = pdsLen - 1
+			}
+			oupds[pdsLen] = rec
+			pdsLen = pdsLen + 1
 		}
 		if !mod {
-			upds = append(upds, mozutil.JsMap{"channelID": channel,
-				"version": version})
+			oupds[pdsLen] = mozutil.JsMap{"channelID": channel,
+				"version": version}
+			pdsLen = pdsLen + 1
 		}
-		updates["updates"] = upds
+		updates["updates"] = oupds
 	}
 	if updates == nil {
 		return nil
 	}
-	prefix := "+>"
-	if mod {
-		prefix = ">>"
-	}
-
 	if channel != "" {
+		prefix := "+>"
+		if mod {
+			prefix = ">>"
+		}
 		log.Printf("%s %s.%s = %d", prefix, sock.Uaid, channel, version)
 	}
 	updates["messageType"] = messageType
