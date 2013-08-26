@@ -22,7 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	//	"log"
 	"bufio"
 	"net"
 	"sort"
@@ -800,7 +800,6 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 				}
 				recmap := rec.(map[string]interface{})
 				pk, _ := binPKFromStrings(uaid, recmap["channelID"].(string))
-                log.Printf("deleting %s", pk)
 				err = mc.Delete(keycode(pk), time.Duration(0))
 				if err != nil {
 					self.isFatal(err)
