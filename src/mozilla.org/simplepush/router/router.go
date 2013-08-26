@@ -91,6 +91,8 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 
 	if route, ok = routes[host]; !ok {
 		// create a new route
+        if self.Logger != nil {
+            self.Logger.Info("router", "Creating new route to "+host, nil)
 		conn, err := net.Dial("tcp", host+":"+self.Port)
 		if err != nil {
 			return err
