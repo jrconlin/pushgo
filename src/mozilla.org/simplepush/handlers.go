@@ -336,7 +336,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 		host = mozutil.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
-	if mozutil.MzGetFlag(self.config, "shard.doProxy") {
+	if mozutil.MzGetFlag(self.config, "shard.do_proxy") {
 		if host != currentHost && host != "localhost" {
 			if self.logger != nil {
 				self.logger.Info("update",

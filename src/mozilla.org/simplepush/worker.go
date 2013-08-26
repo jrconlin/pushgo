@@ -379,7 +379,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// blocking call back to the boss.
 	raw_result, args := HandleServerCommand(cmd, sock)
 	result := PushCommand{raw_result, args}
-	if err = sock.Store.SetUAIDHost(sock.Uaid); err != nil {
+	if err = sock.Store.SetUAIDHost(sock.Uaid, ""); err != nil {
 		return err
 	}
 

@@ -824,8 +824,10 @@ func (self *Storage) ReloadData(uaid string, updates []string) (err error) {
 	return nil
 }
 
-func (self *Storage) SetUAIDHost(uaid string) (err error) {
-	host := self.config["shard.current_host"].(string)
+func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
+	if host == "" {
+		host = self.config["shard.current_host"].(string)
+	}
 	prefix := self.config["shard.prefix"].(string)
 
 	if uaid == "" {
@@ -890,7 +892,7 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 				"host": val})
 	}
 	// reinforce the link.
-	self.SetUAIDHost(val)
+	self.SetUAIDHost(uaid, val)
 	return string(val), nil
 }
 
