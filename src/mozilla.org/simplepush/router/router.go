@@ -28,7 +28,7 @@ type Update struct {
 type Updater func(*Update) error
 
 func (self *Router) HandleUpdates(updater Updater) {
-	listener, err := net.Listen("tcp", "0.0.0.0:"+self.Port)
+	listener, err := net.Listen("tcp", ":"+self.Port)
 	if err != nil {
 		if self.Logger != nil {
 			self.Logger.Critical("router",
@@ -109,9 +109,8 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 		return err
 	}
 	_, err = route.socket.Write(data)
-	if err != nil {
-		delete(routes, host)
-	}
+	route.socket.Close()
+	delete(routes, host)
 	return err
 }
 
