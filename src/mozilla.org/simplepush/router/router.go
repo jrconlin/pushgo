@@ -1,11 +1,14 @@
 package router
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mozilla.org/util"
 	"net"
+	"sync"
 )
 
 type Router struct {
@@ -17,6 +20,7 @@ type Route struct {
 	socket net.Conn
 }
 
+var MuRoutes sync.Mutex
 var routes map[string]*Route
 
 type Update struct {
@@ -38,7 +42,7 @@ func (self *Router) HandleUpdates(updater Updater) {
 		}
 		return
 	}
-	log.Printf("Listening for updates on 0.0.0.0:" + self.Port)
+	log.Printf("Listening for updates on *:" + self.Port)
 
 	for {
 		conn, err := listener.Accept()
@@ -61,19 +65,30 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 		if err != nil {
 			if err == io.EOF && n == 0 {
 				if self.Logger != nil {
-					self.Logger.Debug("router", "Closing listener socket.", nil)
+					self.Logger.Debug("router", "@@@@ Closing listener socket."+err.Error(), nil)
 				}
 				err = nil
 				break
 			}
 			break
 		}
+		log.Printf("@@@ Updates::: " + string(buf[:n]))
 		update := Update{}
-		json.Unmarshal(buf[:n], &update)
-		if len(update.Uaid) == 0 {
-			continue
+		items := bytes.Split(buf[:n], []byte("\n"))
+		for _, item := range items {
+			log.Printf("@@@ item ::: %s", item)
+			if len(item) == 0 {
+				continue
+			}
+			json.Unmarshal(item, &update)
+			if self.Logger != nil {
+				self.Logger.Debug("router", fmt.Sprintf("@@@@ Handling update %s", item), nil)
+			}
+			if len(update.Uaid) == 0 {
+				continue
+			}
+			updater(&update)
 		}
-		updater(&update)
 	}
 	if err != nil {
 		if self.Logger != nil {
@@ -95,6 +110,9 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 		if err != nil {
 			return err
 		}
+		if self.Logger != nil {
+			self.Logger.Info("router", "@@@ Creating new route to "+host, nil)
+		}
 		route = &Route{
 			socket: conn,
 		}
@@ -108,9 +126,18 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	if err != nil {
 		return err
 	}
-	_, err = route.socket.Write(data)
-	route.socket.Close()
-	delete(routes, host)
+	if self.Logger != nil {
+		self.Logger.Debug("router", "@@@ Writing to host "+host, nil)
+	}
+	_, err = route.socket.Write([]byte(string(data) + "\n"))
+	if err != nil {
+		if self.Logger != nil {
+			self.Logger.Error("router", "@@@ Closing socket to "+host, nil)
+			log.Printf("ERROR: %s", err.Error())
+		}
+		route.socket.Close()
+		delete(routes, host)
+	}
 	return err
 }
 

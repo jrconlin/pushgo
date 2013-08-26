@@ -571,7 +571,8 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
 		return err
 	}
-	if channel != "" {
+	schannel := strings.Replace(channel, "-", "", -1)
+	if schannel != "" {
 		if updates == nil {
 			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
 		}
@@ -580,34 +581,34 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		oupds := make([]map[string]interface{}, len(upds)+1)
 		for i := range upds {
 			rec := upds[i]
-			if rec["channelID"].(string) == channel {
-				rec["version"] = version
-				mod = true
-			}
 			if len(rec["channelID"].(string)) == 0 {
 				continue
-				pdsLen = pdsLen - 1
+			}
+			if rec["channelID"].(string) == schannel {
+				rec["version"] = version
+				mod = true
 			}
 			oupds[pdsLen] = rec
 			pdsLen = pdsLen + 1
 		}
 		if !mod {
-			oupds[pdsLen] = mozutil.JsMap{"channelID": channel,
+			oupds[pdsLen] = mozutil.JsMap{"channelID": schannel,
 				"version": version}
 			pdsLen = pdsLen + 1
 		}
-		updates["updates"] = oupds
+		updates["updates"] = oupds[:pdsLen]
 	}
 	if updates == nil {
 		return nil
 	}
 	if channel != "" {
-		prefix := "+>"
-		if mod {
-			prefix = ">>"
+		prefix := ">>"
+		if !mod {
+			prefix = "+>"
 		}
 		log.Printf("%s %s.%s = %d", prefix, sock.Uaid, channel, version)
 	}
+
 	updates["messageType"] = messageType
 	if self.logger != nil {
 		self.logger.Debug("worker", "Flushing data back to socket", updates)
