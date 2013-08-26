@@ -22,7 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	//"log"
+	"log"
 	"bufio"
 	"net"
 	"sort"
@@ -782,8 +782,8 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 				expired := make([]string, cnt)
 				json.Unmarshal(ackPacket["expired"].([]byte), &expired)
 				for _, chid := range expired {
-					pk, _ := GenPK(uaid, chid)
-					err = mc.Delete(pk, time.Duration(0))
+					pk, _ := binPKFromStrings(uaid, chid)
+					err = mc.Delete(keycode(pk), time.Duration(0))
 					if err != nil {
 						self.isFatal(err)
 					}
@@ -799,8 +799,9 @@ func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err err
 					continue
 				}
 				recmap := rec.(map[string]interface{})
-				pk, _ := GenPK(uaid, recmap["channelID"].(string))
-				err = mc.Delete(pk, time.Duration(0))
+				pk, _ := binPKFromStrings(uaid, recmap["channelID"].(string))
+                log.Printf("deleting %s", pk)
+				err = mc.Delete(keycode(pk), time.Duration(0))
 				if err != nil {
 					self.isFatal(err)
 				}

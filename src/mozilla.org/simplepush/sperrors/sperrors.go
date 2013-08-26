@@ -7,7 +7,7 @@ import (
 
 var (
 	ChannelExistsError     = errors.New("Channel Already Exists")
-	InvalidChannelError    = errors.New("No Channel ID Specified")
+	InvalidChannelError    = errors.New("Invalid Channel ID Specified")
 	InvalidCommandError    = errors.New("Invalid Command")
 	InvalidDataError       = errors.New("An Invalid value was specified")
 	InvalidPrimaryKeyError = errors.New("Invalid Primary Key Value")
