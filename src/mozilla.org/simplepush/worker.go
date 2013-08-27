@@ -565,18 +565,20 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		return nil
 	}
 	// Fetch the pending updates from #storage
-    var updates mozutil.JsMap
+	var updates mozutil.JsMap
 	mod := false
-    // if we have a channel, don't flush. we can get them later in the ACK
-    if channel == "" {
-    	updates, err = sock.Store.GetUpdates(sock.Uaid, lastAccessed)
-    	if err != nil {
-	    	self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
-		    return err
-	    }
-    } else {
-        updates = mozutil.JsMap{"updates": []mozutil.JsMap{mozutil.JsMap{"channelID": channel,
-            "version": version}}}
+	// if we have a channel, don't flush. we can get them later in the ACK
+	if channel == "" {
+		updates, err = sock.Store.GetUpdates(sock.Uaid, lastAccessed)
+		if err != nil {
+			self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
+			return err
+		}
+	} else {
+		// hand craft a notification update to the client.
+		// TODO: allow bulk updates.
+		updates = mozutil.JsMap{"updates": []mozutil.JsMap{mozutil.JsMap{"channelID": channel,
+			"version": version}}}
 	}
 	if updates == nil {
 		return nil

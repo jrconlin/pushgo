@@ -108,6 +108,7 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 			if len(update.Uaid) == 0 {
 				continue
 			}
+			// TODO group updates by UAID and send in batch
 			updater(&update)
 		}
 	}

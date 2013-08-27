@@ -680,41 +680,41 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 
 	// Apparently, GetMulti is broken.
 	/*
-	    recs, err := mc.GetMulti(items)
-		if err != nil {
-			if strings.Contains("NOT FOUND", err.Error()) {
-				err = nil
-			} else {
-				self.isFatal(err)
+		    recs, err := mc.GetMulti(items)
+			if err != nil {
+				if strings.Contains("NOT FOUND", err.Error()) {
+					err = nil
+				} else {
+					self.isFatal(err)
+					if self.logger != nil {
+						self.logger.Error("storage", "GetUpdate failed",
+							util.JsMap{"uaid": suaid,
+								"error": err})
+					}
+					return nil, err
+				}
+			}
+
+			if recs == nil {
+				return nil, err
+			}
+
+			// Result has no len or counter.
+			resCount := 0
+			var i cr
+			for _, key := range items {
+				if err := recs.Get(key, &i); err == nil {
+					resCount = resCount + 1
+				}
+			}
+
+			if resCount == 0 {
 				if self.logger != nil {
-					self.logger.Error("storage", "GetUpdate failed",
-						util.JsMap{"uaid": suaid,
-							"error": err})
+					self.logger.Debug("storage",
+						"GetUpdates No records found", util.JsMap{"uaid": suaid})
 				}
 				return nil, err
 			}
-		}
-
-		if recs == nil {
-			return nil, err
-		}
-
-		// Result has no len or counter.
-		resCount := 0
-		var i cr
-		for _, key := range items {
-			if err := recs.Get(key, &i); err == nil {
-				resCount = resCount + 1
-			}
-		}
-
-		if resCount == 0 {
-			if self.logger != nil {
-				self.logger.Debug("storage",
-					"GetUpdates No records found", util.JsMap{"uaid": suaid})
-			}
-			return nil, err
-		}
 	*/
 	var update util.JsMap
 	for _, key := range items {
