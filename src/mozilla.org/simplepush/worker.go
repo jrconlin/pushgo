@@ -540,7 +540,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) error {
+func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) (err error) {
 	// flush pending data back to Client
 	messageType := "notification"
 	timer := time.Now()
@@ -565,38 +565,18 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		return nil
 	}
 	// Fetch the pending updates from #storage
-	updates, err := sock.Store.GetUpdates(sock.Uaid, lastAccessed)
+    var updates mozutil.JsMap
 	mod := false
-	if err != nil {
-		self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
-		return err
-	}
-	schannel := strings.Replace(channel, "-", "", -1)
-	if schannel != "" {
-		if updates == nil {
-			updates = mozutil.JsMap{"updates": make([]map[string]interface{}, 0)}
-		}
-		upds := updates["updates"].([]map[string]interface{})
-		pdsLen := 0
-		oupds := make([]map[string]interface{}, len(upds)+1)
-		for i := range upds {
-			rec := upds[i]
-			if len(rec["channelID"].(string)) == 0 {
-				continue
-			}
-			if rec["channelID"].(string) == schannel {
-				rec["version"] = version
-				mod = true
-			}
-			oupds[pdsLen] = rec
-			pdsLen = pdsLen + 1
-		}
-		if !mod {
-			oupds[pdsLen] = mozutil.JsMap{"channelID": schannel,
-				"version": version}
-			pdsLen = pdsLen + 1
-		}
-		updates["updates"] = oupds[:pdsLen]
+    // if we have a channel, don't flush. we can get them later in the ACK
+    if channel == "" {
+    	updates, err = sock.Store.GetUpdates(sock.Uaid, lastAccessed)
+    	if err != nil {
+	    	self.handleError(sock, mozutil.JsMap{"messageType": messageType}, err)
+		    return err
+	    }
+    } else {
+        updates = mozutil.JsMap{"updates": []mozutil.JsMap{mozutil.JsMap{"channelID": channel,
+            "version": version}}}
 	}
 	if updates == nil {
 		return nil
