@@ -1,18 +1,20 @@
 package router
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
-    "bytes"
 	"mozilla.org/util"
 	"net"
+	"sync"
 )
 
 var (
-    NL []byte = []byte("\n")
-    EOL []byte = []byte("\x04\n")
-    routes map[string]*Route
+	NL     []byte = []byte("\n")
+	EOL    []byte = []byte("\x04\n")
+	routes map[string]*Route
 )
 
 type Router struct {
@@ -24,6 +26,7 @@ type Route struct {
 	socket net.Conn
 }
 
+var MuRoutes sync.Mutex
 
 type Update struct {
 	Uaid string `json:"uaid"`
@@ -44,7 +47,7 @@ func (self *Router) HandleUpdates(updater Updater) {
 		}
 		return
 	}
-	log.Printf("Listening for updates on 0.0.0.0:" + self.Port)
+	log.Printf("Listening for updates on *:" + self.Port)
 
 	for {
 		conn, err := listener.Accept()
@@ -67,26 +70,36 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 		if err != nil {
 			if err == io.EOF && n == 0 {
 				if self.Logger != nil {
-					self.Logger.Debug("router", "Closing listener socket.", nil)
+					self.Logger.Debug("router",
+						"@@@@ Closing listener socket."+err.Error(), nil)
 				}
 				err = nil
 				break
 			}
 			break
 		}
-        items := bytes.Split(buf[:n], NL)
-        for _, item := range items {
-            if bytes.Equal(item, EOL) {
-                conn.Close()
-                continue
-            }
+		log.Printf("@@@ Updates::: " + string(buf[:n]))
 		update := Update{}
-		json.Unmarshal(item, &update)
-		if len(update.Uaid) == 0 {
-			continue
+		items := bytes.Split(buf[:n], []byte("\n"))
+		for _, item := range items {
+			if bytes.Equal(item, EOL) {
+				conn.Close()
+				continue
+			}
+			log.Printf("@@@ item ::: %s", item)
+			if len(item) == 0 {
+				continue
+			}
+			json.Unmarshal(item, &update)
+			if self.Logger != nil {
+				self.Logger.Debug("router",
+					fmt.Sprintf("@@@@ Handling update %s", item), nil)
+			}
+			if len(update.Uaid) == 0 {
+				continue
+			}
+			updater(&update)
 		}
-		updater(&update)
-    }
 	}
 	if err != nil {
 		if self.Logger != nil {
@@ -104,14 +117,17 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 
 	if route, ok = routes[host]; !ok {
 		// create a new route
-        if self.Logger != nil {
-            self.Logger.Info("router", "Creating new route to "+host, nil)
-        }
+		if self.Logger != nil {
+			self.Logger.Info("router", "Creating new route to "+host, nil)
+		}
 		conn, err := net.Dial("tcp", host+":"+self.Port)
 		if err != nil {
 			return err
 		}
-        route = &Route{
+		if self.Logger != nil {
+			self.Logger.Info("router", "@@@ Creating new route to "+host, nil)
+		}
+		route = &Route{
 			socket: conn,
 		}
 		routes[host] = route
@@ -124,24 +140,27 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	if err != nil {
 		return err
 	}
-	_, err = route.socket.Write(data)
-    if err != nil {
-        if self.Logger != nil {
-            self.Logger.Error("router", "Closing socket to " + host, nil)
-            log.Printf("ERROR: %s", err.Error())
-        }
-    	route.socket.Close()
-	    delete(routes, host)
-    }
+	if self.Logger != nil {
+		self.Logger.Debug("router", "@@@ Writing to host "+host, nil)
+	}
+	_, err = route.socket.Write([]byte(string(data) + "\n"))
+	if err != nil {
+		if self.Logger != nil {
+			self.Logger.Error("router", "@@@ Closing socket to "+host, nil)
+			log.Printf("ERROR: %s", err.Error())
+		}
+		route.socket.Close()
+		delete(routes, host)
+	}
 	return err
 }
 
 func (self *Router) CloseAll() {
-    for host, route := range routes {
-        log.Printf("TERMINATING connection to %s", host)
-        route.socket.Write(EOL)
-        route.socket.Close()
-    }
+	for host, route := range routes {
+		log.Printf("TERMINATING connection to %s", host)
+		route.socket.Write(EOL)
+		route.socket.Close()
+	}
 }
 
 func init() {

@@ -16,14 +16,14 @@ import (
 	"mozilla.org/simplepush/sperrors"
 	"mozilla.org/util"
 
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	//	"log"
-	"bufio"
+	"log"
 	"net"
 	"sort"
 	"strconv"
@@ -84,6 +84,8 @@ type StorageError struct {
 }
 
 func (e *StorageError) Error() string {
+	// foo call so that import log doesn't complain
+	_ = log.Flags()
 	return "StorageError: " + e.err.Error()
 }
 
@@ -327,6 +329,8 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		mcs <- mc
 	}
 
+	log.Printf("############# NEW HANDLER ")
+
 	return &Storage{
 		mcs:    mcs,
 		config: config,
@@ -421,6 +425,12 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 		}
 		return result, err
 	}
+	// pare out duplicates.
+	for i, chid := range result {
+		if dup := indexOf(result[i+1:], chid); dup > -1 {
+			result = remove(result, i+dup)
+		}
+	}
 	return result, err
 }
 
@@ -430,6 +440,7 @@ func (self *Storage) storeAppIDArray(uaid []byte, arr ia) (err error) {
 	//mc.Timeout = time.Second * 10
 	// sort the array
 	sort.Sort(arr)
+
 	err = mc.Set(keycode(uaid), arr, 0)
 	if err != nil {
 		self.isFatal(err)
@@ -566,12 +577,12 @@ func (self *Storage) binRegisterAppID(uaid, chid []byte, vers int64) (err error)
 
 	appIDArray, err := self.fetchAppIDArray(uaid)
 	// Yep, this should eventually be optimized to a faster scan.
-	if appIDArray != nil {
-		appIDArray = remove(appIDArray, indexOf(appIDArray, chid))
-	}
-	err = self.storeAppIDArray(uaid, append(appIDArray, chid))
-	if err != nil {
-		return err
+	if indexOf(appIDArray, chid) < 0 {
+		err = self.storeAppIDArray(uaid, append(appIDArray, chid))
+
+		if err != nil {
+			return err
+		}
 	}
 
 	rec = &cr{
@@ -607,9 +618,8 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 	if err != nil {
 		return err
 	}
-	pos := sort.Search(len(appIDArray),
-		func(i int) bool { return bytes.Compare(appIDArray[i], chid) >= 0 })
-	if pos < len(appIDArray) && bytes.Equal(appIDArray[pos], chid) {
+	pos := indexOf(appIDArray, chid)
+	if pos >= 0 {
 		self.storeAppIDArray(uaid, remove(appIDArray, pos))
 		pk, err := binGenPK(uaid, chid)
 		if err != nil {
@@ -657,7 +667,6 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 
 	for _, chid := range appIDArray {
 		pk, _ := binGenPK(uaid, chid)
-		// TODO: Puke on error
 		items = append(items, keycode(pk))
 	}
 	if self.logger != nil {
@@ -670,48 +679,48 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	defer func() { self.mcs <- mc }()
 
 	// Apparently, GetMulti is broken.
-   /*
-    recs, err := mc.GetMulti(items)
-	if err != nil {
-		if strings.Contains("NOT FOUND", err.Error()) {
-			err = nil
-		} else {
-			self.isFatal(err)
+	/*
+	    recs, err := mc.GetMulti(items)
+		if err != nil {
+			if strings.Contains("NOT FOUND", err.Error()) {
+				err = nil
+			} else {
+				self.isFatal(err)
+				if self.logger != nil {
+					self.logger.Error("storage", "GetUpdate failed",
+						util.JsMap{"uaid": suaid,
+							"error": err})
+				}
+				return nil, err
+			}
+		}
+
+		if recs == nil {
+			return nil, err
+		}
+
+		// Result has no len or counter.
+		resCount := 0
+		var i cr
+		for _, key := range items {
+			if err := recs.Get(key, &i); err == nil {
+				resCount = resCount + 1
+			}
+		}
+
+		if resCount == 0 {
 			if self.logger != nil {
-				self.logger.Error("storage", "GetUpdate failed",
-					util.JsMap{"uaid": suaid,
-						"error": err})
+				self.logger.Debug("storage",
+					"GetUpdates No records found", util.JsMap{"uaid": suaid})
 			}
 			return nil, err
 		}
-	}
-
-	if recs == nil {
-		return nil, err
-	}
-
-	// Result has no len or counter.
-	resCount := 0
-	var i cr
-	for _, key := range items {
-		if err := recs.Get(key, &i); err == nil {
-			resCount = resCount + 1
-		}
-	}
-
-	if resCount == 0 {
-		if self.logger != nil {
-			self.logger.Debug("storage",
-				"GetUpdates No records found", util.JsMap{"uaid": suaid})
-		}
-		return nil, err
-	}
-    */
-    var update util.JsMap
+	*/
+	var update util.JsMap
 	for _, key := range items {
 		var val cr
-        //err := recs.Get(key, &val)
-        err := mc.Get(key, &val)
+		//err := recs.Get(key, &val)
+		err := mc.Get(key, &val)
 		if err != nil {
 			continue
 		}
