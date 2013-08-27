@@ -669,7 +669,9 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
 
-	recs, err := mc.GetMulti(items)
+	// Apparently, GetMulti is broken.
+   /*
+    recs, err := mc.GetMulti(items)
 	if err != nil {
 		if strings.Contains("NOT FOUND", err.Error()) {
 			err = nil
@@ -697,7 +699,6 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		}
 	}
 
-	var update util.JsMap
 	if resCount == 0 {
 		if self.logger != nil {
 			self.logger.Debug("storage",
@@ -705,9 +706,12 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		}
 		return nil, err
 	}
+    */
+    var update util.JsMap
 	for _, key := range items {
 		var val cr
-		err := recs.Get(key, &val)
+        //err := recs.Get(key, &val)
+        err := mc.Get(key, &val)
 		if err != nil {
 			continue
 		}

@@ -29,6 +29,7 @@ var (
 	logging    *bool   = flag.Bool("logging", true, "Whether logging is enabled")
 	logger     *util.HekaLogger
 	store      *storage.Storage
+    route      *router.Router
 )
 
 const SIGUSR1 = syscall.SIGUSR1
@@ -60,7 +61,7 @@ func main() {
 			logger.Info("main", "Enabling full logger", nil)
 		}
 	}
-	router := &router.Router{
+	route = &router.Router{
 		Port: util.MzGet(config, "shard.port", "3000"),
         Logger: logger,
 	}
@@ -79,7 +80,7 @@ func main() {
 
 	// Initialize the common server.
 	simplepush.InitServer(config, logger)
-	handlers := simplepush.NewHandler(config, logger, store, router)
+	handlers := simplepush.NewHandler(config, logger, store, route)
 
 	// Register the handlers
 	// each websocket gets it's own handler.
@@ -124,7 +125,7 @@ func main() {
 		}
 	}()
 
-	go router.HandleUpdates(updater)
+	go route.HandleUpdates(updater)
 
 	select {
 	case err := <-errChan:
@@ -135,6 +136,7 @@ func main() {
 		if logger != nil {
 			logger.Info("main", "Recieved signal, shutting down.", nil)
 		}
+        route.CloseAll()
 	}
 }
 

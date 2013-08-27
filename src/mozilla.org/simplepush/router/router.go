@@ -4,8 +4,15 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+    "bytes"
 	"mozilla.org/util"
 	"net"
+)
+
+var (
+    NL []byte = []byte("\n")
+    EOL []byte = []byte("\x04\n")
+    routes map[string]*Route
 )
 
 type Router struct {
@@ -17,7 +24,6 @@ type Route struct {
 	socket net.Conn
 }
 
-var routes map[string]*Route
 
 type Update struct {
 	Uaid string `json:"uaid"`
@@ -68,12 +74,19 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 			}
 			break
 		}
+        items := bytes.Split(buf[:n], NL)
+        for _, item := range items {
+            if bytes.Equal(item, EOL) {
+                conn.Close()
+                continue
+            }
 		update := Update{}
-		json.Unmarshal(buf[:n], &update)
+		json.Unmarshal(item, &update)
 		if len(update.Uaid) == 0 {
 			continue
 		}
 		updater(&update)
+    }
 	}
 	if err != nil {
 		if self.Logger != nil {
@@ -93,11 +106,12 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 		// create a new route
         if self.Logger != nil {
             self.Logger.Info("router", "Creating new route to "+host, nil)
+        }
 		conn, err := net.Dial("tcp", host+":"+self.Port)
 		if err != nil {
 			return err
 		}
-		route = &Route{
+        route = &Route{
 			socket: conn,
 		}
 		routes[host] = route
@@ -120,6 +134,14 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	    delete(routes, host)
     }
 	return err
+}
+
+func (self *Router) CloseAll() {
+    for host, route := range routes {
+        log.Printf("TERMINATING connection to %s", host)
+        route.socket.Write(EOL)
+        route.socket.Close()
+    }
 }
 
 func init() {
