@@ -111,8 +111,14 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 		return err
 	}
 	_, err = route.socket.Write(data)
-	route.socket.Close()
-	delete(routes, host)
+    if err != nil {
+        if self.Logger != nil {
+            self.Logger.Error("router", "Closing socket to " + host, nil)
+            log.Printf("ERROR: %s", err.Error())
+        }
+    	route.socket.Close()
+	    delete(routes, host)
+    }
 	return err
 }
 
