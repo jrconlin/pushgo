@@ -37,6 +37,15 @@ type Update struct {
 type Updater func(*Update) error
 
 func (self *Router) HandleUpdates(updater Updater) {
+	/* There appears to be a difference in how the connection is specified.
+	   "0.0.0.0:3000" creates a binding port that blocks any additional
+	   connections. ":3000", however, creates a multiplexing port that allows
+	   multiple connections. There are, however, complications. The remote
+	   port appears not to be able to see the remote connection terminate.
+	   Any future connection will succeed, but will not pass data.
+	   This is why I have the explicit "close command" in place while I sort
+	   out where the hell the bug is in the TCP handler layer.
+	*/
 	listener, err := net.Listen("tcp", ":"+self.Port)
 	if err != nil {
 		if self.Logger != nil {
@@ -63,6 +72,7 @@ func (self *Router) HandleUpdates(updater Updater) {
 	}
 }
 
+// Perform the actual update
 func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 	buf := make([]byte, 1024)
 	for {
@@ -78,15 +88,15 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 			}
 			break
 		}
-		log.Printf("@@@ Updates::: " + string(buf[:n]))
+		//log.Printf("@@@ Updates::: " + string(buf[:n]))
 		update := Update{}
-		items := bytes.Split(buf[:n], []byte("\n"))
+		items := bytes.Split(buf[:n], NL)
 		for _, item := range items {
 			if bytes.Equal(item, EOL) {
 				conn.Close()
 				continue
 			}
-			log.Printf("@@@ item ::: %s", item)
+			//log.Printf("@@@ item ::: %s", item)
 			if len(item) == 0 {
 				continue
 			}
@@ -143,7 +153,9 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	if self.Logger != nil {
 		self.Logger.Debug("router", "@@@ Writing to host "+host, nil)
 	}
-	_, err = route.socket.Write([]byte(string(data) + "\n"))
+	buf := bytes.NewBuffer(data)
+	buf.Write(NL)
+	_, err = route.socket.Write(buf.Bytes())
 	if err != nil {
 		if self.Logger != nil {
 			self.Logger.Error("router", "@@@ Closing socket to "+host, nil)
@@ -155,6 +167,8 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	return err
 }
 
+// Shut down all connections by passing the End Of Line command
+// REALLY don't like this
 func (self *Router) CloseAll() {
 	for host, route := range routes {
 		log.Printf("TERMINATING connection to %s", host)

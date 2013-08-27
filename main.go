@@ -29,7 +29,7 @@ var (
 	logging    *bool   = flag.Bool("logging", true, "Whether logging is enabled")
 	logger     *util.HekaLogger
 	store      *storage.Storage
-    route      *router.Router
+	route      *router.Router
 )
 
 const SIGUSR1 = syscall.SIGUSR1
@@ -62,9 +62,15 @@ func main() {
 		}
 	}
 	route = &router.Router{
-		Port: util.MzGet(config, "shard.port", "3000"),
-        Logger: logger,
+		Port:   util.MzGet(config, "shard.port", "3000"),
+		Logger: logger,
 	}
+	defer func() {
+		if route != nil {
+			route.CloseAll()
+		}
+	}()
+
 	if *memProfile != "" {
 		defer func() {
 			profFile, err := os.Create(*memProfile)
@@ -136,7 +142,8 @@ func main() {
 		if logger != nil {
 			logger.Info("main", "Recieved signal, shutting down.", nil)
 		}
-        route.CloseAll()
+		route.CloseAll()
+		route = nil
 	}
 }
 
