@@ -322,7 +322,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)
 	}
-	if port != "" && port != "80" {
+	if port == "80" {
+		port = ""
+	}
+	if port != "" {
 		port = ":" + port
 	}
 	currentHost := mozutil.MzGet(self.config, "shard.current_host", "localhost")
