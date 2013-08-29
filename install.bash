@@ -20,6 +20,6 @@ if [ ! -e config.ini ]; then
 fi
 if [ ! -z "$HOST" ]; then
     echo "Setting local shard host name"
-    echo "shard.currentHost = $HOST:8080" >> config.ini
+    echo "shard.current_host = $HOST:8080" >> config.ini
 fi
 echo "Please edit config.ini for local settings."
