@@ -219,9 +219,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	timer := time.Now()
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger != nil {
-		self.logger.Debug("main", "Config", self.config)
 		self.logger.Debug("update", "Handling Update",
-			mozutil.JsMap{"path": req.URL.Path})
+			mozutil.Fields{"path": req.URL.Path})
 	}
 	if self.logger != nil {
 		self.logger.Info("update", "=========== UPDATE ====", nil)
@@ -253,7 +252,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if len(pk) == 0 {
 		if self.logger != nil {
 			self.logger.Error("update", "No token, rejecting request",
-				mozutil.JsMap{"remoteAddr": req.RemoteAddr,
+				mozutil.Fields{"remoteAddr": req.RemoteAddr,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
@@ -262,7 +261,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
 		if self.logger != nil {
-			self.logger.Debug("main", "Decoding key", mozutil.JsMap{"token": token})
+			self.logger.Debug("main", "Decoding key", mozutil.Fields{"token": token})
 		}
 		var err error
 		bpk, err := Decode(token.([]byte),
@@ -271,7 +270,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			if self.logger != nil {
 				self.logger.Error("update",
 					"Could not decode token",
-					mozutil.JsMap{"primarykey": pk,
+					mozutil.Fields{"primarykey": pk,
 						"remoteAddr": req.RemoteAddr,
 						"path":       req.URL.Path,
 						"error":      err})
@@ -287,7 +286,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Invalid token for update",
-				mozutil.JsMap{"token": pk,
+				mozutil.Fields{"token": pk,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
@@ -299,7 +298,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Could not resolve PK",
-				mozutil.JsMap{"primaryKey": pk,
+				mozutil.Fields{"primaryKey": pk,
 					"path":  req.URL.Path,
 					"error": err})
 		}
@@ -310,7 +309,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Incomplete primary key",
-				mozutil.JsMap{"uaid": uaid,
+				mozutil.Fields{"uaid": uaid,
 					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
@@ -334,8 +333,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Could not discover host for UAID",
-				mozutil.JsMap{"uaid": uaid,
-					"error": err})
+				mozutil.Fields{"uaid": uaid,
+					"error": err.Error()})
 		}
 		host = mozutil.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
@@ -344,7 +343,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			if self.logger != nil {
 				self.logger.Info("update",
 					"Proxying request for UAID",
-					mozutil.JsMap{"uaid": uaid,
+					mozutil.Fields{"uaid": uaid,
 						"destination": host + port})
 			}
 			// Use tcp routing.
@@ -362,7 +361,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				err = proxyNotification(proto, host+port, req.URL.Path, vers)
 				if err != nil && self.logger != nil {
 					self.logger.Error("update",
-						"Proxy failed", mozutil.JsMap{
+						"Proxy failed", mozutil.Fields{
 							"uaid":        uaid,
 							"destination": host + port,
 							"error":       err})
@@ -380,26 +379,26 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if self.logger != nil {
 		defer func(uaid, chid, path string, timer time.Time) {
 			self.logger.Info("timer", "Client Update complete",
-				mozutil.JsMap{
+				mozutil.Fields{
 					"uaid":      uaid,
 					"path":      req.URL.Path,
 					"channelID": chid,
-					"duration":  time.Now().Sub(timer).Nanoseconds()})
+					"duration":  strconv.FormatInt(time.Now().Sub(timer).Nanoseconds())})
 		}(uaid, chid, req.URL.Path, timer)
 
 		self.logger.Info("update",
 			"setting version for ChannelID",
-			mozutil.JsMap{"uaid": uaid, "channelID": chid, "version": vers})
+			mozutil.Fields{"uaid": uaid, "channelID": chid, "version": vers})
 	}
 	err = self.store.UpdateChannel(pk, vers)
 
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update", "Cound not update channel",
-				mozutil.JsMap{"UAID": uaid,
+				mozutil.Fields{"UAID": uaid,
 					"channelID": chid,
 					"version":   vers,
-					"error":     err})
+					"error":     err.Error()})
 		}
 		status, _ := sperrors.ErrToStatus(err)
 		http.Error(resp, "Could not update channel version", status)

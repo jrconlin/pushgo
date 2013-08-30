@@ -239,7 +239,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 			fmt.Println(err)
 			if logger != nil {
 				logger.Error("storage", "Elastisearch error.",
-					util.JsMap{"error": err})
+					util.Fields{"error": err.Error()})
 			}
 		}
 	}
@@ -288,7 +288,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		mc, err := gomc.NewClient(servers, 1, gomc.ENCODING_GOB)
 		if err != nil {
 			logger.Critical("storage", "CRITICAL HIT!",
-				util.JsMap{"error": err})
+				util.Fields{"error": err.Error()})
 		}
 		// internally hash key using MD5 (for key distribution)
 		mc.SetBehavior(gomc.BEHAVIOR_KETAMA_HASH, 1)
@@ -357,7 +357,7 @@ func (self *Storage) isFatal(err error) bool {
 	default:
 		if self.logger != nil {
 			self.logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
-				util.JsMap{"error": err})
+				util.Fields{"error": err.Error()})
 		}
 		return true
 	}
@@ -377,7 +377,8 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 			if self.logger != nil {
 				self.logger.Error("storage",
 					fmt.Sprintf("could not fetch record for %s", pk),
-					util.JsMap{"primarykey": pk, "error": err})
+					util.Fields{"primarykey": keycode(pk),
+                                "error": err.(error).Error()})
 			}
 		}
 	}()
@@ -394,8 +395,8 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 		if self.logger != nil {
 			self.logger.Error("storage",
 				"Get Failed",
-				util.JsMap{"primarykey": hex.EncodeToString(pk),
-					"error": err})
+				util.Fields{"primarykey": hex.EncodeToString(pk),
+					"error": err.Error()})
 		}
 		return nil, err
 	}
@@ -403,8 +404,10 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Fetched",
-			util.JsMap{"primarykey": hex.EncodeToString(pk),
-				"value": result})
+			util.Fields{"primarykey": hex.EncodeToString(pk),
+                        "result": fmt.Sprintf("state: %d, vers: %d, last: %d",
+                        result.S, result.V, result.L),
+                    })
 	}
 	return result, err
 }
@@ -473,7 +476,7 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Storing record",
-			util.JsMap{"primarykey": keycode(pk),
+			util.Fields{"primarykey": keycode(pk),
 				"record": fmt.Sprintf("%d,%d,%d", rec.L, rec.S, rec.V)})
 	}
 	mc := <-self.mcs
@@ -484,8 +487,9 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 		self.isFatal(err)
 		if self.logger != nil {
 			self.logger.Error("storage",
-				fmt.Sprintf("Failure to set item %s {%v}", pk, rec),
-				nil)
+				"Failure to set item",
+                util.Fields{"primarykey": keycode(pk),
+                            "error": err.Error()})
 		}
 	}
 	return err
@@ -523,14 +527,18 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 	if err != nil && err.Error() != "NOT FOUND" {
 		if self.logger != nil {
 			self.logger.Error("storage",
-				fmt.Sprintf("fetchRec %s err %s", pks, err), nil)
+				"fetchRec error",
+                util.Fields{"primarykey": pks,
+                    "error": err.Error()})
 		}
 		return err
 	}
 
 	if cRec != nil {
 		if self.logger != nil {
-			self.logger.Debug("storage", fmt.Sprintf("Found record for %s", pks), nil)
+			self.logger.Debug("storage",
+                "Replacing record",
+                util.Fields{"primarykey":pks})
 		}
 		if cRec.S != DELETED {
 			newRecord := &cr{
@@ -548,9 +556,9 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Registering channel",
-			util.JsMap{"uaid": suaid,
+			util.Fields{"uaid": suaid,
 				"channelID": schid,
-				"version":   vers})
+				"version":   strconv.FormatInt(vers, 0)})
 	}
 	err = self.binRegisterAppID(uaid, chid, vers)
 	if err == sperrors.ChannelExistsError {
@@ -635,7 +643,8 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 				if self.logger != nil {
 					self.logger.Error("storage",
 						"Could not delete Channel",
-						util.JsMap{"primarykey": hex.EncodeToString(pk), "error": err})
+						util.Fields{"primarykey": hex.EncodeToString(pk),
+                        "error": err.Error()})
 				}
 			}
 		}
@@ -647,7 +656,7 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 
 func (self *Storage) IsKnownUaid(suaid string) bool {
 	if self.logger != nil {
-		self.logger.Debug("storage", "IsKnownUaid", util.JsMap{"uaid": suaid})
+		self.logger.Debug("storage", "IsKnownUaid", util.Fields{"uaid": suaid})
 	}
 	_, err := self.fetchAppIDArray(cleanID(suaid))
 	if err == nil {
@@ -672,8 +681,8 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"Fetching items",
-			util.JsMap{"uaid": fmt.Sprintf("%x", uaid),
-				"items": items})
+			util.Fields{"uaid": keycode(uaid),
+				"items": "[" + strings.Join(items, ", ") + "]"})
 	}
 	mc := <-self.mcs
 	defer func() { self.mcs <- mc }()
@@ -688,8 +697,8 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 					self.isFatal(err)
 					if self.logger != nil {
 						self.logger.Error("storage", "GetUpdate failed",
-							util.JsMap{"uaid": suaid,
-								"error": err})
+							util.Fields{"uaid": suaid,
+								"error": err.Error()})
 					}
 					return nil, err
 				}
@@ -711,12 +720,11 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			if resCount == 0 {
 				if self.logger != nil {
 					self.logger.Debug("storage",
-						"GetUpdates No records found", util.JsMap{"uaid": suaid})
+						"GetUpdates No records found", util.Fields{"uaid": suaid})
 				}
 				return nil, err
 			}
 	*/
-	var update util.JsMap
 	for _, key := range items {
 		var val cr
 		//err := recs.Get(key, &val)
@@ -725,11 +733,13 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			continue
 		}
 		uaid, chid, err := binResolvePK(keydecode(key))
+        suaid := hex.EncodeToString(uaid)
+        schid := hex.EncodeToString(chid)
 		if self.logger != nil {
 			self.logger.Debug("storage",
 				"GetUpdates Fetched record ",
-				util.JsMap{"uaid": keycode(uaid),
-					"chid":  keycode(chid),
+				util.Fields{"uaid": suaid,
+					"chid":  schid,
 					"value": fmt.Sprintf("%d,%d,%d", val.L, val.S, val.V)})
 		}
 		if err != nil {
@@ -737,7 +747,8 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		}
 		if val.L < lastAccessed {
 			if self.logger != nil {
-				self.logger.Debug("storage", "Skipping record...", util.JsMap{"rec": update})
+				self.logger.Debug("storage", "Skipping record...",
+                util.Fields{"uaid": suaid, "chid": schid})
 			}
 			continue
 		}
@@ -753,7 +764,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 				vers = uint64(time.Now().UTC().Unix())
 				self.logger.Error("storage",
 					"GetUpdates Using Timestamp",
-					util.JsMap{"update": update})
+                    util.Fields{"uaid": suaid, "chid": schid})
 			}
 			newRec["version"] = vers
 			updates = append(updates, newRec)
@@ -761,16 +772,16 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			if self.logger != nil {
 				self.logger.Info("storage",
 					"GetUpdates Deleting record",
-					util.JsMap{"update": update})
+                    util.Fields{"uaid": suaid, "chid": schid})
 			}
-			expired = append(expired, hex.EncodeToString(chid))
+			expired = append(expired, schid)
 		case REGISTERED:
 			// Item registered, but not yet active. Ignore it.
 		default:
 			if self.logger != nil {
 				self.logger.Warn("storage",
 					"Unknown state",
-					util.JsMap{"update": update})
+                    util.Fields{"uaid": suaid, "chid": schid})
 			}
 		}
 
@@ -850,7 +861,7 @@ func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"SetUAIDHost",
-			util.JsMap{"uaid": uaid, "host": host})
+			util.Fields{"uaid": uaid, "host": host})
 	}
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
 	mc := <-self.mcs
@@ -874,8 +885,8 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 			if self.logger != nil {
 				self.logger.Error("storage",
 					"GetUAIDHost no host",
-					util.JsMap{"uaid": uaid,
-						"error": err})
+					util.Fields{"uaid": uaid,
+						"error": err.(error).Error()})
 			}
 		}
 	}(defaultHost)
@@ -889,9 +900,9 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		if self.logger != nil {
 			self.logger.Error("storage",
 				"GetUAIDHost Fetch error",
-				util.JsMap{"uaid": uaid,
+				util.Fields{"uaid": uaid,
 					"item":  val,
-					"error": err})
+					"error": err.Error()})
 		}
 		return defaultHost, err
 	}
@@ -901,7 +912,7 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	if self.logger != nil {
 		self.logger.Debug("storage",
 			"GetUAIDHost",
-			util.JsMap{"uaid": uaid,
+			util.Fields{"uaid": uaid,
 				"host": val})
 	}
 	// reinforce the link.

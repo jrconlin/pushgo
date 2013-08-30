@@ -38,6 +38,8 @@ const (
 	DEBUG
 )
 
+type Fields map[string]string
+
 func NewHekaLogger(conf JsMap) *HekaLogger {
 	//Preflight
 	var ok bool
@@ -88,16 +90,16 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		filter:   filter}
 }
 
-func addFields(msg *message.Message, fields JsMap) (err error) {
+func addFields(msg *message.Message, fields Fields) (err error) {
 	for key, ival := range fields {
 		var field *message.Field
-		if ival == nil {
-			continue
+        if ival == "" {
+			ival= "*empty*"
 		}
 		if key == "" {
 			continue
 		}
-		field, err = message.NewField(key, ival, fmt.Sprintf("%s", ival))
+		field, err = message.NewField(key, ival, ival)
 		if err != nil {
 			return err
 		}
@@ -107,15 +109,15 @@ func addFields(msg *message.Message, fields JsMap) (err error) {
 }
 
 //TODO: Change the last arg to be something like fields ...interface{}
-func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
-	var caller JsMap
+	var caller Fields
 	if self.tracer {
 		if pc, file, line, ok := runtime.Caller(2); ok {
 			funk := runtime.FuncForPC(pc)
-			caller = JsMap{
+			caller = Fields{
 				"file": file,
-				"line": line,
+				"line": strconv.FormatInt(int64(line), 0),
 				"name": funk.Name()}
 		}
 	}
@@ -171,23 +173,23 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	return nil
 }
 
-func (self HekaLogger) Info(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Info(mtype, msg string, fields Fields) (err error) {
 	return self.Log(INFO, mtype, msg, fields)
 }
 
-func (self HekaLogger) Debug(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Debug(mtype, msg string, fields Fields) (err error) {
 	return self.Log(DEBUG, mtype, msg, fields)
 }
 
-func (self HekaLogger) Warn(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Warn(mtype, msg string, fields Fields) (err error) {
 	return self.Log(WARNING, mtype, msg, fields)
 }
 
-func (self HekaLogger) Error(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Error(mtype, msg string, fields Fields) (err error) {
 	return self.Log(ERROR, mtype, msg, fields)
 }
 
-func (self HekaLogger) Critical(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
 }

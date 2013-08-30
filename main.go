@@ -33,6 +33,7 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
+const VERSION = "0.6"
 
 // -- main
 func main() {
@@ -40,7 +41,9 @@ func main() {
 	config := util.MzGetConfig(*configFile)
 
 	config = simplepush.FixConfig(config)
-	log.Printf("CurrentHost: %s", config["shard.current_host"])
+    config["VERSION"] = VERSION
+    log.Printf("CurrentHost: %s, Version: %s",
+        config["shard.current_host"], VERSION)
 
 	if *profile != "" {
 		log.Printf("Creating profile...")

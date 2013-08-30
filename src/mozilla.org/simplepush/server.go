@@ -110,7 +110,9 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 
 	args := cmd.Arguments.(mozutil.JsMap)
 	if self.logger != nil {
-		self.logger.Info("server", "handling 'hello'", args)
+		self.logger.Info("server", "handling 'hello'",
+        util.Fields{"uaid": args["uaid"].(string),
+                    "channelIDs": "[" + strings.Join(args["channelIDs"].([]string), ", ")+"]")
 	}
 
 	// TODO: If the client needs to connect to a different server,
@@ -125,21 +127,21 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		if self.logger != nil {
 			self.logger.Debug("server",
 				"Generating new UAID",
-				mozutil.JsMap{"uaid": uaid})
+				mozutil.FieldsJsMap{"uaid": uaid})
 		}
 	} else {
 		uaid = args["uaid"].(string)
 		if self.logger != nil {
 			self.logger.Debug("server",
 				"Using existing UAID",
-				mozutil.JsMap{"uaid": uaid})
+				mozutil.Fields{"uaid": uaid})
 		}
 		delete(args, "uaid")
 	}
 
 	prop := self.Set_proprietary_info(args)
 	if self.logger != nil {
-		self.logger.Debug("server", "Proprietary Info", mozutil.JsMap{"info": prop})
+		self.logger.Debug("server", "Proprietary Info", mozutil.Fields{"ip": prop["]})
 	}
 
 	// Create a new, live client entry for this record.
