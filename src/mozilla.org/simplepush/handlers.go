@@ -9,7 +9,7 @@ import (
 	"mozilla.org/simplepush/router"
 	"mozilla.org/simplepush/sperrors"
 	storage "mozilla.org/simplepush/storage/mcstorage"
-	mozutil "mozilla.org/util"
+	"mozilla.org/util"
 
 	"encoding/base64"
 	"encoding/json"
@@ -53,13 +53,13 @@ func awsGetPublicHostname() (hostname string, err error) {
 	return
 }
 
-func FixConfig(config mozutil.JsMap) mozutil.JsMap {
+func FixConfig(config util.JsMap) util.JsMap {
 	if _, ok := config["shard.current_host"]; !ok {
 		currentHost := "localhost"
 		if val := os.Getenv("HOST"); len(val) > 0 {
 			currentHost = val
 		} else {
-			if mozutil.MzGetFlag(config, "shard.use_aws_host") {
+			if util.MzGetFlag(config, "shard.use_aws_host") {
 				var awsHost string
 				var err error
 				awsHost, err = awsGetPublicHostname()
@@ -76,7 +76,6 @@ func FixConfig(config mozutil.JsMap) mozutil.JsMap {
 		if err != nil {
 			log.Fatal(err)
 		}
-
 		config["token_key"] = key
 	}
 
@@ -99,14 +98,38 @@ func FixConfig(config mozutil.JsMap) mozutil.JsMap {
 
 }
 
+func ErrStr(err error) string {
+    if err == nil {
+        return ""
+    } else {
+        return err.Error()
+    }
+}
+
+func IStr(i interface{}) (reply string) {
+    defer func(){
+        if r := recover(); r != nil {
+            reply = "Undefined"
+        }
+    }()
+
+    if i != nil {
+        reply = i.(string)
+    } else {
+        reply = ""
+    }
+    return reply
+}
+
+
 type Handler struct {
-	config mozutil.JsMap
-	logger *mozutil.HekaLogger
+	config util.JsMap
+	logger *util.HekaLogger
 	store  *storage.Storage
 	router *router.Router
 }
 
-func NewHandler(config mozutil.JsMap, logger *mozutil.HekaLogger,
+func NewHandler(config util.JsMap, logger *util.HekaLogger,
 	store *storage.Storage, router *router.Router) *Handler {
 	return &Handler{config: config,
 		logger: logger,
@@ -151,7 +174,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	}
 	ok := okClients && mcStatus
 	gcount := runtime.NumGoroutine()
-	repMap := mozutil.JsMap{"ok": ok,
+	repMap := util.JsMap{"ok": ok,
 		"clientCount": clientCount,
 		"maxClients":  maxClients,
 		"mcstatus":    mcStatus,
@@ -220,7 +243,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger != nil {
 		self.logger.Debug("update", "Handling Update",
-			mozutil.Fields{"path": req.URL.Path})
+			util.Fields{"path": req.URL.Path})
 	}
 	if self.logger != nil {
 		self.logger.Info("update", "=========== UPDATE ====", nil)
@@ -252,7 +275,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if len(pk) == 0 {
 		if self.logger != nil {
 			self.logger.Error("update", "No token, rejecting request",
-				mozutil.Fields{"remoteAddr": req.RemoteAddr,
+				util.Fields{"remoteAddr": req.RemoteAddr,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
@@ -261,7 +284,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
 		if self.logger != nil {
-			self.logger.Debug("main", "Decoding key", mozutil.Fields{"token": token})
+            // Note: dumping the []uint8 keys can produce terminal glitches
+			self.logger.Debug("main", "Decoding...", nil)
 		}
 		var err error
 		bpk, err := Decode(token.([]byte),
@@ -270,10 +294,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			if self.logger != nil {
 				self.logger.Error("update",
 					"Could not decode token",
-					mozutil.Fields{"primarykey": pk,
+					util.Fields{"primarykey": pk,
 						"remoteAddr": req.RemoteAddr,
 						"path":       req.URL.Path,
-						"error":      err})
+						"error":      ErrStr(err)})
 			}
 			http.Error(resp, "", http.StatusNotFound)
 			return
@@ -286,7 +310,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Invalid token for update",
-				mozutil.Fields{"token": pk,
+				util.Fields{"token": pk,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
@@ -298,9 +322,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Could not resolve PK",
-				mozutil.Fields{"primaryKey": pk,
+				util.Fields{"primaryKey": pk,
 					"path":  req.URL.Path,
-					"error": err})
+					"error": ErrStr(err)})
 		}
 		return
 	}
@@ -309,7 +333,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Incomplete primary key",
-				mozutil.Fields{"uaid": uaid,
+				util.Fields{"uaid": uaid,
 					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
@@ -327,44 +351,44 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if port != "" {
 		port = ":" + port
 	}
-	currentHost := mozutil.MzGet(self.config, "shard.current_host", "localhost")
+	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
 	host, err := self.store.GetUAIDHost(uaid)
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Could not discover host for UAID",
-				mozutil.Fields{"uaid": uaid,
+				util.Fields{"uaid": uaid,
 					"error": err.Error()})
 		}
-		host = mozutil.MzGet(self.config, "shard.defaultHost", "localhost")
+		host = util.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
-	if mozutil.MzGetFlag(self.config, "shard.do_proxy") {
+	if util.MzGetFlag(self.config, "shard.do_proxy") {
 		if host != currentHost && host != "localhost" {
 			if self.logger != nil {
 				self.logger.Info("update",
 					"Proxying request for UAID",
-					mozutil.Fields{"uaid": uaid,
+					util.Fields{"uaid": uaid,
 						"destination": host + port})
 			}
 			// Use tcp routing.
-			if mozutil.MzGetFlag(self.config, "shard.router") {
+			if util.MzGetFlag(self.config, "shard.router") {
 				// If there was an error routing the update, don't
 				// tell the AppServer. Chances are it's temporary, and
 				// the client will get the update on next refresh/reconnect
 				self.router.SendUpdate(host, uaid, chid, vers)
 			} else {
 				proto := "http"
-				if len(mozutil.MzGet(self.config, "ssl.certfile", "")) > 0 {
+				if len(util.MzGet(self.config, "ssl.certfile", "")) > 0 {
 					proto = "https"
 				}
 
 				err = proxyNotification(proto, host+port, req.URL.Path, vers)
 				if err != nil && self.logger != nil {
 					self.logger.Error("update",
-						"Proxy failed", mozutil.Fields{
+						"Proxy failed", util.Fields{
 							"uaid":        uaid,
 							"destination": host + port,
-							"error":       err})
+							"error":       err.Error()})
 				}
 			}
 			if err != nil {
@@ -379,25 +403,26 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if self.logger != nil {
 		defer func(uaid, chid, path string, timer time.Time) {
 			self.logger.Info("timer", "Client Update complete",
-				mozutil.Fields{
+				util.Fields{
 					"uaid":      uaid,
 					"path":      req.URL.Path,
 					"channelID": chid,
-					"duration":  strconv.FormatInt(time.Now().Sub(timer).Nanoseconds())})
+					"duration":  strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10)})
 		}(uaid, chid, req.URL.Path, timer)
 
 		self.logger.Info("update",
 			"setting version for ChannelID",
-			mozutil.Fields{"uaid": uaid, "channelID": chid, "version": vers})
+			util.Fields{"uaid": uaid, "channelID": chid,
+                "version": strconv.FormatInt(vers, 10)})
 	}
 	err = self.store.UpdateChannel(pk, vers)
 
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update", "Cound not update channel",
-				mozutil.Fields{"UAID": uaid,
+				util.Fields{"UAID": uaid,
 					"channelID": chid,
-					"version":   vers,
+					"version":   strconv.FormatInt(vers, 10),
 					"error":     err.Error()})
 		}
 		status, _ := sperrors.ErrToStatus(err)
@@ -422,7 +447,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 				self.logger.Error("handler", "Socket Count Exceeded", nil)
 			}
 		}
-		websocket.JSON.Send(ws, mozutil.JsMap{
+		websocket.JSON.Send(ws, util.JsMap{
 			"status": http.StatusServiceUnavailable,
 			"error":  "Server Unavailable"})
 		return
@@ -441,12 +466,12 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	if sock.Logger != nil {
 		sock.Logger.Info("main", "New socket connection detected", nil)
 	}
-	defer func(logger *mozutil.HekaLogger) {
+	defer func(logger *util.HekaLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			if logger != nil {
 				logger.Error("main", "Unknown error",
-					mozutil.JsMap{"error": r.(error).Error()})
+					util.Fields{"error": r.(error).Error()})
 			} else {
 				log.Printf("Socket Unknown Error: %s", r.(error).Error())
 			}

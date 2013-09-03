@@ -558,7 +558,7 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 			"Registering channel",
 			util.Fields{"uaid": suaid,
 				"channelID": schid,
-				"version":   strconv.FormatInt(vers, 0)})
+				"version":   strconv.FormatInt(vers, 10)})
 	}
 	err = self.binRegisterAppID(uaid, chid, vers)
 	if err == sperrors.ChannelExistsError {
