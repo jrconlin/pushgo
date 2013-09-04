@@ -1,6 +1,6 @@
 #! /bin/bash
 set -e
-for env in "GOROOT" "GOBIN" ; do
+for env in "GOPATH" "GOBIN" ; do
     if [ -z "${!env}" ]; then
         echo "$env not defined. Is go installed?"
         exit 1
@@ -8,7 +8,7 @@ for env in "GOROOT" "GOBIN" ; do
 done
 export GOPATH=`pwd`
 echo "Installing required go libraries..."
-for req in `cat go_deps.lst`; do
+for req in `grep -v "^#" go_deps.lst`; do
     echo -n "   $req..."
     go get -v $req
     echo " done"
@@ -20,6 +20,6 @@ if [ ! -e config.ini ]; then
 fi
 if [ ! -z "$HOST" ]; then
     echo "Setting local shard host name"
-    echo "shard.currentHost = $HOST:8080" >> config.ini
+    echo "shard.current_host = $HOST:8080" >> config.ini
 fi
 echo "Please edit config.ini for local settings."

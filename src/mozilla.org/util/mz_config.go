@@ -9,7 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
-    "strconv"
+	"strconv"
 	"strings"
 )
 
@@ -22,7 +22,7 @@ func MzGetConfig(filename string) JsMap {
 	// Yay for no equivalent to readln
 	file, err := os.Open(filename)
 
-    defer file.Close()
+	defer file.Close()
 
 	if err != nil {
 		log.Fatal(err)
@@ -54,18 +54,18 @@ func MzGet(ma JsMap, key string, def string) string {
 }
 
 func MzGetFlag(ma JsMap, key string) (flag bool) {
-    defer func() {
-        if r := recover(); r != nil {
-            flag = false
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			flag = false
+		}
+	}()
 
-    flag = false
-    if val, ok := ma[key]; ok {
-        flag, _ = strconv.ParseBool(val.(string))
-    }
+	flag = false
+	if val, ok := ma[key]; ok {
+		flag, _ = strconv.ParseBool(val.(string))
+	}
 
-    return
+	return
 }
 
 // o4fs

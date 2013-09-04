@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -25,6 +26,8 @@ type HekaLogger struct {
 	pid      int32
 	hostname string
 	conf     JsMap
+	tracer   bool
+	filter   int64
 }
 
 const (
@@ -35,6 +38,8 @@ const (
 	DEBUG
 )
 
+type Fields map[string]string
+
 func NewHekaLogger(conf JsMap) *HekaLogger {
 	//Preflight
 	var ok bool
@@ -42,10 +47,13 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	var sender client.Sender
 	var logname string
 	var err error
+	var tracer bool
+	var filter int64
 	pid := int32(os.Getpid())
 	encoder = nil
 	sender = nil
 	logname = ""
+	tracer = false
 
 	if _, ok = conf["heka.sender"]; !ok {
 		conf["heka.sender"] = "tcp"
@@ -59,6 +67,10 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.current_host"]; !ok {
 		conf["heka.current_host"], _ = os.Hostname()
 	}
+	if _, ok = conf["heka.show_caller"]; ok {
+		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
+	}
+	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
 		encoder = client.NewJsonEncoder(nil)
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
@@ -73,22 +85,53 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		logname:  logname,
 		pid:      pid,
 		hostname: conf["heka.current_host"].(string),
-		conf:     conf}
+		conf:     conf,
+		tracer:   tracer,
+		filter:   filter}
+}
+
+func addFields(msg *message.Message, fields Fields) (err error) {
+	for key, ival := range fields {
+		var field *message.Field
+        if ival == "" {
+			ival= "*empty*"
+		}
+		if key == "" {
+			continue
+		}
+		field, err = message.NewField(key, ival, ival)
+		if err != nil {
+			return err
+		}
+		msg.AddField(field)
+	}
+	return err
 }
 
 //TODO: Change the last arg to be something like fields ...interface{}
-func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (err error) {
+func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
-	var base_level int64
-
-	base_level, _ = strconv.ParseInt(MzGet(self.conf, "log.filter", "10"), 10, 0)
-
-	if int(level) <= int(base_level) {
-		if len(fields) > 0 {
-			log.Printf("[%d]% 7s: %s %s", level, mtype, payload, fields)
-		} else {
-			log.Printf("[%d]% 7s: %s", level, mtype, payload)
+	var caller Fields
+	if self.tracer {
+		if pc, file, line, ok := runtime.Caller(2); ok {
+			funk := runtime.FuncForPC(pc)
+			caller = Fields{
+				"file": file,
+				"line": strconv.FormatInt(int64(line), 0),
+				"name": funk.Name()}
 		}
+	}
+
+	if int64(level) < self.filter {
+		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
+		if len(fields) > 0 {
+			dump += fmt.Sprintf(" {%s}", fields)
+		}
+		if len(caller) > 0 {
+			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
+				caller["line"], caller["name"])
+		}
+		log.Printf(dump)
 	}
 
 	// Don't send an error if there's nothing to do
@@ -109,20 +152,13 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	if len(payload) > 0 {
 		msg.SetPayload(payload)
 	}
-	for key, ival := range fields {
-        var field *message.Field
-        var err error
-		if ival == nil {
-			continue
-		}
-		if key == "" {
-			continue
-		}
-        field, err = message.NewField(key, ival, message.Field_RAW)
-        if err != nil {
-            field, err = message.NewField(key, fmt.Sprintf("%s", ival), message.Field_RAW)
-        }
-		msg.AddField(field)
+	err = addFields(msg, fields)
+	if err != nil {
+		return err
+	}
+	err = addFields(msg, caller)
+	if err != nil {
+		return err
 	}
 	err = self.encoder.EncodeMessageStream(msg, &stream)
 	if err != nil {
@@ -137,23 +173,23 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields JsMap) (er
 	return nil
 }
 
-func (self HekaLogger) Info(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Info(mtype, msg string, fields Fields) (err error) {
 	return self.Log(INFO, mtype, msg, fields)
 }
 
-func (self HekaLogger) Debug(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Debug(mtype, msg string, fields Fields) (err error) {
 	return self.Log(DEBUG, mtype, msg, fields)
 }
 
-func (self HekaLogger) Warn(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Warn(mtype, msg string, fields Fields) (err error) {
 	return self.Log(WARNING, mtype, msg, fields)
 }
 
-func (self HekaLogger) Error(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Error(mtype, msg string, fields Fields) (err error) {
 	return self.Log(ERROR, mtype, msg, fields)
 }
 
-func (self HekaLogger) Critical(mtype, msg string, fields JsMap) (err error) {
+func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
 }
