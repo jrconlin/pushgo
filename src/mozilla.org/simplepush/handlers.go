@@ -246,12 +246,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			util.Fields{"path": req.URL.Path})
 	}
 	if self.logger != nil {
-		self.logger.Info("update", "=========== UPDATE ====", nil)
+		self.logger.Debug("update", "=========== UPDATE ====", nil)
 	}
 
 	defer func() {
 		if self.logger != nil {
-			self.logger.Info("update", "+++++++++++++ DONE +++", nil)
+			self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
 		}
 	}()
 	if req.Method != "PUT" {
@@ -340,7 +340,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	log.Printf("<< %s.%s = %d", uaid, chid, vers)
+	//log.Printf("<< %s.%s = %d", uaid, chid, vers)
 
 	if iport, ok := self.config["port"]; ok {
 		port = iport.(string)

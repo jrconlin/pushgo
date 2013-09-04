@@ -599,7 +599,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 				sock.Uaid + "." +
 				IStr(update["channelID"]) + " = " +
 				strconv.FormatInt(update["version"].(int64), 10)
-			log.Print(line)
+			// log.Print(line)
 			updatess = append(updatess, line)
 		}
 	}

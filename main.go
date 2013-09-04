@@ -26,7 +26,7 @@ var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
-	logging    *bool   = flag.Bool("logging", false, "Whether logging is enabled")
+	logging    *int   = flag.Int("logging", 0, "logging level (0=none,1=critical ... 10=verbose")
 	logger     *util.HekaLogger
 	store      *storage.Storage
 	route      *router.Router
@@ -58,7 +58,11 @@ func main() {
 		pprof.StartCPUProfile(f)
 	}
 	//  Disable logging for high capacity runs
-	if v, ok := config["logger.enable"]; ok && *logging {
+    if *logging > 0 {
+        config["logger.enable"] = "1"
+        config["logger.filter"] = strconv.FormatInt(int64(*logging), 10)
+    }
+	if v, ok := config["logger.enable"]; ok {
 		if v, _ := strconv.ParseBool(v.(string)); v {
 			logger = util.NewHekaLogger(config)
 			logger.Info("main", "Enabling full logger", nil)

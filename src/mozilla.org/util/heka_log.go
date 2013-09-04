@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+    "strings"
 	"time"
 )
 
@@ -125,7 +126,11 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 	if int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
-			dump += fmt.Sprintf(" {%s}", fields)
+            var fld []string
+            for key, val := range fields {
+                fld = append(fld, key + ": " + val)
+            }
+            dump += " {" + strings.Join(fld, ", ") + "}"
 		}
 		if len(caller) > 0 {
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
