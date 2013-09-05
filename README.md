@@ -39,7 +39,7 @@ To install this server:
 4. Modify the config.ini
 
 If you're not planning on doing development work (see previous notes
-about how this is pre-beta), you may want to build the executable with
+about how this is beta), you may want to build the executable with
 ''' go build main.go '''
 
 This will build "main" as an executable.

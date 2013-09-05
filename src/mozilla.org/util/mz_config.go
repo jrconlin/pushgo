@@ -46,11 +46,10 @@ func MzGetConfig(filename string) JsMap {
 }
 
 func MzGet(ma JsMap, key string, def string) string {
-	val, ok := ma[key].(string)
-	if !ok {
-		val = def
-	}
-	return val
+	if val, ok := ma[key].(string); ok {
+        return val
+    }
+	return def
 }
 
 func MzGetFlag(ma JsMap, key string) (flag bool) {
@@ -65,7 +64,7 @@ func MzGetFlag(ma JsMap, key string) (flag bool) {
 		flag, _ = strconv.ParseBool(val.(string))
 	}
 
-	return
+	return flag
 }
 
 // o4fs
