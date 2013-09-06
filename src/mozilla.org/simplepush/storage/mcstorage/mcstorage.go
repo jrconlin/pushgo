@@ -431,10 +431,10 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 	}()
 
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Get(keycode(pk), result)
 	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
@@ -467,10 +467,10 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 		return result, nil
 	}
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return result, err
 	}
-	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Get(keycode(uaid), &result)
 	if err != nil {
@@ -492,10 +492,10 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 
 func (self *Storage) storeAppIDArray(uaid []byte, arr ia) (err error) {
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return nil
 	}
-	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	// sort the array
 	sort.Sort(arr)
@@ -536,10 +536,10 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 				"record": fmt.Sprintf("%d,%d,%d", rec.L, rec.S, rec.V)})
 	}
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return err
 	}
-	defer func() { self.mcs <- mc }()
 
 	err = mc.Set(keycode(pk), rec, time.Duration(ttl)*time.Second)
 	if err != nil {
@@ -744,10 +744,10 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 				"items": "[" + strings.Join(items, ", ") + "]"})
 	}
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { self.mcs <- mc }()
 
 	// Apparently, GetMulti is currently broken. Feel free to uncomment
 	// this when that code is working correctly.
@@ -860,10 +860,10 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return err
 	}
-	defer func() { self.mcs <- mc }()
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
 			if cnt := len(ackPacket["expired"].([]interface{})); cnt > 0 {
@@ -929,10 +929,10 @@ func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 	}
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return err
 	}
-	defer func() { self.mcs <- mc }()
 	err = mc.Set(prefix+uaid, host, time.Duration(ttl)*time.Second)
 	if err != nil {
 		if strings.Contains("NOT FOUND", err.Error()) {
@@ -959,10 +959,10 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	}(defaultHost)
 
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return defaultHost, err
 	}
-	defer func() { self.mcs <- mc }()
 	var val string
 	err = mc.Get(prefix+uaid, &val)
 	if err != nil && err != errors.New("NOT FOUND") {
@@ -994,10 +994,10 @@ func (self *Storage) PurgeUAID(suaid string) (err error) {
 	uaid := cleanID(suaid)
 	appIDArray, err := self.fetchAppIDArray(uaid)
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return err
 	}
-	defer func() { self.mcs <- mc }()
 	if err == nil && len(appIDArray) > 0 {
 		for _, chid := range appIDArray {
 			pk, _ := binGenPK(uaid, chid)
@@ -1012,10 +1012,10 @@ func (self *Storage) PurgeUAID(suaid string) (err error) {
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	prefix := self.config["shard.prefix"].(string)
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return err
 	}
-	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Delete(prefix+uaid, time.Duration(0))
 	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
@@ -1037,10 +1037,10 @@ func (self *Storage) Status() (success bool, err error) {
 	fake_id, _ := util.GenUUID4()
 	key := "status_" + fake_id
 	mc, err := self.getMC()
+	defer self.returnMC(mc)
 	if err != nil {
 		return false, err
 	}
-	defer func() { self.mcs <- mc }()
 	err = mc.Set("status_"+fake_id, "test", 6*time.Second)
 	if err != nil {
 		return false, err
@@ -1054,12 +1054,21 @@ func (self *Storage) Status() (success bool, err error) {
 	return true, nil
 }
 
+func (self *Storage) returnMC(mc gomc.Client) {
+	if mc != nil {
+		atomic.AddInt32(&mcsPoolSize, 1)
+		self.mcs <- mc
+	}
+}
+
 func (self *Storage) getMC() (gomc.Client, error) {
 	select {
 	case mc := <-self.mcs:
 		if mc == nil {
-			panic("NULL MC!")
+			log.Printf("NULL MC!")
+			return nil, StorageError{"Connection Pool Saturated"}
 		}
+		atomic.AddInt32(&mcsPoolSize, -1)
 		return mc, nil
 	case <-time.After(self.mc_timeout):
 		// As noted before, dynamic pool sizing turns out to be deeply
@@ -1078,6 +1087,8 @@ func (self *Storage) getMC() (gomc.Client, error) {
 		*/
 		if self.logger != nil {
 			self.logger.Error("storage", "Connection Pool Saturated!", nil)
+		} else {
+			log.Printf("Connection Pool Saturated!")
 		}
 		// mc := self.NewMC(self.servers, self.config)
 		return nil, StorageError{"Connection Pool Saturated"}
