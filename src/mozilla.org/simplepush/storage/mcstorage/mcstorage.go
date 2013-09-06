@@ -319,7 +319,7 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		no_whitespace.Replace(config["memcache.server"].(string)),
 		",")
 
-	mcs := make(chan gomc.Client, mcsPoolSize)
+	mcs := make(chan gomc.Client, poolSize)
 	for i := 0; i < poolSize; i++ {
 		mcs <- newMC(servers, config, logger)
 	}
