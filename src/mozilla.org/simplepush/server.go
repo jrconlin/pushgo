@@ -8,11 +8,11 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
+	"runtime/debug"
+	"strconv"
 	"strings"
-    "strconv"
 	"sync"
 	"time"
-    "runtime/debug"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -111,10 +111,10 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 
 	args := cmd.Arguments.(util.JsMap)
 	if self.logger != nil {
-        chidss := ""
-        if chids, ok := args["channelIDs"]; ok {
-            chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
-        }
+		chidss := ""
+		if chids, ok := args["channelIDs"]; ok {
+			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
+		}
 		self.logger.Info("server", "handling 'hello'",
 			util.Fields{"uaid": args["uaid"].(string),
 				"channelIDs": chidss})
@@ -241,7 +241,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	}
 	// cheezy variable replacement.
 	endPoint = strings.Replace(endPoint, "<token>", token, -1)
-    host := self.config["shard.current_host"].(string) + ":" +
+	host := self.config["shard.current_host"].(string) + ":" +
 		self.config["port"].(string)
 	endPoint = strings.Replace(endPoint, "<current_host>", host, -1)
 	args["push.endpoint"] = endPoint
@@ -265,7 +265,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 					"requestFlush failed",
 					util.Fields{"error": r.(error).Error(),
 						"uaid": client.UAID})
-                debug.PrintStack()
+				debug.PrintStack()
 			}
 			if client != nil {
 				self.ClientPing(client.Prop)
