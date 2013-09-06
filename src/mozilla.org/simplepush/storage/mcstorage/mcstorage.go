@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,6 +57,15 @@ type Storage struct {
 	servers    []string
 }
 
+var mcsPoolSize int32
+
+// Attempting to use dynamic pools seems to cause all sorts of problems.
+// The first being that the pool channel can't be resized once it's built
+// in New(). The other being that during shutdown, go throws a popdefer
+// phase error that I've not been able to chase the source. Since this doesn't
+// happen for statically set pools, I'm going to go with that for now.
+// var mcsMaxPoolSize int32
+
 // ChannelRecord
 // I am using very short IDs here because these are also stored as part of the GLOB
 // and space matters in MC.
@@ -81,7 +91,7 @@ func (self ia) Less(i, j int) bool {
 }
 
 type StorageError struct {
-	err   string
+	err string
 }
 
 func (e StorageError) Error() string {
@@ -110,6 +120,8 @@ func remove(list [][]byte, pos int) (res [][]byte) {
 	return append(list[:pos], list[pos+1:]...)
 }
 
+// Use the AWS system to query for the endpoints to use.
+// (Allows for dynamic endpoint assignments)
 func getElastiCacheEndpoints(configEndpoint string) (string, error) {
 	c, err := net.Dial("tcp", configEndpoint)
 	if err != nil {
@@ -231,6 +243,7 @@ func keydecode(key string) []byte {
 func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	config = opts
 	var ok bool
+	var err error
 
 	if configEndpoint, ok := config["elasticache.config_endpoint"]; ok {
 		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint.(string), 2)
@@ -249,9 +262,6 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		config["memcache.server"] = "127.0.0.1:11211"
 	}
 
-	if _, ok = config["memcache.pool_size"]; !ok {
-		config["memcache.pool_size"] = "100"
-	}
 	timeout, err := time.ParseDuration(util.MzGet(config, "db.handle_timeout", "5s"))
 	if err != nil {
 		if logger != nil {
@@ -260,8 +270,14 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		}
 		timeout = 10 * time.Second
 	}
-	config["memcache.pool_size"], _ =
-		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0)
+	if _, ok = config["memcache.pool_size"]; !ok {
+		config["memcache.pool_size"] = "100"
+	}
+	if config["memcache.pool_size"], err =
+		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0); err != nil {
+		config["memcache.pool_size"] = 100
+	}
+	poolSize := int(config["memcache.pool_size"].(int64))
 	if _, ok = config["db.timeout_live"]; !ok {
 		config["db.timeout_live"] = "259200"
 	}
@@ -282,6 +298,18 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	if _, ok = config["shard.prefix"]; !ok {
 		config["shard.prefix"] = "_h-"
 	}
+	/*
+		i, err := strconv.ParseInt(util.MzGet(config,
+			"memcache.max_pool_size", "400"), 0, 10)
+		if err != nil {
+			if logger != nil {
+				logger.Error("storage", "Could not parse memcache.max_pool_size",
+					util.Fields{"error": err.Error()})
+			}
+			mcsMaxPoolSize = 400
+		}
+		mcsMaxPoolSize = int32(i)
+	*/
 
 	if logger != nil {
 		logger.Info("storage", "Creating new gomc handler", nil)
@@ -291,13 +319,10 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		no_whitespace.Replace(config["memcache.server"].(string)),
 		",")
 
-	poolSize := int(config["memcache.pool_size"].(int64))
-	mcs := make(chan gomc.Client, poolSize)
+	mcs := make(chan gomc.Client, mcsPoolSize)
 	for i := 0; i < poolSize; i++ {
 		mcs <- newMC(servers, config, logger)
 	}
-
-	log.Printf("############# NEW HANDLER ")
 
 	return &Storage{
 		mcs:        mcs,
@@ -311,6 +336,10 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 // Generate a new Memcache Client
 func newMC(servers []string, config util.JsMap, logger *util.HekaLogger) (mc gomc.Client) {
 	var err error
+	/*	if mcsPoolSize >= mcsMaxPoolSize {
+			return nil
+		}
+	*/
 	mc, err = gomc.NewClient(servers, 1, gomc.ENCODING_GOB)
 	if err != nil {
 		logger.Critical("storage", "CRITICAL HIT!",
@@ -352,6 +381,7 @@ func newMC(servers []string, config util.JsMap, logger *util.HekaLogger) (mc gom
 				uint64(d.Nanoseconds()*1000))
 		}
 	}
+	atomic.AddInt32(&mcsPoolSize, 1)
 	return mc
 }
 
@@ -719,7 +749,8 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	}
 	defer func() { self.mcs <- mc }()
 
-	// Apparently, GetMulti is broken.
+	// Apparently, GetMulti is currently broken. Feel free to uncomment
+	// this when that code is working correctly.
 	/*
 		    recs, err := mc.GetMulti(items)
 			if err != nil {
@@ -828,8 +859,6 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 }
 
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
-	//TODO, go through the results and nuke what's there, then call flush
-
 	mc, err := self.getMC()
 	if err != nil {
 		return err
@@ -1028,13 +1057,31 @@ func (self *Storage) Status() (success bool, err error) {
 func (self *Storage) getMC() (gomc.Client, error) {
 	select {
 	case mc := <-self.mcs:
+		if mc == nil {
+			panic("NULL MC!")
+		}
 		return mc, nil
 	case <-time.After(self.mc_timeout):
+		// As noted before, dynamic pool sizing turns out to be deeply
+		// problematic at this time.
+		// TODO: Investigate why go throws the popdefer phase error on
+		// socket shutdown.
+		/*		if mcsPoolSize < mcsMaxPoolSize {
+					if self.logger != nil {
+						self.logger.Warn("storage", "Increasing Pool Size",
+							util.Fields{"poolSize": strconv.FormatInt(int64(mcsPoolSize+1), 10)})
+					}
+					return newMC(self.servers,
+						self.config,
+						self.logger), nil
+				} else {
+		*/
 		if self.logger != nil {
 			self.logger.Error("storage", "Connection Pool Saturated!", nil)
 		}
 		// mc := self.NewMC(self.servers, self.config)
 		return nil, StorageError{"Connection Pool Saturated"}
+		//		}
 	}
 }
 
