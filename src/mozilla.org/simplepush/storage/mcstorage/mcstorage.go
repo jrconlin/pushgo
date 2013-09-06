@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +41,7 @@ const (
 var (
 	config        util.JsMap
 	no_whitespace *strings.Replacer = strings.NewReplacer(" ", "",
+		"\x08", "",
 		"\x09", "",
 		"\x0a", "",
 		"\x0b", "",
@@ -48,11 +50,21 @@ var (
 )
 
 type Storage struct {
-	config util.JsMap
-	mcs    chan gomc.Client
-	logger *util.HekaLogger
-	thrash int64
+	config     util.JsMap
+	mcs        chan gomc.Client
+	logger     *util.HekaLogger
+	mc_timeout time.Duration
+	servers    []string
 }
+
+var mcsPoolSize int32
+
+// Attempting to use dynamic pools seems to cause all sorts of problems.
+// The first being that the pool channel can't be resized once it's built
+// in New(). The other being that during shutdown, go throws a popdefer
+// phase error that I've not been able to chase the source. Since this doesn't
+// happen for statically set pools, I'm going to go with that for now.
+// var mcsMaxPoolSize int32
 
 // ChannelRecord
 // I am using very short IDs here because these are also stored as part of the GLOB
@@ -79,14 +91,13 @@ func (self ia) Less(i, j int) bool {
 }
 
 type StorageError struct {
-	err   error
-	retry int
+	err string
 }
 
-func (e *StorageError) Error() string {
+func (e StorageError) Error() string {
 	// foo call so that import log doesn't complain
 	_ = log.Flags()
-	return "StorageError: " + e.err.Error()
+	return "StorageError: " + e.err
 }
 
 // Returns the location of a string in a slice of strings or -1 if
@@ -109,6 +120,8 @@ func remove(list [][]byte, pos int) (res [][]byte) {
 	return append(list[:pos], list[pos+1:]...)
 }
 
+// Use the AWS system to query for the endpoints to use.
+// (Allows for dynamic endpoint assignments)
 func getElastiCacheEndpoints(configEndpoint string) (string, error) {
 	c, err := net.Dial("tcp", configEndpoint)
 	if err != nil {
@@ -230,6 +243,7 @@ func keydecode(key string) []byte {
 func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	config = opts
 	var ok bool
+	var err error
 
 	if configEndpoint, ok := config["elasticache.config_endpoint"]; ok {
 		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint.(string), 2)
@@ -248,11 +262,22 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		config["memcache.server"] = "127.0.0.1:11211"
 	}
 
+	timeout, err := time.ParseDuration(util.MzGet(config, "db.handle_timeout", "5s"))
+	if err != nil {
+		if logger != nil {
+			logger.Error("storage", "Could not parse db.handle_timeout",
+				util.Fields{"err": err.Error()})
+		}
+		timeout = 10 * time.Second
+	}
 	if _, ok = config["memcache.pool_size"]; !ok {
 		config["memcache.pool_size"] = "100"
 	}
-	config["memcache.pool_size"], _ =
-		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0)
+	if config["memcache.pool_size"], err =
+		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0); err != nil {
+		config["memcache.pool_size"] = 100
+	}
+	poolSize := int(config["memcache.pool_size"].(int64))
 	if _, ok = config["db.timeout_live"]; !ok {
 		config["db.timeout_live"] = "259200"
 	}
@@ -273,6 +298,18 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	if _, ok = config["shard.prefix"]; !ok {
 		config["shard.prefix"] = "_h-"
 	}
+	/*
+		i, err := strconv.ParseInt(util.MzGet(config,
+			"memcache.max_pool_size", "400"), 0, 10)
+		if err != nil {
+			if logger != nil {
+				logger.Error("storage", "Could not parse memcache.max_pool_size",
+					util.Fields{"error": err.Error()})
+			}
+			mcsMaxPoolSize = 400
+		}
+		mcsMaxPoolSize = int32(i)
+	*/
 
 	if logger != nil {
 		logger.Info("storage", "Creating new gomc handler", nil)
@@ -282,60 +319,70 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		no_whitespace.Replace(config["memcache.server"].(string)),
 		",")
 
-	poolSize := int(config["memcache.pool_size"].(int64))
 	mcs := make(chan gomc.Client, poolSize)
 	for i := 0; i < poolSize; i++ {
-		mc, err := gomc.NewClient(servers, 1, gomc.ENCODING_GOB)
-		if err != nil {
-			logger.Critical("storage", "CRITICAL HIT!",
-				util.Fields{"error": err.Error()})
-		}
-		// internally hash key using MD5 (for key distribution)
-		mc.SetBehavior(gomc.BEHAVIOR_KETAMA_HASH, 1)
-		// Use the binary protocol, which allows us faster data xfer
-		// and better data storage (can use full UTF-8 char space)
-		mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
-		//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
-		// NOTE! do NOT set BEHAVIOR_NOREPLY + Binary. This will cause
-		// libmemcache to drop into an infinite loop.
-		if v, ok := config["memcache.recv_timeout"]; ok {
-			d, err := time.ParseDuration(v.(string))
-			if err == nil {
-				mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT,
-					uint64(d.Nanoseconds()*1000))
-			}
-		}
-		if v, ok := config["memcache.send_timeout"]; ok {
-			d, err := time.ParseDuration(v.(string))
-			if err == nil {
-				mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT,
-					uint64(d.Nanoseconds()*1000))
-			}
-		}
-		if v, ok := config["memcache.poll_timeout"]; ok {
-			d, err := time.ParseDuration(v.(string))
-			if err == nil {
-				mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT,
-					uint64(d.Nanoseconds()*1000))
-			}
-		}
-		if v, ok := config["memcache.retry_timeout"]; ok {
-			d, err := time.ParseDuration(v.(string))
-			if err == nil {
-				mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT,
-					uint64(d.Nanoseconds()*1000))
-			}
-		}
-		mcs <- mc
+		mcs <- newMC(servers, config, logger)
 	}
 
-	log.Printf("############# NEW HANDLER ")
-
 	return &Storage{
-		mcs:    mcs,
-		config: config,
-		logger: logger,
-		thrash: 0}
+		mcs:        mcs,
+		config:     config,
+		logger:     logger,
+		mc_timeout: timeout,
+		servers:    servers,
+	}
+}
+
+// Generate a new Memcache Client
+func newMC(servers []string, config util.JsMap, logger *util.HekaLogger) (mc gomc.Client) {
+	var err error
+	/*	if mcsPoolSize >= mcsMaxPoolSize {
+			return nil
+		}
+	*/
+	mc, err = gomc.NewClient(servers, 1, gomc.ENCODING_GOB)
+	if err != nil {
+		logger.Critical("storage", "CRITICAL HIT!",
+			util.Fields{"error": err.Error()})
+	}
+	// internally hash key using MD5 (for key distribution)
+	mc.SetBehavior(gomc.BEHAVIOR_KETAMA_HASH, 1)
+	// Use the binary protocol, which allows us faster data xfer
+	// and better data storage (can use full UTF-8 char space)
+	mc.SetBehavior(gomc.BEHAVIOR_BINARY_PROTOCOL, 1)
+	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
+	// NOTE! do NOT set BEHAVIOR_NOREPLY + Binary. This will cause
+	// libmemcache to drop into an infinite loop.
+	if v, ok := config["memcache.recv_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.send_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.poll_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	if v, ok := config["memcache.retry_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err == nil {
+			mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT,
+				uint64(d.Nanoseconds()*1000))
+		}
+	}
+	atomic.AddInt32(&mcsPoolSize, 1)
+	return mc
 }
 
 func (self *Storage) isFatal(err error) bool {
@@ -378,12 +425,15 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 				self.logger.Error("storage",
 					fmt.Sprintf("could not fetch record for %s", pk),
 					util.Fields{"primarykey": keycode(pk),
-                                "error": err.(error).Error()})
+						"error": err.(error).Error()})
 			}
 		}
 	}()
 
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return nil, err
+	}
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Get(keycode(pk), result)
@@ -405,9 +455,9 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 		self.logger.Debug("storage",
 			"Fetched",
 			util.Fields{"primarykey": hex.EncodeToString(pk),
-                        "result": fmt.Sprintf("state: %d, vers: %d, last: %d",
-                        result.S, result.V, result.L),
-                    })
+				"result": fmt.Sprintf("state: %d, vers: %d, last: %d",
+					result.S, result.V, result.L),
+			})
 	}
 	return result, err
 }
@@ -416,7 +466,10 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 	if uaid == nil {
 		return result, nil
 	}
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return result, err
+	}
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Get(keycode(uaid), &result)
@@ -438,7 +491,10 @@ func (self *Storage) fetchAppIDArray(uaid []byte) (result ia, err error) {
 }
 
 func (self *Storage) storeAppIDArray(uaid []byte, arr ia) (err error) {
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return nil
+	}
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	// sort the array
@@ -479,7 +535,10 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 			util.Fields{"primarykey": keycode(pk),
 				"record": fmt.Sprintf("%d,%d,%d", rec.L, rec.S, rec.V)})
 	}
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return err
+	}
 	defer func() { self.mcs <- mc }()
 
 	err = mc.Set(keycode(pk), rec, time.Duration(ttl)*time.Second)
@@ -488,8 +547,8 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 		if self.logger != nil {
 			self.logger.Error("storage",
 				"Failure to set item",
-                util.Fields{"primarykey": keycode(pk),
-                            "error": err.Error()})
+				util.Fields{"primarykey": keycode(pk),
+					"error": err.Error()})
 		}
 	}
 	return err
@@ -528,8 +587,8 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 		if self.logger != nil {
 			self.logger.Error("storage",
 				"fetchRec error",
-                util.Fields{"primarykey": pks,
-                    "error": err.Error()})
+				util.Fields{"primarykey": pks,
+					"error": err.Error()})
 		}
 		return err
 	}
@@ -537,8 +596,8 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 	if cRec != nil {
 		if self.logger != nil {
 			self.logger.Debug("storage",
-                "Replacing record",
-                util.Fields{"primarykey":pks})
+				"Replacing record",
+				util.Fields{"primarykey": pks})
 		}
 		if cRec.S != DELETED {
 			newRecord := &cr{
@@ -558,7 +617,7 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 			"Registering channel",
 			util.Fields{"uaid": suaid,
 				"channelID": schid,
-				"version":   strconv.FormatInt(vers, 0)})
+				"version":   strconv.FormatInt(vers, 10)})
 	}
 	err = self.binRegisterAppID(uaid, chid, vers)
 	if err == sperrors.ChannelExistsError {
@@ -644,7 +703,7 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 					self.logger.Error("storage",
 						"Could not delete Channel",
 						util.Fields{"primarykey": hex.EncodeToString(pk),
-                        "error": err.Error()})
+							"error": err.Error()})
 				}
 			}
 		}
@@ -684,10 +743,14 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			util.Fields{"uaid": keycode(uaid),
 				"items": "[" + strings.Join(items, ", ") + "]"})
 	}
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return nil, err
+	}
 	defer func() { self.mcs <- mc }()
 
-	// Apparently, GetMulti is broken.
+	// Apparently, GetMulti is currently broken. Feel free to uncomment
+	// this when that code is working correctly.
 	/*
 		    recs, err := mc.GetMulti(items)
 			if err != nil {
@@ -733,8 +796,8 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			continue
 		}
 		uaid, chid, err := binResolvePK(keydecode(key))
-        suaid := hex.EncodeToString(uaid)
-        schid := hex.EncodeToString(chid)
+		suaid := hex.EncodeToString(uaid)
+		schid := hex.EncodeToString(chid)
 		if self.logger != nil {
 			self.logger.Debug("storage",
 				"GetUpdates Fetched record ",
@@ -748,7 +811,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		if val.L < lastAccessed {
 			if self.logger != nil {
 				self.logger.Debug("storage", "Skipping record...",
-                util.Fields{"uaid": suaid, "chid": schid})
+					util.Fields{"uaid": suaid, "chid": schid})
 			}
 			continue
 		}
@@ -764,7 +827,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 				vers = uint64(time.Now().UTC().Unix())
 				self.logger.Error("storage",
 					"GetUpdates Using Timestamp",
-                    util.Fields{"uaid": suaid, "chid": schid})
+					util.Fields{"uaid": suaid, "chid": schid})
 			}
 			newRec["version"] = vers
 			updates = append(updates, newRec)
@@ -772,7 +835,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			if self.logger != nil {
 				self.logger.Info("storage",
 					"GetUpdates Deleting record",
-                    util.Fields{"uaid": suaid, "chid": schid})
+					util.Fields{"uaid": suaid, "chid": schid})
 			}
 			expired = append(expired, schid)
 		case REGISTERED:
@@ -781,7 +844,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			if self.logger != nil {
 				self.logger.Warn("storage",
 					"Unknown state",
-                    util.Fields{"uaid": suaid, "chid": schid})
+					util.Fields{"uaid": suaid, "chid": schid})
 			}
 		}
 
@@ -796,9 +859,10 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 }
 
 func (self *Storage) Ack(uaid string, ackPacket map[string]interface{}) (err error) {
-	//TODO, go through the results and nuke what's there, then call flush
-
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return err
+	}
 	defer func() { self.mcs <- mc }()
 	if _, ok := ackPacket["expired"]; ok {
 		if ackPacket["expired"] != nil {
@@ -864,7 +928,10 @@ func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 			util.Fields{"uaid": uaid, "host": host})
 	}
 	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return err
+	}
 	defer func() { self.mcs <- mc }()
 	err = mc.Set(prefix+uaid, host, time.Duration(ttl)*time.Second)
 	if err != nil {
@@ -891,7 +958,10 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 		}
 	}(defaultHost)
 
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return defaultHost, err
+	}
 	defer func() { self.mcs <- mc }()
 	var val string
 	err = mc.Get(prefix+uaid, &val)
@@ -923,7 +993,10 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 func (self *Storage) PurgeUAID(suaid string) (err error) {
 	uaid := cleanID(suaid)
 	appIDArray, err := self.fetchAppIDArray(uaid)
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return err
+	}
 	defer func() { self.mcs <- mc }()
 	if err == nil && len(appIDArray) > 0 {
 		for _, chid := range appIDArray {
@@ -938,7 +1011,10 @@ func (self *Storage) PurgeUAID(suaid string) (err error) {
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
 	prefix := self.config["shard.prefix"].(string)
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return err
+	}
 	defer func() { self.mcs <- mc }()
 	//mc.Timeout = time.Second * 10
 	err = mc.Delete(prefix+uaid, time.Duration(0))
@@ -960,7 +1036,10 @@ func (self *Storage) Status() (success bool, err error) {
 
 	fake_id, _ := util.GenUUID4()
 	key := "status_" + fake_id
-	mc := <-self.mcs
+	mc, err := self.getMC()
+	if err != nil {
+		return false, err
+	}
 	defer func() { self.mcs <- mc }()
 	err = mc.Set("status_"+fake_id, "test", 6*time.Second)
 	if err != nil {
@@ -973,6 +1052,37 @@ func (self *Storage) Status() (success bool, err error) {
 	}
 	mc.Delete(key, time.Duration(0))
 	return true, nil
+}
+
+func (self *Storage) getMC() (gomc.Client, error) {
+	select {
+	case mc := <-self.mcs:
+		if mc == nil {
+			panic("NULL MC!")
+		}
+		return mc, nil
+	case <-time.After(self.mc_timeout):
+		// As noted before, dynamic pool sizing turns out to be deeply
+		// problematic at this time.
+		// TODO: Investigate why go throws the popdefer phase error on
+		// socket shutdown.
+		/*		if mcsPoolSize < mcsMaxPoolSize {
+					if self.logger != nil {
+						self.logger.Warn("storage", "Increasing Pool Size",
+							util.Fields{"poolSize": strconv.FormatInt(int64(mcsPoolSize+1), 10)})
+					}
+					return newMC(self.servers,
+						self.config,
+						self.logger), nil
+				} else {
+		*/
+		if self.logger != nil {
+			self.logger.Error("storage", "Connection Pool Saturated!", nil)
+		}
+		// mc := self.NewMC(self.servers, self.config)
+		return nil, StorageError{"Connection Pool Saturated"}
+		//		}
+	}
 }
 
 // o4fs

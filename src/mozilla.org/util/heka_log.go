@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+    "strings"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type HekaLogger struct {
 	filter   int64
 }
 
+// Message levels
 const (
 	CRITICAL = iota
 	ERROR
@@ -38,22 +40,24 @@ const (
 	DEBUG
 )
 
+// The fields to relay. NOTE: object reflection is VERY CPU expensive.
+// I specify strings here to reduce that as much as possible. Please do
+// not change this to something like map[string]interface{} since that
+// can dramatically increase server load.
 type Fields map[string]string
 
+// Create a new Heka logging interface.
 func NewHekaLogger(conf JsMap) *HekaLogger {
 	//Preflight
 	var ok bool
-	var encoder client.Encoder
-	var sender client.Sender
-	var logname string
+	var encoder client.Encoder = nil
+	var sender client.Sender = nil
+	var logname string = ""
 	var err error
-	var tracer bool
+	var tracer bool = false
 	var filter int64
+
 	pid := int32(os.Getpid())
-	encoder = nil
-	sender = nil
-	logname = ""
-	tracer = false
 
 	if _, ok = conf["heka.sender"]; !ok {
 		conf["heka.sender"] = "tcp"
@@ -90,6 +94,8 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 		filter:   filter}
 }
 
+// Fields are additional logging data passed to Heka. They are technically
+// undefined, but searchable and actionable.
 func addFields(msg *message.Message, fields Fields) (err error) {
 	for key, ival := range fields {
 		var field *message.Field
@@ -108,10 +114,17 @@ func addFields(msg *message.Message, fields Fields) (err error) {
 	return err
 }
 
-//TODO: Change the last arg to be something like fields ...interface{}
+// Logging workhorse function. Chances are you're not going to call this
+// directly, but via one of the helper methods. of Info() .. Critical()
+// level - One of the defined logging CONST values
+// mtype - Message type, Short class identifier for the message
+// payload - Main error message
+// fields - additional optional key/value data associated with the message.
 func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
+    // add in go language tracing. (Also CPU intensive, but REALLY helpful
+    // when dev/debugging)
 	if self.tracer {
 		if pc, file, line, ok := runtime.Caller(2); ok {
 			funk := runtime.FuncForPC(pc)
@@ -122,10 +135,15 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 		}
 	}
 
+    // Only print out the debug message if it's less than the filter.
 	if int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
-			dump += fmt.Sprintf(" {%s}", fields)
+            var fld []string
+            for key, val := range fields {
+                fld = append(fld, key + ": " + val)
+            }
+            dump += " {" + strings.Join(fld, ", ") + "}"
 		}
 		if len(caller) > 0 {
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
@@ -173,6 +191,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 	return nil
 }
 
+// record the lowest priority message
 func (self HekaLogger) Info(mtype, msg string, fields Fields) (err error) {
 	return self.Log(INFO, mtype, msg, fields)
 }
@@ -189,6 +208,7 @@ func (self HekaLogger) Error(mtype, msg string, fields Fields) (err error) {
 	return self.Log(ERROR, mtype, msg, fields)
 }
 
+// record the Highest priority message, and include a printstack to STDERR
 func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
