@@ -99,28 +99,27 @@ func FixConfig(config util.JsMap) util.JsMap {
 }
 
 func ErrStr(err error) string {
-    if err == nil {
-        return ""
-    } else {
-        return err.Error()
-    }
+	if err == nil {
+		return ""
+	} else {
+		return err.Error()
+	}
 }
 
 func IStr(i interface{}) (reply string) {
-    defer func(){
-        if r := recover(); r != nil {
-            reply = "Undefined"
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			reply = "Undefined"
+		}
+	}()
 
-    if i != nil {
-        reply = i.(string)
-    } else {
-        reply = ""
-    }
-    return reply
+	if i != nil {
+		reply = i.(string)
+	} else {
+		reply = ""
+	}
+	return reply
 }
-
 
 type Handler struct {
 	config util.JsMap
@@ -284,7 +283,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
 		if self.logger != nil {
-            // Note: dumping the []uint8 keys can produce terminal glitches
+			// Note: dumping the []uint8 keys can produce terminal glitches
 			self.logger.Debug("main", "Decoding...", nil)
 		}
 		var err error
@@ -413,7 +412,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			util.Fields{"uaid": uaid, "channelID": chid,
-                "version": strconv.FormatInt(vers, 10)})
+				"version": strconv.FormatInt(vers, 10)})
 	}
 	err = self.store.UpdateChannel(pk, vers)
 
