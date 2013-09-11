@@ -141,6 +141,7 @@ func main() {
 	RESTMux.HandleFunc("/update/", handlers.UpdateHandler)
 	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
 	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
+	RESTMux.HandleFunc("/metrics/", handlers.MetricsHandler)
 	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Hoist the main sail.
@@ -213,6 +214,7 @@ func main() {
 // Handle a routed update.
 func updater(update *router.Update) (err error) {
 	//log.Printf("UPDATE::: %s", update)
+	simplepush.MetricIncrement("routing update: in")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
