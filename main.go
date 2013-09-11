@@ -122,16 +122,26 @@ func main() {
 	simplepush.InitServer(config, logger)
 	handlers := simplepush.NewHandler(config, logger, store, route)
 
-	// Register the handlers
-	// each websocket gets it's own handler.
-	http.HandleFunc("/update/", handlers.UpdateHandler)
-	http.HandleFunc("/status/", handlers.StatusHandler)
-	http.HandleFunc("/realstatus/", handlers.RealStatusHandler)
-	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
-
 	// Config the server
+	var wsport string
+	var wshost string
+	var WSMux *http.ServeMux = http.DefaultServeMux
+	var RESTMux *http.ServeMux = http.DefaultServeMux
 	host := util.MzGet(config, "host", "localhost")
 	port := util.MzGet(config, "port", "8080")
+
+	// Register the handlers
+	// each websocket gets it's own handler.
+	if util.MzGet(config, "wsport", port) != port {
+		wsport = util.MzGet(config, "wsport", port)
+		wshost = util.MzGet(config, "wshost", host)
+		WSMux = http.NewServeMux()
+	}
+
+	RESTMux.HandleFunc("/update/", handlers.UpdateHandler)
+	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
+	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
+	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Hoist the main sail.
 	if logger != nil {
@@ -146,6 +156,8 @@ func main() {
 	if name, ok := config["ssl.keyfile"]; ok {
 		keyFile = name.(string)
 	}
+	wscertFile := util.MzGet(config, "ssl.ws.certfile", certFile)
+	wskeyFile := util.MzGet(config, "ssl.ws.keyfile", keyFile)
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
@@ -164,6 +176,22 @@ func main() {
 			errChan <- http.ListenAndServe(addr, nil)
 		}
 	}()
+	// Oh, we have a different context for WebSockets. Weigh that anchor too!
+	if WSMux != RESTMux {
+		if logger != nil {
+			logger.Info("main", "Starting separate context for WS", nil)
+			logger.Info("main",
+				fmt.Sprintf("ws listen on %s:%s", wshost, wsport), nil)
+		}
+		go func() {
+			wsaddr := wshost + ":" + wsport
+			if len(wscertFile) > 0 && len(wskeyFile) > 0 {
+				errChan <- http.ListenAndServeTLS(wsaddr, wscertFile, wskeyFile, WSMux)
+			} else {
+				errChan <- http.ListenAndServe(wsaddr, WSMux)
+			}
+		}()
+	}
 
 	// And we're underway!
 	go route.HandleUpdates(updater)
