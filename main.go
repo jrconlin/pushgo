@@ -127,6 +127,7 @@ func main() {
 	http.HandleFunc("/update/", handlers.UpdateHandler)
 	http.HandleFunc("/status/", handlers.StatusHandler)
 	http.HandleFunc("/realstatus/", handlers.RealStatusHandler)
+	http.HandleFunc("/metrics/", handlers.MetricsHandler)
 	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server
@@ -185,6 +186,7 @@ func main() {
 // Handle a routed update.
 func updater(update *router.Update) (err error) {
 	//log.Printf("UPDATE::: %s", update)
+	simplepush.MetricIncrement("routing update: in")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
