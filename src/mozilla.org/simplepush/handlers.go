@@ -403,7 +403,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					util.Fields{"uaid": uaid,
 						"destination": host + port})
 			}
-			MetricIncrement("routing update: out")
 			// Use tcp routing.
 			if util.MzGetFlag(self.config, "shard.router") {
 				// If there was an error routing the update, don't
@@ -425,6 +424,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 							"error":       err.Error()})
 				}
 			}
+			MetricIncrement("routing update: out")
 			if err != nil {
 				http.Error(resp, err.Error(), 500)
 			} else {
@@ -449,7 +449,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			util.Fields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(vers, 10)})
 	}
-	MetricIncrement("update channel")
 	err = self.store.UpdateChannel(pk, vers)
 
 	if err != nil {
@@ -470,6 +469,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
+	MetricIncrement("update channel")
 	return
 }
 
