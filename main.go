@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+    "runtime"
 	"runtime/pprof"
 	"strconv"
 	"syscall"
@@ -46,6 +47,7 @@ func main() {
 	// The config file requires some customization and normalization
 	config = simplepush.FixConfig(config)
 	config["VERSION"] = VERSION
+    runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Report what the app believes the current host to be, and what version.
 	log.Printf("CurrentHost: %s, Version: %s",
