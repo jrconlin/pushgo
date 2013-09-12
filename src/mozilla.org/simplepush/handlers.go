@@ -29,7 +29,10 @@ import (
 	"time"
 )
 
-var toomany int32 = 0
+var (
+	toomany int32 = 0
+	snapshot map[string]int64
+)
 
 func awsGetPublicHostname() (hostname string, err error) {
 	req := &http.Request{Method: "GET",
@@ -136,6 +139,36 @@ func NewHandler(config util.JsMap, logger *util.HekaLogger,
 		router: router}
 }
 
+func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request) {
+	var tempshot map[string]int64
+	var newsnapshot = MetricsSnapshot()
+
+	// Looping needs optimizing, obviously
+	if self.config["metrics.counters"] != 0 {
+		for k, v := range newsnapshot {
+			if _, exists := snapshot[k]; exists {
+				tempshot[k] = v - snapshot[k]
+			} else {
+				tempshot[k] = v
+			}
+			snapshot[k] = v
+		}
+	} else {
+		// Gauges
+		for k, v := range newsnapshot {
+			tempshot[k] = v
+			snapshot[k] = v
+		}
+	}
+	reply, err := json.Marshal(tempshot)
+	if err != nil {
+		if self.logger != nil {
+			self.logger.Error("handler", "Failed to marshal metrics", nil)
+		}
+	}
+	resp.Write(reply)
+}
+
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
@@ -230,6 +263,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				self.logger.Error("handler", "Socket Count Exceeded", nil)
 			}
 		}
+		MetricIncrement("too many connections")
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
 		return
@@ -390,6 +424,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 							"error":       err.Error()})
 				}
 			}
+			MetricIncrement("routing update: out")
 			if err != nil {
 				http.Error(resp, err.Error(), 500)
 			} else {
@@ -434,6 +469,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
+	MetricIncrement("update channel")
 	return
 }
 

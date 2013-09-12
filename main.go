@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+    "runtime"
 	"runtime/pprof"
 	"strconv"
 	"syscall"
@@ -46,6 +47,7 @@ func main() {
 	// The config file requires some customization and normalization
 	config = simplepush.FixConfig(config)
 	config["VERSION"] = VERSION
+    runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Report what the app believes the current host to be, and what version.
 	log.Printf("CurrentHost: %s, Version: %s",
@@ -141,6 +143,7 @@ func main() {
 	RESTMux.HandleFunc("/update/", handlers.UpdateHandler)
 	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
 	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
+	RESTMux.HandleFunc("/metrics/", handlers.MetricsHandler)
 	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Hoist the main sail.
@@ -213,6 +216,7 @@ func main() {
 // Handle a routed update.
 func updater(update *router.Update) (err error) {
 	//log.Printf("UPDATE::: %s", update)
+	simplepush.MetricIncrement("routing update: in")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
