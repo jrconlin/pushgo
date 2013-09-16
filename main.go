@@ -222,13 +222,16 @@ func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
 		simplepush.Flush(client, update.Chid, int64(update.Vers))
+        duration := strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)
 		if logger != nil {
 			logger.Info("timer", "Routed flush to client completed",
 				util.Fields{
 					"uaid":     update.Uaid,
 					"chid":     update.Chid,
-					"duration": strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)})
-		}
+					"duration": duration})
+		} else {
+            log.Printf("Routed flush complete: %s", duration)
+        }
 	}
 	return nil
 }
