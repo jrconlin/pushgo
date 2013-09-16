@@ -83,14 +83,14 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 			if err == io.EOF && n == 0 {
 				if self.Logger != nil {
 					self.Logger.Debug("router",
-						"@@@@ Closing listener socket."+err.Error(), nil)
+						"Closing listener socket."+err.Error(), nil)
 				}
 				err = nil
 				break
 			}
 			break
 		}
-		//log.Printf("@@@ Updates::: " + string(buf[:n]))
+		//log.Printf("Updates::: " + string(buf[:n]))
 		update := Update{}
 		items := bytes.Split(buf[:n], NL)
 		for _, item := range items {
@@ -98,14 +98,14 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 				conn.Close()
 				continue
 			}
-			//log.Printf("@@@ item ::: %s", item)
+			//log.Printf("item ::: %s", item)
 			if len(item) == 0 {
 				continue
 			}
 			json.Unmarshal(item, &update)
 			if self.Logger != nil {
 				self.Logger.Debug("router",
-					fmt.Sprintf("@@@@ Handling update %s", item), nil)
+					fmt.Sprintf("Handling update %s", item), nil)
 			}
 			if len(update.Uaid) == 0 {
 				continue
@@ -138,7 +138,7 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64, timer tim
 			return err
 		}
 		if self.Logger != nil {
-			self.Logger.Info("router", "@@@ Creating new route to "+host, nil)
+			self.Logger.Info("router", "Creating new route to "+host, nil)
 		}
 		route = &Route{
 			socket: conn,
@@ -155,14 +155,14 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64, timer tim
 		return err
 	}
 	if self.Logger != nil {
-		self.Logger.Debug("router", "@@@ Writing to host "+host, nil)
+		self.Logger.Debug("router", "Writing to host "+host, nil)
 	}
 	buf := bytes.NewBuffer(data)
 	buf.Write(NL)
 	_, err = route.socket.Write(buf.Bytes())
 	if err != nil {
 		if self.Logger != nil {
-			self.Logger.Error("router", "@@@ Closing socket to "+host, nil)
+			self.Logger.Error("router", "Closing socket to "+host, nil)
 			log.Printf("ERROR: %s", err.Error())
 		}
 		route.socket.Close()
