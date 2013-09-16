@@ -409,7 +409,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				// If there was an error routing the update, don't
 				// tell the AppServer. Chances are it's temporary, and
 				// the client will get the update on next refresh/reconnect
-				self.router.SendUpdate(host, uaid, chid, vers)
+				self.router.SendUpdate(host, uaid, chid, vers, timer)
 			} else {
 				proto := "http"
 				if len(util.MzGet(self.config, "ssl.certfile", "")) > 0 {

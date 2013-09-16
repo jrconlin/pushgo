@@ -9,6 +9,7 @@ import (
 	"mozilla.org/util"
 	"net"
 	"sync"
+    "time"
 )
 
 var (
@@ -32,9 +33,10 @@ type Update struct {
 	Uaid string `json:"uaid"`
 	Chid string `json:"chid"`
 	Vers int64  `json:"vers"`
+    Time time.Time  `json:"time"`
 }
 
-type Updater func(*Update) error
+type Updater func(*Update, *util.HekaLogger) error
 
 func (self *Router) HandleUpdates(updater Updater) {
 	/* There appears to be a difference in how the connection is specified.
@@ -109,7 +111,7 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 				continue
 			}
 			// TODO group updates by UAID and send in batch
-			updater(&update)
+			updater(&update, self.Logger)
 		}
 	}
 	if err != nil {
@@ -121,7 +123,7 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 	return err
 }
 
-func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err error) {
+func (self *Router) SendUpdate(host, uaid, chid string, version int64, timer time.Time) (err error) {
 
 	var route *Route
 	var ok bool
@@ -147,7 +149,8 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64) (err erro
 	data, err := json.Marshal(Update{
 		Uaid: uaid,
 		Chid: chid,
-		Vers: version})
+		Vers: version,
+        Time: timer})
 	if err != nil {
 		return err
 	}
