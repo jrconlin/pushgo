@@ -17,10 +17,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-    "runtime"
+	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 var (
@@ -35,7 +36,7 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "0.6"
+const VERSION = "0.6.1"
 
 // -- main
 func main() {
@@ -47,7 +48,7 @@ func main() {
 	// The config file requires some customization and normalization
 	config = simplepush.FixConfig(config)
 	config["VERSION"] = VERSION
-    runtime.GOMAXPROCS(runtime.NumCPU())
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Report what the app believes the current host to be, and what version.
 	log.Printf("CurrentHost: %s, Version: %s",
@@ -214,13 +215,23 @@ func main() {
 }
 
 // Handle a routed update.
-func updater(update *router.Update) (err error) {
+func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 	//log.Printf("UPDATE::: %s", update)
 	simplepush.MetricIncrement("routing update: in")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
 		simplepush.Flush(client, update.Chid, int64(update.Vers))
+        duration := strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)
+		if logger != nil {
+			logger.Info("timer", "Routed flush to client completed",
+				util.Fields{
+					"uaid":     update.Uaid,
+					"chid":     update.Chid,
+					"duration": duration})
+		} else {
+            log.Printf("Routed flush complete: %s", duration)
+        }
 	}
 	return nil
 }
