@@ -86,10 +86,11 @@ func (self *Worker) sniffer(sock *PushWS) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	var (
-		socket          = sock.Socket
-		raw      []byte = make([]byte, 1024)
-		eofCount int    = 0
-		err      error
+		socket             = sock.Socket
+		raw         []byte = make([]byte, 1024)
+		eofCount    int    = 0
+		err         error
+		messageType string
 	)
 
 	for {
@@ -138,61 +139,68 @@ func (self *Worker) sniffer(sock *PushWS) {
 					util.Fields{"raw": string(raw)})
 			}
 		}
-		err := json.Unmarshal(raw, &buffer)
-		if err != nil {
-			if self.logger != nil {
-				self.logger.Error("worker",
-					"Unparsable data", util.Fields{"raw": string(raw),
-						"error": ErrStr(err)})
-			}
-			self.stopped = true
-			continue
-		}
-		if len(buffer) == 0 {
-			// Empty buffers are "pings"
+		if string(raw) == "{}" {
 			buffer["messageType"] = "ping"
-		}
-		// process the client commands
-		var messageType string
-		if mt, ok := buffer["messageType"]; !ok {
-			if self.logger != nil {
-				self.logger.Info("worker", "Invalid message",
-					util.Fields{"reason": "Missing messageType"})
-			}
-			self.handleError(sock,
-				util.JsMap{},
-				sperrors.UnknownCommandError)
-			self.stopped = true
-			continue
 		} else {
-			switch mt.(type) {
-			case string:
-				messageType = mt.(string)
-			default:
-				messageType = ""
+			err := json.Unmarshal(raw, &buffer)
+			if err != nil {
+				if self.logger != nil {
+					self.logger.Error("worker",
+						"Unparsable data", util.Fields{"raw": string(raw),
+							"error": ErrStr(err)})
+				}
+				self.stopped = true
+				continue
+			}
+			if len(buffer) == 0 {
+				// Empty buffers are "pings"
+				buffer["messageType"] = "ping"
 			}
 		}
-		buffer["messageType"] = strings.ToLower(messageType)
-		switch strings.ToLower(messageType) {
-		case "hello":
-			err = self.Hello(sock, buffer)
-		case "ack":
-			err = self.Ack(sock, buffer)
-		case "register":
-			err = self.Register(sock, buffer)
-		case "unregister":
-			err = self.Unregister(sock, buffer)
-		case "ping":
+		if buffer["messageType"] == "ping" {
 			err = self.Ping(sock, buffer)
-		case "purge":
-			err = self.Purge(sock, buffer)
-		default:
-			if self.logger != nil {
-				self.logger.Warn("worker",
-					"Bad command",
-					util.Fields{"messageType": buffer["messageType"].(string)})
+		} else {
+			// process the client commands
+			if mt, ok := buffer["messageType"]; !ok {
+				if self.logger != nil {
+					self.logger.Info("worker", "Invalid message",
+						util.Fields{"reason": "Missing messageType"})
+				}
+				self.handleError(sock,
+					util.JsMap{},
+					sperrors.UnknownCommandError)
+				self.stopped = true
+				continue
+			} else {
+				switch mt.(type) {
+				case string:
+					messageType = mt.(string)
+				default:
+					messageType = ""
+				}
 			}
-			err = sperrors.UnknownCommandError
+			buffer["messageType"] = strings.ToLower(messageType)
+			switch strings.ToLower(messageType) {
+			case "hello":
+				err = self.Hello(sock, buffer)
+			case "ack":
+				err = self.Ack(sock, buffer)
+			case "register":
+				err = self.Register(sock, buffer)
+			case "unregister":
+				err = self.Unregister(sock, buffer)
+			case "ping":
+				err = self.Ping(sock, buffer)
+			case "purge":
+				err = self.Purge(sock, buffer)
+			default:
+				if self.logger != nil {
+					self.logger.Warn("worker",
+						"Bad command",
+						util.Fields{"messageType": buffer["messageType"].(string)})
+				}
+				err = sperrors.UnknownCommandError
+			}
 		}
 		if err != nil {
 			if self.logger != nil {
