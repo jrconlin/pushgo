@@ -88,7 +88,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 	var (
 		socket             = sock.Socket
 		raw         []byte = make([]byte, 1024)
-		eofCount    int    = 0
+		//eofCount    int    = 0
 		err         error
 		messageType string
 	)
@@ -109,15 +109,6 @@ func (self *Worker) sniffer(sock *PushWS) {
 		}
 		err = websocket.Message.Receive(socket, &raw)
 		if err != nil {
-			long_err := err.Error()
-			// do not close on EOF
-			if strings.Contains(long_err, "EOF") {
-				eofCount = eofCount + 1
-				if eofCount < 5 {
-					continue
-				}
-			}
-			// but close on other errors
 			self.stopped = true
 			if self.logger != nil {
 				self.logger.Error("worker",
@@ -130,7 +121,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 			continue
 		}
 
-		eofCount = 0
+		//eofCount = 0
 		//ignore {} pings for logging purposes.
 		if len(raw) > 5 {
 			if self.logger != nil {
