@@ -95,7 +95,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 
 	for {
 		// declare buffer here so that the struct is cleared between msgs.
-		var buffer util.JsMap
+		var buffer util.JsMap = util.JsMap{}
 		raw = raw[:0]
 		err = nil
 
