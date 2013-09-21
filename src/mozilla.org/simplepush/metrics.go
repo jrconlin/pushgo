@@ -31,7 +31,7 @@ func MetricsSnapshot() map[string]int64 {
 
 func get(metric string) (m int64) {
 	if m, exists := Metrics[metric]; !exists {
-	    defer metrex.Unlock()
+		defer metrex.Unlock()
 		metrex.Lock()
 		m = int64(0)
 		Metrics[metric] = m

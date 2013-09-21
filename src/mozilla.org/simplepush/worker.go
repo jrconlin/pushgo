@@ -50,7 +50,7 @@ const (
 )
 
 // Allow [0-9a-z_-]/i as valid ChannelID characters.
-var workerFilter *regexp.Regexp = regexp.MustCompile("[^\\w-]")
+var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
 
 func NewWorker(config util.JsMap, logger *util.HekaLogger) *Worker {
 	var maxChannels int64
@@ -86,8 +86,8 @@ func (self *Worker) sniffer(sock *PushWS) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	var (
-		socket             = sock.Socket
-		raw         []byte = make([]byte, 1024)
+		socket        = sock.Socket
+		raw    []byte = make([]byte, 1024)
 		//eofCount    int    = 0
 		err         error
 		messageType string
@@ -616,7 +616,8 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	if self.pingInt > 0 && int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		if self.logger != nil {
-			self.logger.Error("worker", fmt.Sprintf("Client sending too many pings %s", source), nil)
+			self.logger.Error("worker",
+				fmt.Sprintf("Client sending too many pings %s", source), nil)
 		} else {
 			log.Printf("Worker: Client sending too many pings. %s", source)
 		}
@@ -624,9 +625,13 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		return sperrors.TooManyPingsError
 	}
 	data := buffer.(util.JsMap)
-	websocket.JSON.Send(sock.Socket, util.JsMap{
-		"messageType": data["messageType"],
-		"status":      200})
+	if util.MzGetFlag(self.config, "push.long_pongs") {
+		websocket.JSON.Send(sock.Socket, util.JsMap{
+			"messageType": data["messageType"],
+			"status":      200})
+	} else {
+		websocket.Message.Send(sock.Socket, "{}")
+	}
 	return nil
 }
 

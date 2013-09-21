@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	toomany int32 = 0
+	toomany  int32 = 0
 	snapshot map[string]int64
 )
 
@@ -210,7 +210,8 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 		"clientCount": clientCount,
 		"maxClients":  maxClients,
 		"mcstatus":    mcStatus,
-		"goroutines":  gcount}
+		"goroutines":  gcount,
+		"version":     self.config["VERSION"]}
 	if err != nil {
 		repMap["error"] = err.Error()
 	}
