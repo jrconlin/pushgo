@@ -47,8 +47,8 @@ func MzGetConfig(filename string) JsMap {
 
 func MzGet(ma JsMap, key string, def string) string {
 	if val, ok := ma[key].(string); ok {
-        return val
-    }
+		return val
+	}
 	return def
 }
 

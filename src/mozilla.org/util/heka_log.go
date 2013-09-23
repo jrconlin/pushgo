@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
-    "strings"
+	"strings"
 	"time"
 )
 
@@ -99,8 +99,8 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 func addFields(msg *message.Message, fields Fields) (err error) {
 	for key, ival := range fields {
 		var field *message.Field
-        if ival == "" {
-			ival= "*empty*"
+		if ival == "" {
+			ival = "*empty*"
 		}
 		if key == "" {
 			continue
@@ -123,8 +123,8 @@ func addFields(msg *message.Message, fields Fields) (err error) {
 func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
-    // add in go language tracing. (Also CPU intensive, but REALLY helpful
-    // when dev/debugging)
+	// add in go language tracing. (Also CPU intensive, but REALLY helpful
+	// when dev/debugging)
 	if self.tracer {
 		if pc, file, line, ok := runtime.Caller(2); ok {
 			funk := runtime.FuncForPC(pc)
@@ -135,15 +135,15 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 		}
 	}
 
-    // Only print out the debug message if it's less than the filter.
+	// Only print out the debug message if it's less than the filter.
 	if int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
-            var fld []string
-            for key, val := range fields {
-                fld = append(fld, key + ": " + val)
-            }
-            dump += " {" + strings.Join(fld, ", ") + "}"
+			var fld []string
+			for key, val := range fields {
+				fld = append(fld, key+": "+val)
+			}
+			dump += " {" + strings.Join(fld, ", ") + "}"
 		}
 		if len(caller) > 0 {
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],

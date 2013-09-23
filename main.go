@@ -36,7 +36,7 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "0.6.1"
+const VERSION = "0.7"
 
 // -- main
 func main() {
@@ -222,7 +222,7 @@ func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
 		simplepush.Flush(client, update.Chid, int64(update.Vers))
-        duration := strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)
+		duration := strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)
 		if logger != nil {
 			logger.Info("timer", "Routed flush to client completed",
 				util.Fields{
@@ -230,8 +230,8 @@ func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 					"chid":     update.Chid,
 					"duration": duration})
 		} else {
-            log.Printf("Routed flush complete: %s", duration)
-        }
+			log.Printf("Routed flush complete: %s", duration)
+		}
 	}
 	return nil
 }
