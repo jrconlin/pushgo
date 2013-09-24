@@ -5,17 +5,35 @@
 package simplepush
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/cactus/go-statsd-client/statsd"
 )
 
 var (
 	Metrics map[string]int64
 	metrex  sync.Mutex
+	prefix  string
+	statsdc *statsd.Client
 )
 
 func init() {
 	Metrics = make(map[string]int64)
+	prefix  = "simplepush"
+}
+
+func MetricsPrefix(newPrefix string) {
+	prefix = strings.TrimRight(newPrefix, ".")
+}
+
+func MetricsStatsdTarget(target string) (err error) {
+	statsdc, err = statsd.New(target, prefix)
+	if err != nil {
+		return
+	}
+	return
 }
 
 func MetricsSnapshot() map[string]int64 {
@@ -42,6 +60,9 @@ func get(metric string) (m int64) {
 func MetricIncrementBy(metric string, count int) {
 	m := get(metric)
 	atomic.AddInt64(&m, int64(count))
+	if statsdc != nil {
+		statsdc.Inc(metric, int64(count), 1.0)
+	}
 }
 
 func MetricIncrement(metric string) {

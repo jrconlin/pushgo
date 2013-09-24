@@ -54,6 +54,17 @@ func main() {
 	log.Printf("CurrentHost: %s, Version: %s",
 		config["shard.current_host"], VERSION)
 
+	// Metrics reporting
+	if mprefix, ok := config["metrics.prefix"]; ok {
+		simplepush.MetricsPrefix(mprefix.(string))
+	}
+	if mstatsd, ok := config["metrics.statsd_target"]; ok {
+		err := simplepush.MetricsStatsdTarget(mstatsd.(string))
+		if err != nil {
+			log.Fatal("Couldn't create statsd client: %s", err)
+		}
+	}
+
 	// Only create profiles if requested. To view the application profiles,
 	// see http://blog.golang.org/profiling-go-programs
 	if *profile != "" {
@@ -217,7 +228,7 @@ func main() {
 // Handle a routed update.
 func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 	//log.Printf("UPDATE::: %s", update)
-	simplepush.MetricIncrement("routing update: in")
+	simplepush.MetricIncrement("router.incoming")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
