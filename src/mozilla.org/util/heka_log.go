@@ -150,43 +150,43 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 				caller["line"], caller["name"])
 		}
 		log.Printf(dump)
-	}
 
-	// Don't send an error if there's nothing to do
-	if self.sender == nil {
-		return nil
-	}
+		// Don't send an error if there's nothing to do
+		if self.sender == nil {
+			return nil
+		}
 
-	var stream []byte
+		var stream []byte
 
-	msg := &message.Message{}
-	msg.SetTimestamp(time.Now().UnixNano())
-	msg.SetUuid(uuid.NewRandom())
-	msg.SetLogger(self.logname)
-	msg.SetType(mtype)
-	msg.SetPid(self.pid)
-	msg.SetSeverity(level)
-	msg.SetHostname(self.hostname)
-	if len(payload) > 0 {
-		msg.SetPayload(payload)
-	}
-	err = addFields(msg, fields)
-	if err != nil {
-		return err
-	}
-	err = addFields(msg, caller)
-	if err != nil {
-		return err
-	}
-	err = self.encoder.EncodeMessageStream(msg, &stream)
-	if err != nil {
-		log.Fatal("ERROR: Could not encode log message (%s)", err)
-		return err
-	}
-	err = self.sender.SendMessage(stream)
-	if err != nil {
-		log.Fatal("ERROR: Could not send message (%s)", err)
-		return err
+		msg := &message.Message{}
+		msg.SetTimestamp(time.Now().UnixNano())
+		msg.SetUuid(uuid.NewRandom())
+		msg.SetLogger(self.logname)
+		msg.SetType(mtype)
+		msg.SetPid(self.pid)
+		msg.SetSeverity(level)
+		msg.SetHostname(self.hostname)
+		if len(payload) > 0 {
+			msg.SetPayload(payload)
+		}
+		err = addFields(msg, fields)
+		if err != nil {
+			return err
+		}
+		err = addFields(msg, caller)
+		if err != nil {
+			return err
+		}
+		err = self.encoder.EncodeMessageStream(msg, &stream)
+		if err != nil {
+			log.Fatal("ERROR: Could not encode log message (%s)", err)
+			return err
+		}
+		err = self.sender.SendMessage(stream)
+		if err != nil {
+			log.Fatal("ERROR: Could not send message (%s)", err)
+			return err
+		}
 	}
 	return nil
 }
