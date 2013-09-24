@@ -61,7 +61,7 @@ func main() {
 	if mstatsd, ok := config["metrics.statsd_target"]; ok {
 		err := simplepush.MetricsStatsdTarget(mstatsd.(string))
 		if err != nil {
-			log.Fatal("Couldn't create statsd client: %s", err)
+			log.Fatal("Couldn't create statsd client: ", err)
 		}
 	}
 
