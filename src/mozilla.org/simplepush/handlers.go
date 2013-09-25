@@ -264,9 +264,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				self.logger.Error("handler", "Socket Count Exceeded", nil)
 			}
 		}
-		MetricIncrement("too many connections")
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
+		MetricIncrement("updates.appserver.too_many_connections")
 		return
 	}
 	if toomany != 0 {
@@ -290,6 +290,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}()
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
+		MetricIncrement("updates.appserver.invalid")
 		return
 	}
 
@@ -298,6 +299,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		vers, err = strconv.ParseInt(svers, 10, 64)
 		if err != nil || vers < 0 {
 			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
+			MetricIncrement("updates.appserver.invalid")
 			return
 		}
 	} else {
@@ -313,6 +315,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
+		MetricIncrement("updates.appserver.invalid")
 		return
 	}
 
@@ -334,6 +337,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 						"error":      ErrStr(err)})
 			}
 			http.Error(resp, "", http.StatusNotFound)
+			MetricIncrement("updates.appserver.invalid")
 			return
 		}
 
@@ -348,6 +352,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
+		MetricIncrement("updates.appserver.invalid")
 		return
 	}
 
@@ -360,6 +365,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path":  req.URL.Path,
 					"error": ErrStr(err)})
 		}
+		MetricIncrement("updates.appserver.invalid")
 		return
 	}
 
@@ -371,8 +377,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
+		MetricIncrement("updates.appserver.invalid")
 		return
 	}
+
+	// At this point we should have a valid endpoint in the URL
+	MetricIncrement("updates.appserver.incoming")
 
 	//log.Printf("<< %s.%s = %d", uaid, chid, vers)
 
@@ -425,7 +435,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 							"error":       err.Error()})
 				}
 			}
-			MetricIncrement("routing update: out")
+			MetricIncrement("updates.routed.outgoing")
 			if err != nil {
 				http.Error(resp, err.Error(), 500)
 			} else {
@@ -470,7 +480,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
-	MetricIncrement("update channel")
+	MetricIncrement("updates.clients.outgoing")
 	return
 }
 
