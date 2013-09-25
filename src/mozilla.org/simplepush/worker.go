@@ -386,7 +386,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
 		",\"uaid\":\"" + sock.Uaid + "\"}")
 	_, err = sock.Socket.Write(msg)
-
+	MetricIncrement("updates.client.hello")
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
@@ -427,6 +427,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 		self.logger.Debug("worker", "sending response",
 			util.Fields{"cmd": "ack", "error": ErrStr(err)})
 	}
+	MetricIncrement("updates.client.ack")
 	return err
 }
 
@@ -493,6 +494,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 			"pushEndpoint": reply["pushEndpoint"].(string)})
 	}
 	websocket.JSON.Send(sock.Socket, reply)
+	MetricIncrement("updates.client.register")
 	return err
 }
 
@@ -534,6 +536,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 		"messageType": data["messageType"],
 		"status":      200,
 		"channelID":   appid})
+	MetricIncrement("updates.client.unregister")
 	return err
 }
 
@@ -622,6 +625,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 			log.Printf("Worker: Client sending too many pings. %s", source)
 		}
 		self.stopped = true
+		MetricIncrement("udpates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
 	data := buffer.(util.JsMap)
@@ -632,6 +636,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	} else {
 		websocket.Message.Send(sock.Socket, "{}")
 	}
+	MetricIncrement("updates.client.ping")
 	return nil
 }
 

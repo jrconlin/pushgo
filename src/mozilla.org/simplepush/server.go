@@ -163,7 +163,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	MuClient.Lock()
 	Clients[uaid] = client
 	MuClient.Unlock()
-	MetricIncrement("device connect")
+	MetricIncrement("updates.client.connect")
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -194,7 +194,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
-	MetricIncrement("device disconnect")
+	MetricIncrement("updates.client.disconnect")
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
@@ -207,7 +207,6 @@ func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments ut
 func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
-	MetricIncrement("endpoint registration attempt")
 	var err error
 	args := cmd.Arguments.(util.JsMap)
 	args["status"] = 200

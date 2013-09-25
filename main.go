@@ -228,7 +228,7 @@ func main() {
 // Handle a routed update.
 func updater(update *router.Update, logger *util.HekaLogger) (err error) {
 	//log.Printf("UPDATE::: %s", update)
-	simplepush.MetricIncrement("router.incoming")
+	simplepush.MetricIncrement("updates.routed.incoming")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
