@@ -9,7 +9,7 @@ import (
 	"mozilla.org/util"
 	"net"
 	"sync"
-    "time"
+	"time"
 )
 
 var (
@@ -30,10 +30,10 @@ type Route struct {
 var MuRoutes sync.Mutex
 
 type Update struct {
-	Uaid string `json:"uaid"`
-	Chid string `json:"chid"`
-	Vers int64  `json:"vers"`
-    Time time.Time  `json:"time"`
+	Uaid string    `json:"uaid"`
+	Chid string    `json:"chid"`
+	Vers int64     `json:"vers"`
+	Time time.Time `json:"time"`
 }
 
 type Updater func(*Update, *util.HekaLogger) error
@@ -150,7 +150,7 @@ func (self *Router) SendUpdate(host, uaid, chid string, version int64, timer tim
 		Uaid: uaid,
 		Chid: chid,
 		Vers: version,
-        Time: timer})
+		Time: timer})
 	if err != nil {
 		return err
 	}
