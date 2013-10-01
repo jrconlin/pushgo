@@ -4,3 +4,9 @@
 [submodule "src/github.com/mozilla-services/heka"]
 	path = src/github.com/mozilla-services/heka
 	url = https://github.com/mozilla-services/heka.git
+[submodule "src/github.com/ianoshen/gomc"]
+	path = src/github.com/ianoshen/gomc
+	url = https://github.com/ianoshen/gomc.git
+[submodule "src/github.com/BurntSushi/toml"]
+	path = src/github.com/BurntSushi/toml
+	url = https://github.com/BurntSushi/toml.git
