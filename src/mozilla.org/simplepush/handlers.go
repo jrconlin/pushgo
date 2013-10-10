@@ -510,13 +510,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	atomic.AddInt32(&cClients, 1)
 
 	if sock.Logger != nil {
-		if userAgent, ok := ws.Request().Header["User-Agent"]; ok {
-			sock.Logger.Info("handler",
-				fmt.Sprintf("User-Agent: %s", strings.Join(userAgent, ",")), nil)
-		} else {
-			sock.Logger.Info("handler", "User-Agent: none", nil)
-		}
-		sock.Logger.Info("main", "New socket connection detected", nil)
+		sock.Logger.Info("handler", "websocket connection", util.Fields{
+			"UserAgent":  strings.Join(ws.Request().Header["User-Agent"], ","),
+			"URI":        ws.Request().RequestURI,
+			"RemoteAddr": ws.Request().RemoteAddr,
+		})
 	}
 	defer func(logger *util.HekaLogger) {
 		if r := recover(); r != nil {
