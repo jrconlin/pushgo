@@ -1,5 +1,1 @@
-# following requires libmemcached
-github.com/ianoshen/gomc
-github.com/mozilla-services/heka/client
-github.com/mozilla-services/heka/message
-github.com/BurntSushi/toml
+code.google.com/p/goprotobuf
