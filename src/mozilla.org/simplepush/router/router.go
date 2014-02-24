@@ -21,6 +21,7 @@ var (
 type Router struct {
 	Port   string
 	Logger *util.HekaLogger
+    Metrics *util.Metrics
 }
 
 type Route struct {
@@ -36,7 +37,7 @@ type Update struct {
 	Time time.Time `json:"time"`
 }
 
-type Updater func(*Update, *util.HekaLogger) error
+type Updater func(*Update, *util.HekaLogger, *util.Metrics) error
 
 func (self *Router) HandleUpdates(updater Updater) {
 	/* There appears to be a difference in how the connection is specified.
@@ -111,7 +112,7 @@ func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
 				continue
 			}
 			// TODO group updates by UAID and send in batch
-			updater(&update, self.Logger)
+			updater(&update, self.Logger, self.Metrics)
 		}
 	}
 	if err != nil {

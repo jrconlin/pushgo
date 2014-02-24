@@ -3,3 +3,4 @@ github.com/ianoshen/gomc
 github.com/mozilla-services/heka/client
 github.com/mozilla-services/heka/message
 github.com/BurntSushi/toml
+github.com/cactus/go-statsd-client

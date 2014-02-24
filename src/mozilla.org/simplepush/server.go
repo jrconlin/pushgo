@@ -46,21 +46,24 @@ var serverSingleton *Serv
 type Serv struct {
 	config util.JsMap
 	logger *util.HekaLogger
+    metrics *util.Metrics
 	key    []byte
 }
 
-func NewServer(config util.JsMap, logger *util.HekaLogger) *Serv {
+func NewServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) *Serv {
 	var key []byte
 	if k, ok := config["token_key"]; ok {
 		key = k.([]byte)
 	}
 	return &Serv{config: config,
 		key:    key,
-		logger: logger}
+		logger: logger,
+        metrics: metrics,
+    }
 }
 
-func InitServer(config util.JsMap, logger *util.HekaLogger) (err error) {
-	serverSingleton = NewServer(config, logger)
+func InitServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) (err error) {
+	serverSingleton = NewServer(config, logger, metrics)
 	return nil
 }
 
@@ -163,7 +166,12 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	MuClient.Lock()
 	Clients[uaid] = client
 	MuClient.Unlock()
-	MetricIncrement("updates.client.connect")
+    if self.logger != nil {
+        self.logger.Info("dash", "Client registered", nil)
+    }
+    if self.metrics != nil {
+    	self.metrics.Increment("updates.client.connect")
+    }
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -186,15 +194,21 @@ func (self *Serv) Bye(sock *PushWS) {
 	if self.logger != nil {
 		self.logger.Debug("server", "Cleaning up socket",
 			util.Fields{"uaid": uaid})
-		self.logger.Info("timer", "Socket connection terminated",
+		self.logger.Info("dash", "Socket connection terminated",
 			util.Fields{
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
 	}
+    if self.metrics != nil {
+        self.metrics.Timer("socket.lifespan",
+            time.Now().Unix() - sock.Born.Unix())
+    }
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
-	MetricIncrement("updates.client.disconnect")
+    if self.metrics != nil {
+	self.metrics.Increment("updates.client.disconnect")
+}
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {

@@ -74,9 +74,19 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.show_caller"]; ok {
 		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
+    if _, ok = conf["heka.encoder"]; !ok {
+        conf["heka.encoder"] = "protobuf"
+    }
 	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
-		encoder = client.NewJsonEncoder(nil)
+        // Yeah, so for now there's just the two. Someday there may be more
+        switch strings.ToLower(conf["heka.encoder"].(string)) {
+        case "json":
+            encoder = client.NewJsonEncoder(nil)
+        default:
+            encoder = client.NewProtobufEncoder(nil)
+        }
+        // Options: NewJsonEncoder; NewProtobufEncoder
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
 			conf["heka.server_addr"].(string))
 		if err != nil {
@@ -120,6 +130,7 @@ func addFields(msg *message.Message, fields Fields) (err error) {
 // mtype - Message type, Short class identifier for the message
 // payload - Main error message
 // fields - additional optional key/value data associated with the message.
+// dash - force message to be logged (it's for the dashboard)
 func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
@@ -135,8 +146,9 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 		}
 	}
 
-	// Only print out the debug message if it's less than the filter.
-	if int64(level) < self.filter {
+	// Only print out the debug message if it's for the dashboard or
+    // less than the filter.
+	if strings.ToLower(mtype) == "dash" || int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
 			var fld []string
@@ -149,7 +161,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
 				caller["line"], caller["name"])
 		}
-		log.Printf(dump)
+		//log.Printf(dump)
 
 		// Don't send an error if there's nothing to do
 		if self.sender == nil {
@@ -213,6 +225,7 @@ func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
 }
+
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

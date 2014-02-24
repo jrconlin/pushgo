@@ -36,6 +36,7 @@ type Worker struct {
 	lastPing    time.Time
 	pingInt     int64
 	wg          *sync.WaitGroup
+	metrics     *util.Metrics
 }
 
 const (
@@ -52,7 +53,7 @@ const (
 // Allow [0-9a-z_-]/i as valid ChannelID characters.
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
 
-func NewWorker(config util.JsMap, logger *util.HekaLogger) *Worker {
+func NewWorker(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) *Worker {
 	var maxChannels int64
 	var pingInterval int64
 
@@ -70,6 +71,7 @@ func NewWorker(config util.JsMap, logger *util.HekaLogger) *Worker {
 
 	return &Worker{
 		logger:      logger,
+        metrics:     metrics,
 		state:       INACTIVE,
 		filter:      workerFilter,
 		config:      config,
@@ -226,8 +228,8 @@ func (self *Worker) Run(sock *PushWS) {
 			func() {
 				if sock.Uaid == "" {
 					if self.logger != nil {
-						self.logger.Error("worker",
-							"Idle connection. Closing socket", nil)
+						self.logger.Error("dash",
+							"Worker Idle connection. Closing socket", nil)
 					}
 					sock.Socket.Close()
 				}
@@ -250,7 +252,7 @@ func (self *Worker) Run(sock *PushWS) {
 	sock.Socket.Close()
 
 	if self.logger != nil {
-		self.logger.Debug("worker", "Run has completed a shut-down", nil)
+		self.logger.Info("dash", "Run has completed a shut-down", nil)
 	}
 }
 
@@ -386,7 +388,10 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
 		",\"uaid\":\"" + sock.Uaid + "\"}")
 	_, err = sock.Socket.Write(msg)
-	MetricIncrement("updates.client.hello")
+	self.metrics.Increment("updates.client.hello")
+	if self.logger != nil {
+		self.logger.Info("dash", "Client successfully connected", nil)
+	}
 	self.state = ACTIVE
 	if err == nil {
 		// Get the lastAccessed time from wherever
@@ -427,7 +432,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 		self.logger.Debug("worker", "sending response",
 			util.Fields{"cmd": "ack", "error": ErrStr(err)})
 	}
-	MetricIncrement("updates.client.ack")
+	self.metrics.Increment("updates.client.ack")
 	return err
 }
 
@@ -494,7 +499,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 			"pushEndpoint": reply["pushEndpoint"].(string)})
 	}
 	websocket.JSON.Send(sock.Socket, reply)
-	MetricIncrement("updates.client.register")
+	self.metrics.Increment("updates.client.register")
 	return err
 }
 
@@ -536,7 +541,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 		"messageType": data["messageType"],
 		"status":      200,
 		"channelID":   appid})
-	MetricIncrement("updates.client.unregister")
+	self.metrics.Increment("updates.client.unregister")
 	return err
 }
 
@@ -551,6 +556,10 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 				"Client flush completed",
 				util.Fields{"duration": strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10),
 					"uaid": sock.Uaid})
+		}
+		if self.metrics != nil {
+			self.metrics.Timer("client.flush",
+				time.Now().Unix()-timer.Unix())
 		}
 	}(timer, sock)
 	if sock.Uaid == "" {
@@ -619,13 +628,13 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	if self.pingInt > 0 && int64(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		if self.logger != nil {
-			self.logger.Error("worker",
-				fmt.Sprintf("Client sending too many pings %s", source), nil)
+			self.logger.Error("dash", "Client sending too many pings",
+				util.Fields{"source": source.String()})
 		} else {
 			log.Printf("Worker: Client sending too many pings. %s", source)
 		}
 		self.stopped = true
-		MetricIncrement("udpates.client.too_many_pings")
+		self.metrics.Increment("udpates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
 	data := buffer.(util.JsMap)
@@ -636,7 +645,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	} else {
 		websocket.Message.Send(sock.Socket, "{}")
 	}
-	MetricIncrement("updates.client.ping")
+	self.metrics.Increment("updates.client.ping")
 	return nil
 }
 
