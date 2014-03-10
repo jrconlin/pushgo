@@ -128,7 +128,7 @@ func main() {
 	store = storage.New(config, logger)
 
 	// Initialize the common server.
-	simplepush.InitServer(config, logger, metrics)
+	simplepush.InitServer(config, logger, metrics, store)
 	handlers := simplepush.NewHandler(config, logger, store, route, metrics)
 
 	// Config the server

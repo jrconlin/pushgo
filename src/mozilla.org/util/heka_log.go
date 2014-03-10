@@ -148,7 +148,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 
 	// Only print out the debug message if it's for the dashboard or
     // less than the filter.
-	if strings.ToLower(mtype) == "dash" || int64(level) < self.filter {
+	if (strings.ToLower(mtype) == "dash") || (int64(level) < self.filter) {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
 			var fld []string
@@ -161,7 +161,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
 				caller["line"], caller["name"])
 		}
-		//log.Printf(dump)
+		log.Printf(dump)
 
 		// Don't send an error if there's nothing to do
 		if self.sender == nil {

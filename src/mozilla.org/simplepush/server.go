@@ -8,6 +8,7 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
+	"encoding/json"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -19,19 +20,12 @@ import (
 // clients (e.g. wakes client when data is ready, potentially issues remote
 // wake command to client, etc.)
 
-type ClientProprietary struct {
-	// socket proprietary information for calling out to a device (using UDP)
-	Ip          string    `json:"ip"`
-	Port        string    `json:"port"`
-	LastContact time.Time `json:"-"`
-}
-
 type Client struct {
 	// client descriptor info.
 	Worker *Worker
-	PushWS PushWS             `json:"-"`
-	UAID   string             `json:"uaid"`
-	Prop   *ClientProprietary `json:"-"`
+	PushWS PushWS    `json:"-"`
+	UAID   string    `json:"uaid"`
+	Prop   *PropPing `json:"-"`
 }
 
 // Active clients
@@ -44,26 +38,28 @@ var MuClient sync.Mutex
 var serverSingleton *Serv
 
 type Serv struct {
-	config util.JsMap
-	logger *util.HekaLogger
-    metrics *util.Metrics
-	key    []byte
+	config  util.JsMap
+	logger  *util.HekaLogger
+	metrics *util.Metrics
+	storage *storage.Storage
+	key     []byte
 }
 
-func NewServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) *Serv {
+func NewServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage) *Serv {
 	var key []byte
 	if k, ok := config["token_key"]; ok {
 		key = k.([]byte)
 	}
 	return &Serv{config: config,
-		key:    key,
-		logger: logger,
-        metrics: metrics,
-    }
+		key:     key,
+		logger:  logger,
+		metrics: metrics,
+		storage: storage,
+	}
 }
 
-func InitServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) (err error) {
-	serverSingleton = NewServer(config, logger, metrics)
+func InitServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage) (err error) {
+	serverSingleton = NewServer(config, logger, metrics, storage)
 	return nil
 }
 
@@ -81,36 +77,11 @@ func ClientCollision(uaid string) (collision bool) {
 	return collision
 }
 
-func (self *Serv) ClientPing(prop *ClientProprietary) (err error) {
-	// Perform whatever steps are needed to remotely wake the client.
-	// TODO: Perform whatever proprietary steps are required to remotely
-	// wake a given device (e.g. send a UDP ping, SMS message, etc.)
-	return nil
-}
-
-func (self *Serv) Set_proprietary_info(args util.JsMap) (cp *ClientProprietary) {
-	// As noted in Bye, you may wish to store this info into a self-expiring
-	// semi-persistant storage system like memcache. This will allow device
-	// info to be fetched and acted upon after disconnects.
-	//
-	// Since it's possible that every device provider may use different means
-	// to remotely activate devices, this is left as an excercise for the
-	// reader.
-	cp = new(ClientProprietary)
-	cp.LastContact = time.Now()
-
-	if args["ip"] != nil {
-		cp.Ip = args["ip"].(string)
-	}
-	if args["port"] != nil {
-		cp.Port = args["port"].(string)
-	}
-	return
-}
-
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
 	var uaid string
+	var prop *PropPing
+	var err error
 
 	args := cmd.Arguments.(util.JsMap)
 	if self.logger != nil {
@@ -147,11 +118,37 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		delete(args, "uaid")
 	}
 
-	prop := self.Set_proprietary_info(args)
-	if self.logger != nil {
-		self.logger.Debug("server", "Proprietary Info",
-			util.Fields{"ip": prop.Ip,
-				"port": prop.Port})
+	// build the connect string from legacy elements
+	if _, ok := args["connect"]; !ok {
+		ip, iok := args["ip"]
+		port, pok := args["port"]
+		if iok && pok {
+			args["connect"] = util.JsMap{
+				"type": "udp",
+				"port": port,
+				"ip":   ip,
+			}
+		}
+	}
+
+	if connect, ok := args["connect"]; ok {
+		// Currently marshalling to deal with the interface{} issues.
+		cs, _ := json.Marshal(connect)
+		prop, err = NewPropPing(string(cs),
+			uaid,
+			self.config,
+			self.logger,
+			self.storage,
+			self.metrics)
+
+		if err != nil {
+			self.logger.Warn("server", "Could not set proprietary info",
+				util.Fields{"error": err.Error(),
+					"connect": string(cs)})
+		} else {
+			self.logger.Debug("server", "Proprietary Info",
+				util.Fields{"connect": string(cs)})
+		}
 	}
 
 	// Create a new, live client entry for this record.
@@ -166,12 +163,12 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	MuClient.Lock()
 	Clients[uaid] = client
 	MuClient.Unlock()
-    if self.logger != nil {
-        self.logger.Info("dash", "Client registered", nil)
-    }
-    if self.metrics != nil {
-    	self.metrics.Increment("updates.client.connect")
-    }
+	if self.logger != nil {
+		self.logger.Info("dash", "Client registered", nil)
+	}
+	if self.metrics != nil {
+		self.metrics.Increment("updates.client.connect")
+	}
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -199,16 +196,16 @@ func (self *Serv) Bye(sock *PushWS) {
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
 	}
-    if self.metrics != nil {
-        self.metrics.Timer("socket.lifespan",
-            time.Now().Unix() - sock.Born.Unix())
-    }
+	if self.metrics != nil {
+		self.metrics.Timer("socket.lifespan",
+			time.Now().Unix()-sock.Born.Unix())
+	}
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	delete(Clients, uaid)
-    if self.metrics != nil {
-	self.metrics.Increment("updates.client.disconnect")
-}
+	if self.metrics != nil {
+		self.metrics.Increment("updates.client.disconnect")
+	}
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
@@ -273,7 +270,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 }
 
 func (self *Serv) RequestFlush(client *Client, channel string, version int64) (err error) {
-	defer func(client *Client) {
+	defer func(client *Client, version int64) {
 		r := recover()
 		if r != nil {
 			if self.logger != nil {
@@ -284,11 +281,11 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 				debug.PrintStack()
 			}
 			if client != nil {
-				self.ClientPing(client.Prop)
+				client.Prop.Send(version)
 			}
 		}
 		return
-	}(client)
+	}(client, version)
 
 	if client != nil {
 		if self.logger != nil {

@@ -71,7 +71,7 @@ func NewWorker(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics
 
 	return &Worker{
 		logger:      logger,
-        metrics:     metrics,
+		metrics:     metrics,
 		state:       INACTIVE,
 		filter:      workerFilter,
 		config:      config,
@@ -342,7 +342,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			if int64(num) > self.maxChannels {
 				forceReset = forceReset || true
 			}
-			if !sock.Store.IsKnownUaid(sock.Uaid) {
+			if !sock.Storage.IsKnownUaid(sock.Uaid) {
 				forceReset = forceReset || true
 			}
 		}
@@ -353,25 +353,27 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 				util.Fields{"uaid": sock.Uaid})
 		}
 		if len(sock.Uaid) > 0 {
-			sock.Store.PurgeUAID(sock.Uaid)
+			sock.Storage.PurgeUAID(sock.Uaid)
 		}
 		sock.Uaid, _ = util.GenUUID4()
 	}
-	// register the sockets (NOOP)
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
+	// It's not a bad idea from a security POV to only send
+	// known args through to the server.
 	cmd := PushCommand{
 		Command: HELLO,
 		Arguments: util.JsMap{
-			"worker": self,
-			"uaid":   sock.Uaid,
-			"chids":  data["channelIDs"],
+			"worker":  self,
+			"uaid":    sock.Uaid,
+			"chids":   data["channelIDs"],
+			"connect": data["connect"],
 		},
 	}
 	// blocking call back to the boss.
 	raw_result, args := HandleServerCommand(cmd, sock)
 	result := PushCommand{raw_result, args}
-	if err = sock.Store.SetUAIDHost(sock.Uaid, ""); err != nil {
+	if err = sock.Storage.SetUAIDHost(sock.Uaid, ""); err != nil {
 		return err
 	}
 
@@ -423,7 +425,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	if data["updates"] == nil {
 		return sperrors.MissingDataError
 	}
-	err = sock.Store.Ack(sock.Uaid, data)
+	err = sock.Storage.Ack(sock.Uaid, data)
 	// Get the lastAccessed time from wherever.
 	if err == nil {
 		return self.Flush(sock, 0, "", 0)
@@ -464,7 +466,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	if self.filter.Find([]byte(strings.ToLower(appid))) != nil {
 		return sperrors.InvalidDataError
 	}
-	err = sock.Store.RegisterAppID(sock.Uaid, appid, 0)
+	err = sock.Storage.RegisterAppID(sock.Uaid, appid, 0)
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("worker",
@@ -532,7 +534,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 	}
 	appid := data["channelID"].(string)
 	// Always return success for an UNREG.
-	sock.Store.DeleteAppID(sock.Uaid, appid, false)
+	sock.Storage.DeleteAppID(sock.Uaid, appid, false)
 	if self.logger != nil {
 		self.logger.Debug("worker", "sending response",
 			util.Fields{"cmd": "unregister", "error": ErrStr(err)})
@@ -579,7 +581,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	mod := false
 	// if we have a channel, don't flush. we can get them later in the ACK
 	if channel == "" {
-		updates, err = sock.Store.GetUpdates(sock.Uaid, lastAccessed)
+		updates, err = sock.Storage.GetUpdates(sock.Uaid, lastAccessed)
 		if err != nil {
 			self.handleError(sock, util.JsMap{"messageType": messageType}, err)
 			return err
