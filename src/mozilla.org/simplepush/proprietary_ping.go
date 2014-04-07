@@ -33,6 +33,10 @@ func NewPropPing(connect string, uaid string, config util.JsMap, logger *util.He
 	var c_js util.JsMap = make(util.JsMap)
 	var kind string
 
+	if len(connect) == 0 {
+		return nil, nil
+	}
+
 	err = json.Unmarshal([]byte(connect), &c_js)
 	if err != nil {
 		return nil, err
