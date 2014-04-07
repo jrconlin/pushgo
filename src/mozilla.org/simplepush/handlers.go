@@ -515,11 +515,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
+	self.metrics.Increment("updates.received")
 	// Ping the appropriate server
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
-	self.metrics.Increment("updates.clients.outgoing")
 	return
 }
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fmt"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -131,9 +133,10 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		}
 	}
 
-	if connect, ok := args["connect"]; ok {
+	if connect, ok := args["connect"]; ok && connect != nil {
 		// Currently marshalling to deal with the interface{} issues.
 		cs, _ := json.Marshal(connect)
+		fmt.Printf("Prop Ping %s\n\n", connect)
 		prop, err = NewPropPing(string(cs),
 			uaid,
 			self.config,

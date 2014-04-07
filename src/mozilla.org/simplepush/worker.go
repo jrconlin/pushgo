@@ -614,6 +614,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 				strconv.FormatInt(update["version"].(int64), 10)
 			// log.Print(line)
 			updatess = append(updatess, line)
+            self.metrics.Increment("updates.sent")
 		}
 	}
 
@@ -636,7 +637,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 			log.Printf("Worker: Client sending too many pings. %s", source)
 		}
 		self.stopped = true
-		self.metrics.Increment("udpates.client.too_many_pings")
+		self.metrics.Increment("updates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
 	data := buffer.(util.JsMap)
