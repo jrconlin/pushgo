@@ -80,12 +80,7 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
         // Yeah, so for now there's just the two. Someday there may be more
-        switch strings.ToLower(conf["heka.encoder"].(string)) {
-        case "json":
-            encoder = client.NewJsonEncoder(nil)
-        default:
-            encoder = client.NewProtobufEncoder(nil)
-        }
+        encoder = client.NewProtobufEncoder(nil)
         // Options: NewJsonEncoder; NewProtobufEncoder
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
 			conf["heka.server_addr"].(string))
