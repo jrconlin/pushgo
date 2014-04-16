@@ -3,7 +3,7 @@
 	url = git://github.com/jrconlin/simplepush_test.git
 [submodule "src/github.com/mozilla-services/heka"]
 	path = src/github.com/mozilla-services/heka
-	url = https://github.com/mozilla-services/heka.git
+	url = https://github.com/mozilla-services/heka
 [submodule "src/github.com/ianoshen/gomc"]
 	path = src/github.com/ianoshen/gomc
 	url = https://github.com/ianoshen/gomc.git
