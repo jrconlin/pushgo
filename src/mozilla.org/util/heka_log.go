@@ -74,14 +74,10 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	if _, ok = conf["heka.show_caller"]; ok {
 		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
 	}
-    if _, ok = conf["heka.encoder"]; !ok {
-        conf["heka.encoder"] = "protobuf"
-    }
 	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
-        // Yeah, so for now there's just the two. Someday there may be more
-        encoder = client.NewProtobufEncoder(nil)
-        // Options: NewJsonEncoder; NewProtobufEncoder
+		encoder = client.NewProtobufEncoder(nil)
+		// Options: NewJsonEncoder; NewProtobufEncoder
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
 			conf["heka.server_addr"].(string))
 		if err != nil {
@@ -142,7 +138,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 	}
 
 	// Only print out the debug message if it's for the dashboard or
-    // less than the filter.
+	// less than the filter.
 	if (strings.ToLower(mtype) == "dash") || (int64(level) < self.filter) {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
@@ -220,7 +216,6 @@ func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
 	return self.Log(CRITICAL, mtype, msg, fields)
 }
-
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
