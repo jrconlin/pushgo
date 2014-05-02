@@ -196,6 +196,9 @@ func GenPK(uaid, chid string) (pk string, err error) {
 
 // Convert a user readable UUID string into it's binary equivalent
 func cleanID(id string) []byte {
+    if len(id)%2 == 1 {
+        id = "0" + id
+    }
 	res, err := hex.DecodeString(strings.TrimSpace(strings.Replace(id, "-", "", -1)))
 	if err == nil {
 		return res
@@ -220,8 +223,10 @@ func stringsFromBinPK(pk []byte) (uaid, chid string, err error) {
 // Generate a binary Primary Key
 func binGenPK(uaid, chid []byte) (pk []byte, err error) {
 	pk = make([]byte, 32)
-	copy(pk, uaid)
-	copy(pk[16:], chid)
+    aoff := 16 - len(uaid)
+    boff := 32 - len(chid)
+    copy(pk[aoff:], uaid)
+	copy(pk[boff:], chid)
 	return pk, nil
 }
 
