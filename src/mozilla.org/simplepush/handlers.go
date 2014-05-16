@@ -30,8 +30,7 @@ import (
 )
 
 var (
-	toomany  int32 = 0
-	snapshot map[string]int64
+	toomany int32 = 0
 )
 
 func awsGetPublicHostname() (hostname string, err error) {
@@ -125,46 +124,34 @@ func IStr(i interface{}) (reply string) {
 }
 
 type Handler struct {
-	config util.JsMap
-	logger *util.HekaLogger
-	store  *storage.Storage
-	router *router.Router
+	config  util.JsMap
+	logger  *util.HekaLogger
+	storage *storage.Storage
+	router  *router.Router
+	metrics *util.Metrics
 }
 
 func NewHandler(config util.JsMap, logger *util.HekaLogger,
-	store *storage.Storage, router *router.Router) *Handler {
+	storage *storage.Storage, router *router.Router, metrics *util.Metrics) *Handler {
 	return &Handler{config: config,
-		logger: logger,
-		store:  store,
-		router: router}
+		logger:  logger,
+		storage: storage,
+		router:  router,
+		metrics: metrics}
 }
 
 func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request) {
-	var tempshot map[string]int64
-	var newsnapshot = MetricsSnapshot()
-
-	// Looping needs optimizing, obviously
-	if self.config["metrics.counters"] != 0 {
-		for k, v := range newsnapshot {
-			if _, exists := snapshot[k]; exists {
-				tempshot[k] = v - snapshot[k]
-			} else {
-				tempshot[k] = v
-			}
-			snapshot[k] = v
-		}
-	} else {
-		// Gauges
-		for k, v := range newsnapshot {
-			tempshot[k] = v
-			snapshot[k] = v
-		}
-	}
-	reply, err := json.Marshal(tempshot)
+	snapshot := self.metrics.Snapshot()
+	resp.Header().Set("Content-Type", "application/json")
+	reply, err := json.Marshal(snapshot)
 	if err != nil {
-		if self.logger != nil {
-			self.logger.Error("handler", "Failed to marshal metrics", nil)
-		}
+		self.logger.Error("handler", "Could not generate metrics report",
+			util.Fields{"error": err.Error()})
+		resp.Write([]byte("{}"))
+		return
+	}
+	if reply == nil {
+		reply = []byte("{}")
 	}
 	resp.Write(reply)
 }
@@ -200,7 +187,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	if okClients = clientCount < maxClients; !okClients {
 		msg += "Exceeding max_connections, "
 	}
-	mcStatus, err := self.store.Status()
+	mcStatus, err := self.storage.Status()
 	if !mcStatus {
 		msg += fmt.Sprintf(" Memcache error %s,", err)
 	}
@@ -256,6 +243,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	var err error
 	var port string
 	var vers int64
+	var pping *PropPing
 
 	if ClientCount() > self.config["max_connections"].(int) {
 		if self.logger != nil {
@@ -266,7 +254,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
-		MetricIncrement("updates.appserver.too_many_connections")
+		self.metrics.Increment("updates.appserver.too_many_connections")
 		return
 	}
 	if toomany != 0 {
@@ -279,9 +267,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		self.logger.Debug("update", "Handling Update",
 			util.Fields{"path": req.URL.Path})
 	}
-	if self.logger != nil {
-		self.logger.Debug("update", "=========== UPDATE ====", nil)
-	}
 
 	defer func() {
 		if self.logger != nil {
@@ -290,7 +275,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}()
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
-		MetricIncrement("updates.appserver.invalid")
+		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
@@ -299,7 +284,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		vers, err = strconv.ParseInt(svers, 10, 64)
 		if err != nil || vers < 0 {
 			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
-			MetricIncrement("updates.appserver.invalid")
+			self.metrics.Increment("updates.appserver.invalid")
 			return
 		}
 	} else {
@@ -308,6 +293,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	elements := strings.Split(req.URL.Path, "/")
 	pk := elements[len(elements)-1]
+	// TODO:
+	// is there a magic flag for proxyable endpoints?
+	// e.g. update/p/gcm/LSoC or something?
+	// (Note, this would allow us to use smarter FE proxies.)
 	if len(pk) == 0 {
 		if self.logger != nil {
 			self.logger.Error("update", "No token, rejecting request",
@@ -315,7 +304,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
-		MetricIncrement("updates.appserver.invalid")
+		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
@@ -337,7 +326,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 						"error":      ErrStr(err)})
 			}
 			http.Error(resp, "", http.StatusNotFound)
-			MetricIncrement("updates.appserver.invalid")
+			self.metrics.Increment("updates.appserver.invalid")
 			return
 		}
 
@@ -352,7 +341,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
-		MetricIncrement("updates.appserver.invalid")
+		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
@@ -365,8 +354,27 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"path":  req.URL.Path,
 					"error": ErrStr(err)})
 		}
-		MetricIncrement("updates.appserver.invalid")
+		self.metrics.Increment("updates.appserver.invalid")
 		return
+	}
+
+	// is there a Proprietary Ping for this?
+	connect, err := self.storage.GetPropConnect(uaid)
+	fmt.Printf("### PropConnect: %+v\n", connect)
+	if err == nil && len(connect) > 0 {
+		fmt.Printf("### Connect %s\n", connect)
+		pping, err = NewPropPing(connect,
+			uaid,
+			self.config,
+			self.logger,
+			self.storage,
+			self.metrics)
+		if err != nil {
+			self.logger.Warn("update",
+				"Could not generate Proprietary Ping",
+				util.Fields{"error": err.Error(),
+					"connect": connect})
+		}
 	}
 
 	if chid == "" {
@@ -377,12 +385,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
-		MetricIncrement("updates.appserver.invalid")
+		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	// At this point we should have a valid endpoint in the URL
-	MetricIncrement("updates.appserver.incoming")
+	self.metrics.Increment("updates.appserver.incoming")
 
 	//log.Printf("<< %s.%s = %d", uaid, chid, vers)
 
@@ -396,16 +404,45 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		port = ":" + port
 	}
 	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
-	host, err := self.store.GetUAIDHost(uaid)
+	host, err := self.storage.GetUAIDHost(uaid)
 	if err != nil {
-		if self.logger != nil {
-			self.logger.Error("update",
-				"Could not discover host for UAID",
-				util.Fields{"uaid": uaid,
-					"error": err.Error()})
+		if err == storage.UnknownUAIDError {
+			// try the proprietary ping
+			if pping != nil {
+				err = pping.Send(vers)
+				if err != nil {
+					resp.Header().Set("Content-Type", "application/json")
+					resp.Write([]byte("{}"))
+					self.metrics.Increment("updates.clients.proprietary")
+					return
+				}
+			}
+			if self.logger != nil {
+				self.logger.Error("update",
+					"Could not discover host for UAID",
+					util.Fields{"uaid": uaid,
+						"error": err.Error()})
+			}
+			host = util.MzGet(self.config, "shard.defaultHost", "localhost")
 		}
-		host = util.MzGet(self.config, "shard.defaultHost", "localhost")
 	}
+
+	/* if this is a GCM connected host, boot vers immediately to GCM
+	 */
+	if pping != nil && pping.CanBypassWebsocket() {
+		err = pping.Send(vers)
+		if err != nil {
+			self.logger.Error("update",
+				"Could not force to proprietary ping",
+				util.Fields{"error": err.Error()})
+		} else {
+			// Neat! Might as well return.
+			resp.Header().Set("Content-Type", "application/json")
+			resp.Write([]byte("{}"))
+			return
+		}
+	}
+
 	if util.MzGetFlag(self.config, "shard.do_proxy") {
 		if host != currentHost && host != "localhost" {
 			if self.logger != nil {
@@ -435,32 +472,34 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 							"error":       err.Error()})
 				}
 			}
-			MetricIncrement("updates.routed.outgoing")
+			self.metrics.Increment("updates.routed.outgoing")
 			if err != nil {
 				http.Error(resp, err.Error(), 500)
 			} else {
-				resp.Write([]byte("Ok"))
+				resp.Header().Set("Content-Type", "application/json")
+				resp.Write([]byte("{}"))
 			}
 			return
 		}
 	}
 
 	if self.logger != nil {
-		defer func(uaid, chid, path string, timer time.Time) {
-			self.logger.Info("timer", "Client Update complete",
+		defer func(uaid, chid, path string, timer time.Time, err error) {
+			self.logger.Info("dash", "Client Update complete",
 				util.Fields{
-					"uaid":      uaid,
-					"path":      req.URL.Path,
-					"channelID": chid,
-					"duration":  strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10)})
-		}(uaid, chid, req.URL.Path, timer)
+					"uaid":       uaid,
+					"path":       req.URL.Path,
+					"channelID":  chid,
+					"successful": strconv.FormatBool(err == nil),
+					"duration":   strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10)})
+		}(uaid, chid, req.URL.Path, timer, err)
 
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			util.Fields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(vers, 10)})
 	}
-	err = self.store.UpdateChannel(pk, vers)
+	err = self.storage.UpdateChannel(pk, vers)
 
 	if err != nil {
 		if self.logger != nil {
@@ -476,11 +515,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
+	self.metrics.Increment("updates.received")
 	// Ping the appropriate server
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
-	MetricIncrement("updates.clients.outgoing")
 	return
 }
 
@@ -490,7 +529,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			if toomany == 0 {
 				// Don't flood the error log.
 				atomic.StoreInt32(&toomany, 1)
-				self.logger.Error("handler", "Socket Count Exceeded", nil)
+				self.logger.Error("dash", "Socket Count Exceeded", nil)
 			}
 		}
 		websocket.JSON.Send(ws, util.JsMap{
@@ -503,10 +542,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	}
 	timer := time.Now()
 	sock := PushWS{Uaid: "",
-		Socket: ws,
-		Store:  self.store,
-		Logger: self.logger,
-		Born:   timer}
+		Socket:  ws,
+		Storage: self.storage,
+		Logger:  self.logger,
+		Born:    timer}
 	atomic.AddInt32(&cClients, 1)
 
 	if sock.Logger != nil {
@@ -531,7 +570,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		atomic.AddInt32(&cClients, -1)
 	}(sock.Logger)
 
-	NewWorker(self.config, self.logger).Run(&sock)
+	NewWorker(self.config, self.logger, self.metrics).Run(&sock)
 	if self.logger != nil {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}

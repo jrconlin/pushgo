@@ -30,9 +30,10 @@ var (
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,
 		"logging level (0=none,1=critical ... 10=verbose")
-	logger *util.HekaLogger
-	store  *storage.Storage
-	route  *router.Router
+	logger  *util.HekaLogger
+	metrics *util.Metrics
+	store   *storage.Storage
+	route   *router.Router
 )
 
 const SIGUSR1 = syscall.SIGUSR1
@@ -53,17 +54,6 @@ func main() {
 	// Report what the app believes the current host to be, and what version.
 	log.Printf("CurrentHost: %s, Version: %s",
 		config["shard.current_host"], VERSION)
-
-	// Metrics reporting
-	if mprefix, ok := config["metrics.prefix"]; ok {
-		simplepush.MetricsPrefix(mprefix.(string))
-	}
-	if mstatsd, ok := config["metrics.statsd_target"]; ok {
-		err := simplepush.MetricsStatsdTarget(mstatsd.(string))
-		if err != nil {
-			log.Fatal("Couldn't create statsd client: ", err)
-		}
-	}
 
 	// Only create profiles if requested. To view the application profiles,
 	// see http://blog.golang.org/profiling-go-programs
@@ -106,6 +96,11 @@ func main() {
 		}
 	}
 
+	metrics := util.NewMetrics(util.MzGet(config,
+		"metrics.prefix",
+		"simplepush"),
+		logger)
+
 	// Routing allows stand-alone instances to send updates between themselves.
 	// Websock does not allow for native redirects in some browsers. Routing
 	// allows websocket connections and updates to be handled by any server,
@@ -133,8 +128,8 @@ func main() {
 	store = storage.New(config, logger)
 
 	// Initialize the common server.
-	simplepush.InitServer(config, logger)
-	handlers := simplepush.NewHandler(config, logger, store, route)
+	simplepush.InitServer(config, logger, metrics, store)
+	handlers := simplepush.NewHandler(config, logger, store, route, metrics)
 
 	// Config the server
 	var wsport string
@@ -226,22 +221,27 @@ func main() {
 }
 
 // Handle a routed update.
-func updater(update *router.Update, logger *util.HekaLogger) (err error) {
+func updater(update *router.Update,
+	logger *util.HekaLogger,
+	metrics *util.Metrics) (err error) {
 	//log.Printf("UPDATE::: %s", update)
-	simplepush.MetricIncrement("updates.routed.incoming")
+    metrics.Increment("updates.routed.incoming")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {
 		simplepush.Flush(client, update.Chid, int64(update.Vers))
-		duration := strconv.FormatInt(time.Now().Sub(update.Time).Nanoseconds(), 10)
+		duration := time.Now().Sub(update.Time).Nanoseconds()
 		if logger != nil {
 			logger.Info("timer", "Routed flush to client completed",
 				util.Fields{
 					"uaid":     update.Uaid,
 					"chid":     update.Chid,
-					"duration": duration})
+					"duration": strconv.FormatInt(duration, 10)})
 		} else {
-			log.Printf("Routed flush complete: %s", duration)
+			log.Printf("Routed flush complete: %s", strconv.FormatInt(duration, 10))
+		}
+		if metrics != nil {
+			metrics.Timer("router.flush", duration)
 		}
 	}
 	return nil

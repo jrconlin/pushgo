@@ -100,6 +100,8 @@ func (e StorageError) Error() string {
 	return "StorageError: " + e.err
 }
 
+var UnknownUAIDError = errors.New("UnknownUAIDErr")
+
 // Returns the location of a string in a slice of strings or -1 if
 // the string isn't present in the slice
 func indexOf(list ia, val []byte) (index int) {
@@ -194,6 +196,9 @@ func GenPK(uaid, chid string) (pk string, err error) {
 
 // Convert a user readable UUID string into it's binary equivalent
 func cleanID(id string) []byte {
+    if len(id)%2 == 1 {
+        id = "0" + id
+    }
 	res, err := hex.DecodeString(strings.TrimSpace(strings.Replace(id, "-", "", -1)))
 	if err == nil {
 		return res
@@ -218,8 +223,10 @@ func stringsFromBinPK(pk []byte) (uaid, chid string, err error) {
 // Generate a binary Primary Key
 func binGenPK(uaid, chid []byte) (pk []byte, err error) {
 	pk = make([]byte, 32)
-	copy(pk, uaid)
-	copy(pk[16:], chid)
+    aoff := 16 - len(uaid)
+    boff := 32 - len(chid)
+    copy(pk[aoff:], uaid)
+	copy(pk[boff:], chid)
 	return pk, nil
 }
 
@@ -297,6 +304,9 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	}
 	if _, ok = config["shard.prefix"]; !ok {
 		config["shard.prefix"] = "_h-"
+	}
+	if _, ok = config["db.prop_prefix"]; !ok {
+		config["db.prop_prefix"] = "_pc-"
 	}
 	/*
 		i, err := strconv.ParseInt(util.MzGet(config,
@@ -965,16 +975,20 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 	}
 	var val string
 	err = mc.Get(prefix+uaid, &val)
-	if err != nil && err != errors.New("NOT FOUND") {
-		self.isFatal(err)
-		if self.logger != nil {
-			self.logger.Error("storage",
-				"GetUAIDHost Fetch error",
-				util.Fields{"uaid": uaid,
-					"item":  val,
-					"error": err.Error()})
+	if err != nil {
+		if err != errors.New("NOT FOUND") {
+			self.isFatal(err)
+			if self.logger != nil {
+				self.logger.Error("storage",
+					"GetUAIDHost Fetch error",
+					util.Fields{"uaid": uaid,
+						"item":  val,
+						"error": err.Error()})
+			}
+			return defaultHost, err
+		} else {
+            return defaultHost, UnknownUAIDError
 		}
-		return defaultHost, err
 	}
 	if val == "" {
 		val = defaultHost
@@ -1094,6 +1108,34 @@ func (self *Storage) getMC() (gomc.Client, error) {
 		return nil, StorageError{"Connection Pool Saturated"}
 		//		}
 	}
+}
+
+func (self *Storage) GetPropConnect(uaid string) (connect string, err error) {
+	prefix := self.config["db.prop_prefix"].(string)
+	mc, err := self.getMC()
+	defer self.returnMC(mc)
+	if err != nil {
+		return "", err
+	}
+	err = mc.Get(prefix+uaid, &connect)
+	return connect, err
+}
+
+func (self *Storage) SetPropConnect(uaid, connect string) (err error) {
+	prefix := self.config["db.prop_prefix"].(string)
+	mc, err := self.getMC()
+	defer self.returnMC(mc)
+	if err != nil {
+		return err
+	}
+	return mc.Set(prefix+uaid, connect, 0)
+}
+
+func (self *Storage) clearPropConnect(uaid string) (err error) {
+	prefix := self.config["db.prop_prefix"].(string)
+	mc, err := self.getMC()
+	defer self.returnMC(mc)
+	return mc.Delete(prefix+uaid, time.Duration(0))
 }
 
 // o4fs

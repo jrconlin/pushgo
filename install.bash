@@ -2,6 +2,9 @@
 set -e
 echo "Installing required go libraries..."
 git submodule update --init
+for req in `grep -v "^#" go_deps.lst`; do
+    go get -d -v $req
+done
 echo "Libraries installed"
 
 if [ ! -e config.ini ]; then

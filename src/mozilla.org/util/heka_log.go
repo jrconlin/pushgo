@@ -76,7 +76,8 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 	}
 	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
 	if MzGetFlag(conf, "heka.use") {
-		encoder = client.NewJsonEncoder(nil)
+		encoder = client.NewProtobufEncoder(nil)
+		// Options: NewJsonEncoder; NewProtobufEncoder
 		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
 			conf["heka.server_addr"].(string))
 		if err != nil {
@@ -120,6 +121,7 @@ func addFields(msg *message.Message, fields Fields) (err error) {
 // mtype - Message type, Short class identifier for the message
 // payload - Main error message
 // fields - additional optional key/value data associated with the message.
+// dash - force message to be logged (it's for the dashboard)
 func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
@@ -135,8 +137,9 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 		}
 	}
 
-	// Only print out the debug message if it's less than the filter.
-	if int64(level) < self.filter {
+	// Only print out the debug message if it's for the dashboard or
+	// less than the filter.
+	if (strings.ToLower(mtype) == "dash") || (int64(level) < self.filter) {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
 			var fld []string

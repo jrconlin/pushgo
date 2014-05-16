@@ -40,11 +40,12 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid   string          // id
-	Socket *websocket.Conn // Remote connection
-	Store  *storage.Storage
-	Logger *util.HekaLogger
-	Born   time.Time
+	Uaid    string          // id
+	Socket  *websocket.Conn // Remote connection
+	Storage *storage.Storage
+	Logger  *util.HekaLogger
+	Metrics *util.Metrics
+	Born    time.Time
 }
 
 // o4fs

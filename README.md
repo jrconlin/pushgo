@@ -38,9 +38,9 @@ To install this server:
 
 If you're not planning on doing development work (see previous notes
 about how this is beta), you may want to build the executable with
-''' go build main.go '''
+''' go build simplepush.go '''
 
-This will build "main" as an executable.
+This will build "simplepush" as an executable.
 
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
