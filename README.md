@@ -9,6 +9,12 @@ AWS instances, and reasonably light weight. Some other languages and
 approaches showed better overall performance, many showed worse. Your
 milage may vary.
 
+Please note: PushGo is not a reference implementation of the SimplePush
+protocol. It was created in order to support large numbers (1,000,000+ 
+simultaneously connected users) in a cost effective manner. As such, some
+features of the protocol are not present, (e.g. message retry, client state
+recording, closed channel responses for third party servers, etc.)
+
 ## System requirements.
 
 libmemcached 1.2 *note* remove older, system installed versions of
