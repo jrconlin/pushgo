@@ -517,6 +517,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Write([]byte("{}"))
 	self.metrics.Increment("updates.received")
 	// Ping the appropriate server
+    defer MuClient.Unlock()
+    MuClient.Lock()
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
