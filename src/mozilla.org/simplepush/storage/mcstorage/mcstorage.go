@@ -50,10 +50,12 @@ var (
 )
 
 type Storage struct {
-	config     util.JsMap
+	config     *util.MzConfig
 	mcs        chan gomc.Client
 	logger     *util.HekaLogger
 	mc_timeout time.Duration
+	poolSize   int64
+	timeouts   map[string]int64
 	servers    []string
 }
 
@@ -196,9 +198,9 @@ func GenPK(uaid, chid string) (pk string, err error) {
 
 // Convert a user readable UUID string into it's binary equivalent
 func cleanID(id string) []byte {
-    if len(id)%2 == 1 {
-        id = "0" + id
-    }
+	if len(id)%2 == 1 {
+		id = "0" + id
+	}
 	res, err := hex.DecodeString(strings.TrimSpace(strings.Replace(id, "-", "", -1)))
 	if err == nil {
 		return res
@@ -223,9 +225,9 @@ func stringsFromBinPK(pk []byte) (uaid, chid string, err error) {
 // Generate a binary Primary Key
 func binGenPK(uaid, chid []byte) (pk []byte, err error) {
 	pk = make([]byte, 32)
-    aoff := 16 - len(uaid)
-    boff := 32 - len(chid)
-    copy(pk[aoff:], uaid)
+	aoff := 16 - len(uaid)
+	boff := 32 - len(chid)
+	copy(pk[aoff:], uaid)
 	copy(pk[boff:], chid)
 	return pk, nil
 }
@@ -247,15 +249,13 @@ func keydecode(key string) []byte {
 	return ret
 }
 
-func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
-	config = opts
-	var ok bool
+func New(config *util.MzConfig, logger *util.HekaLogger) *Storage {
 	var err error
 
-	if configEndpoint, ok := config["elasticache.config_endpoint"]; ok {
-		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint.(string), 2)
+	if configEndpoint := config.Get("elasticache.config_endpoint", ""); len(configEndpoint) > 0 {
+		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint, 2)
 		if err == nil {
-			config["memcache.server"] = memcacheEndpoint
+			config.SetDefault("memcache.server", memcacheEndpoint)
 		} else {
 			fmt.Println(err)
 			if logger != nil {
@@ -263,13 +263,11 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 					util.Fields{"error": err.Error()})
 			}
 		}
+	} else {
+		config.SetDefault("memcache.server", "127.0.0.1:11211")
 	}
 
-	if _, ok = config["memcache.server"]; !ok {
-		config["memcache.server"] = "127.0.0.1:11211"
-	}
-
-	timeout, err := time.ParseDuration(util.MzGet(config, "db.handle_timeout", "5s"))
+	timeout, err := time.ParseDuration(config.Get("db.handle_timeout", "5s"))
 	if err != nil {
 		if logger != nil {
 			logger.Error("storage", "Could not parse db.handle_timeout",
@@ -277,40 +275,30 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		}
 		timeout = 10 * time.Second
 	}
-	if _, ok = config["memcache.pool_size"]; !ok {
-		config["memcache.pool_size"] = "100"
+	poolSize, err := strconv.ParseInt(config.Get("memcache.pool_size", "100"), 10, 64)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("storage", "Could not parse memcache.pools_size, using 100",
+				util.Fields{"error": err.Error()})
+		}
+		poolSize = 100
 	}
-	if config["memcache.pool_size"], err =
-		strconv.ParseInt(config["memcache.pool_size"].(string), 0, 0); err != nil {
-		config["memcache.pool_size"] = 100
+	timeouts := make(map[string]int64)
+	if timeouts["live"], err = strconv.ParseInt(config.SetDefault("db.timeout_live", "259200"), 10, 64); err != nil {
+		timeouts["live"] = 259200
 	}
-	poolSize := int(config["memcache.pool_size"].(int64))
-	if _, ok = config["db.timeout_live"]; !ok {
-		config["db.timeout_live"] = "259200"
+	if timeouts["reg"], err = strconv.ParseInt(config.SetDefault("db.timeout_reg", "10800"), 10, 64); err != nil {
+		timeouts["reg"] = 10800
 	}
-
-	if _, ok = config["db.timeout_reg"]; !ok {
-		config["db.timeout_reg"] = "10800"
+	if timeouts["del"], err = strconv.ParseInt(config.SetDefault("db.timeout_del", "86400"), 10, 64); err != nil {
+		timeouts["del"] = 86400
 	}
-
-	if _, ok = config["db.timeout_del"]; !ok {
-		config["db.timeout_del"] = "86400"
-	}
-	if _, ok = config["shard.default_host"]; !ok {
-		config["shard.default_host"] = "localhost"
-	}
-	if _, ok = config["shard.current_host"]; !ok {
-		config["shard.current_host"] = config["shard.default_host"]
-	}
-	if _, ok = config["shard.prefix"]; !ok {
-		config["shard.prefix"] = "_h-"
-	}
-	if _, ok = config["db.prop_prefix"]; !ok {
-		config["db.prop_prefix"] = "_pc-"
-	}
+	config.SetDefault("shard.default_host", "localhost")
+	config.SetDefault("shard.current_host", config.Get("shard.default_host", "localhost"))
+	config.SetDefault("shard.prefix", "_h-")
+	config.SetDefault("db.prop_prefix", "_pc-")
 	/*
-		i, err := strconv.ParseInt(util.MzGet(config,
-			"memcache.max_pool_size", "400"), 0, 10)
+		i, err := strconv.ParseInt(config.Get("memcache.max_pool_size", "400"), 0, 10)
 		if err != nil {
 			if logger != nil {
 				logger.Error("storage", "Could not parse memcache.max_pool_size",
@@ -326,11 +314,11 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 	}
 	// do NOT include any spaces
 	servers := strings.Split(
-		no_whitespace.Replace(config["memcache.server"].(string)),
+		no_whitespace.Replace(config.Get("memcache.server", "")),
 		",")
 
 	mcs := make(chan gomc.Client, poolSize)
-	for i := 0; i < poolSize; i++ {
+	for i := int64(0); i < poolSize; i++ {
 		mcs <- newMC(servers, config, logger)
 	}
 
@@ -339,12 +327,14 @@ func New(opts util.JsMap, logger *util.HekaLogger) *Storage {
 		config:     config,
 		logger:     logger,
 		mc_timeout: timeout,
+		poolSize:   poolSize,
 		servers:    servers,
+		timeouts:   timeouts,
 	}
 }
 
 // Generate a new Memcache Client
-func newMC(servers []string, config util.JsMap, logger *util.HekaLogger) (mc gomc.Client) {
+func newMC(servers []string, config *util.MzConfig, logger *util.HekaLogger) (mc gomc.Client) {
 	var err error
 	/*	if mcsPoolSize >= mcsMaxPoolSize {
 			return nil
@@ -363,29 +353,29 @@ func newMC(servers []string, config util.JsMap, logger *util.HekaLogger) (mc gom
 	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
 	// NOTE! do NOT set BEHAVIOR_NOREPLY + Binary. This will cause
 	// libmemcache to drop into an infinite loop.
-	if v, ok := config["memcache.recv_timeout"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	if v := config.Get("memcache.recv_timeout", ""); len(v) > 0 {
+		d, err := time.ParseDuration(v)
 		if err == nil {
 			mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT,
 				uint64(d.Nanoseconds()*1000))
 		}
 	}
-	if v, ok := config["memcache.send_timeout"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	if v := config.Get("memcache.send_timeout", ""); len(v) > 0 {
+		d, err := time.ParseDuration(v)
 		if err == nil {
 			mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT,
 				uint64(d.Nanoseconds()*1000))
 		}
 	}
-	if v, ok := config["memcache.poll_timeout"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	if v := config.Get("memcache.poll_timeout", ""); len(v) > 0 {
+		d, err := time.ParseDuration(v)
 		if err == nil {
 			mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT,
 				uint64(d.Nanoseconds()*1000))
 		}
 	}
-	if v, ok := config["memcache.retry_timeout"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	if v := config.Get("memcache.retry_timeout", ""); len(v) > 0 {
+		d, err := time.ParseDuration(v)
 		if err == nil {
 			mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT,
 				uint64(d.Nanoseconds()*1000))
@@ -527,24 +517,16 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 		return err
 	}
 
-	var ttls string
+	var ttl int64
 	switch rec.S {
 	case DELETED:
-		ttls = config["db.timeout_del"].(string)
+		ttl = self.timeouts["del"]
 	case REGISTERED:
-		ttls = config["db.timeout_reg"].(string)
+		ttl = self.timeouts["reg"]
 	default:
-		ttls = config["db.timeout_live"].(string)
+		ttl = self.timeouts["live"]
 	}
 	rec.L = time.Now().UTC().Unix()
-
-	ttl, err := strconv.ParseInt(ttls, 0, 0)
-	if self.logger != nil {
-		self.logger.Debug("storage",
-			"Storing record",
-			util.Fields{"primarykey": keycode(pk),
-				"record": fmt.Sprintf("%d,%d,%d", rec.L, rec.S, rec.V)})
-	}
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -924,9 +906,9 @@ func (self *Storage) ReloadData(uaid string, updates []string) (err error) {
 
 func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 	if host == "" {
-		host = self.config["shard.current_host"].(string)
+		host = self.config.Get("shard.current_host", "")
 	}
-	prefix := self.config["shard.prefix"].(string)
+	prefix := self.config.Get("shard.prefix", "")
 
 	if uaid == "" {
 		return sperrors.MissingDataError
@@ -937,7 +919,7 @@ func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 			"SetUAIDHost",
 			util.Fields{"uaid": uaid, "host": host})
 	}
-	ttl, _ := strconv.ParseInt(self.config["db.timeout_live"].(string), 0, 0)
+	ttl := self.timeouts["live"]
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -954,8 +936,8 @@ func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
 }
 
 func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
-	defaultHost := self.config["shard.default_host"].(string)
-	prefix := self.config["shard.prefix"].(string)
+	defaultHost := self.config.Get("shard.default_host", "")
+	prefix := self.config.Get("shard.prefix", "")
 
 	defer func(defaultHost string) {
 		if err := recover(); err != nil {
@@ -987,7 +969,7 @@ func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
 			}
 			return defaultHost, err
 		} else {
-            return defaultHost, UnknownUAIDError
+			return defaultHost, UnknownUAIDError
 		}
 	}
 	if val == "" {
@@ -1024,7 +1006,7 @@ func (self *Storage) PurgeUAID(suaid string) (err error) {
 }
 
 func (self *Storage) DelUAIDHost(uaid string) (err error) {
-	prefix := self.config["shard.prefix"].(string)
+	prefix := self.config.Get("shard.prefix", "")
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -1111,7 +1093,7 @@ func (self *Storage) getMC() (gomc.Client, error) {
 }
 
 func (self *Storage) GetPropConnect(uaid string) (connect string, err error) {
-	prefix := self.config["db.prop_prefix"].(string)
+	prefix := self.config.Get("db.prop_prefix", "")
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -1122,7 +1104,7 @@ func (self *Storage) GetPropConnect(uaid string) (connect string, err error) {
 }
 
 func (self *Storage) SetPropConnect(uaid, connect string) (err error) {
-	prefix := self.config["db.prop_prefix"].(string)
+	prefix := self.config.Get("db.prop_prefix", "")
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -1132,7 +1114,7 @@ func (self *Storage) SetPropConnect(uaid, connect string) (err error) {
 }
 
 func (self *Storage) clearPropConnect(uaid string) (err error) {
-	prefix := self.config["db.prop_prefix"].(string)
+	prefix := self.config.Get("db.prop_prefix", "")
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	return mc.Delete(prefix+uaid, time.Duration(0))

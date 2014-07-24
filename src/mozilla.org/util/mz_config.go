@@ -17,15 +17,27 @@ import (
    settle and you can use something more efficent like TOML)
 */
 
-func MzGetConfig(filename string) JsMap {
-	config := make(JsMap)
+type JsMap map[string]interface{}
+
+type MzConfig struct {
+	config JsMap
+	flags  map[string]bool
+}
+
+/* Read a ini like configuration file into a map
+ */
+func ReadMzConfig(filename string) (config *MzConfig, err error) {
 	// Yay for no equivalent to readln
+	config = &MzConfig{
+		config: make(JsMap),
+		flags:  make(map[string]bool),
+	}
 	file, err := os.Open(filename)
 
 	defer file.Close()
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	reader := bufio.NewReader(file)
 	for line, err := reader.ReadString('\n'); err == nil; line, err = reader.ReadString('\n') {
@@ -37,34 +49,72 @@ func MzGetConfig(filename string) JsMap {
 		if len(kv) < 2 {
 			continue
 		}
-		config[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		config.config[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
 	if err != nil && err != io.EOF {
 		log.Panic(err)
 	}
-	return config
+	return config, nil
 }
 
-func MzGet(ma JsMap, key string, def string) string {
-	if val, ok := ma[key].(string); ok {
-		return val
+/* Get a value from the config map, providing an optional default.
+   This is a fairly common behavior for me.
+*/
+func (self *MzConfig) Get(key string, def string) string {
+	if val, ok := self.config[key]; ok {
+		return val.(string)
 	}
 	return def
 }
 
-func MzGetFlag(ma JsMap, key string) (flag bool) {
+/* Set a value if it's not already defined
+ */
+func (self *MzConfig) SetDefault(key string, val string) string {
+	if _, ok := self.config[key]; !ok {
+		self.config[key] = val
+	}
+	return self.config[key].(string)
+}
+
+func (self *MzConfig) Override(key string, val string) string {
+	var old string
+	if v, ok := self.config[key]; ok {
+		old = v.(string)
+	}
+	self.config[key] = val
+	return old
+}
+
+/* Test for a boolean flag. Missing flags are false.
+ */
+func (self *MzConfig) GetFlag(key string) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			flag = false
+			return
 		}
 	}()
 
-	flag = false
-	if val, ok := ma[key]; ok {
-		flag, _ = strconv.ParseBool(val.(string))
+	if flag, ok := self.flags[key]; ok {
+		return flag
 	}
+	if val, ok := self.config[key]; ok {
+		self.flags[key], _ = strconv.ParseBool(val.(string))
+		return self.flags[key]
+	}
+	return false
+}
 
-	return flag
+/* Set the boolean flag if not already specified
+ */
+func (self MzConfig) SetDefaultFlag(key string, val bool) (flag bool) {
+	if bflag, ok := self.flags[key]; ok {
+		return bflag
+	}
+	if _, ok := self.config[key]; ok {
+		return self.GetFlag(key)
+	}
+	self.flags[key] = val
+	return val
 }
 
 // o4fs

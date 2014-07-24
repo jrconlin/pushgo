@@ -26,7 +26,7 @@ type HekaLogger struct {
 	logname  string
 	pid      int32
 	hostname string
-	conf     JsMap
+	conf     *MzConfig
 	tracer   bool
 	filter   int64
 }
@@ -40,6 +40,16 @@ const (
 	DEBUG
 )
 
+type HekaStdoutSender struct{}
+
+func (h *HekaStdoutSender) SendMessage(outBytes []byte) (err error) {
+	_, err = os.Stdout.Write(outBytes)
+	return
+}
+
+func (h *HekaStdoutSender) Close() {
+}
+
 // The fields to relay. NOTE: object reflection is VERY CPU expensive.
 // I specify strings here to reduce that as much as possible. Please do
 // not change this to something like map[string]interface{} since that
@@ -47,9 +57,8 @@ const (
 type Fields map[string]string
 
 // Create a new Heka logging interface.
-func NewHekaLogger(conf JsMap) *HekaLogger {
+func NewHekaLogger(conf *MzConfig) *HekaLogger {
 	//Preflight
-	var ok bool
 	var encoder client.Encoder = nil
 	var sender client.Sender = nil
 	var logname string = ""
@@ -59,37 +68,28 @@ func NewHekaLogger(conf JsMap) *HekaLogger {
 
 	pid := int32(os.Getpid())
 
-	if _, ok = conf["heka.sender"]; !ok {
-		conf["heka.sender"] = "tcp"
-	}
-	if _, ok = conf["heka.server_addr"]; !ok {
-		conf["heka.server_addr"] = "127.0.0.1:5565"
-	}
-	if _, ok = conf["heka.logger_name"]; !ok {
-		conf["heka.logger_name"] = "simplepush"
-	}
-	if _, ok = conf["heka.current_host"]; !ok {
-		conf["heka.current_host"], _ = os.Hostname()
-	}
-	if _, ok = conf["heka.show_caller"]; ok {
-		tracer, _ = strconv.ParseBool(conf["heka.show_caller"].(string))
-	}
-	filter, _ = strconv.ParseInt(MzGet(conf, "logger.filter", "10"), 0, 0)
-	if MzGetFlag(conf, "heka.use") {
+	dhost, _ := os.Hostname()
+	conf.SetDefaultFlag("heka.show_caller", false)
+	conf.SetDefault("logger.filter", "10")
+	filter, _ = strconv.ParseInt(conf.Get("logger.filter", "10"), 0, 0)
+	if conf.GetFlag("heka.use") {
 		encoder = client.NewProtobufEncoder(nil)
-		// Options: NewJsonEncoder; NewProtobufEncoder
-		sender, err = client.NewNetworkSender(conf["heka.sender"].(string),
-			conf["heka.server_addr"].(string))
-		if err != nil {
-			log.Panic("Could not create sender ", err)
+		if conf.GetFlag("heka.stdout") {
+			sender = new(HekaStdoutSender)
+		} else {
+			sender, err = client.NewNetworkSender(conf.Get("heka.sender", "tcp"),
+				conf.Get("heka.server_addr", "127.0.0.1:5565"))
+			if err != nil {
+				log.Panic("Could not create sender ", err)
+			}
 		}
-		logname = conf["heka.logger_name"].(string)
+		logname = conf.Get("heka.logger_name", "package")
 	}
 	return &HekaLogger{encoder: encoder,
 		sender:   sender,
 		logname:  logname,
 		pid:      pid,
-		hostname: conf["heka.current_host"].(string),
+		hostname: conf.Get("heka.current_host", dhost),
 		conf:     conf,
 		tracer:   tracer,
 		filter:   filter}
@@ -121,7 +121,6 @@ func addFields(msg *message.Message, fields Fields) (err error) {
 // mtype - Message type, Short class identifier for the message
 // payload - Main error message
 // fields - additional optional key/value data associated with the message.
-// dash - force message to be logged (it's for the dashboard)
 func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
@@ -132,14 +131,14 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 			funk := runtime.FuncForPC(pc)
 			caller = Fields{
 				"file": file,
+				// defaults don't appear to work.: file,
 				"line": strconv.FormatInt(int64(line), 0),
 				"name": funk.Name()}
 		}
 	}
 
-	// Only print out the debug message if it's for the dashboard or
-	// less than the filter.
-	if (strings.ToLower(mtype) == "dash") || (int64(level) < self.filter) {
+	// Only print out the debug message if it's less than the filter.
+	if int64(level) < self.filter {
 		dump := fmt.Sprintf("[%d]% 7s: %s", level, mtype, payload)
 		if len(fields) > 0 {
 			var fld []string
@@ -149,7 +148,7 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 			dump += " {" + strings.Join(fld, ", ") + "}"
 		}
 		if len(caller) > 0 {
-			dump += fmt.Sprintf(" [%s:%d %s]", caller["file"],
+			dump += fmt.Sprintf(" [%s:%s %s]", caller["file"],
 				caller["line"], caller["name"])
 		}
 		log.Printf(dump)
@@ -182,12 +181,12 @@ func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (e
 		}
 		err = self.encoder.EncodeMessageStream(msg, &stream)
 		if err != nil {
-			log.Fatal("ERROR: Could not encode log message (%s)", err)
+			log.Fatal("ERROR: Could not encode log message: " + err.Error())
 			return err
 		}
 		err = self.sender.SendMessage(stream)
 		if err != nil {
-			log.Fatal("ERROR: Could not send message (%s)", err)
+			log.Fatal("ERROR: Could not send message: ", err.Error())
 			return err
 		}
 	}

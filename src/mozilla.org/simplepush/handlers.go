@@ -11,7 +11,6 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +18,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"runtime"
 	"runtime/debug"
@@ -55,46 +53,13 @@ func awsGetPublicHostname() (hostname string, err error) {
 	return
 }
 
-func FixConfig(config util.JsMap) util.JsMap {
-	if _, ok := config["shard.current_host"]; !ok {
-		currentHost := "localhost"
-		if val := os.Getenv("HOST"); len(val) > 0 {
-			currentHost = val
-		} else {
-			if util.MzGetFlag(config, "shard.use_aws_host") {
-				var awsHost string
-				var err error
-				awsHost, err = awsGetPublicHostname()
-				if err == nil {
-					currentHost = awsHost
-				}
-			}
-		}
-		config["shard.current_host"] = currentHost
+func FixConfig(config *util.MzConfig) *util.MzConfig {
+	currentHost := "localhost"
+	if config.GetFlag("shard.use_aws_host") {
+		currentHost, _ = util.GetAWSPublicHostname()
 	}
-	// Convert the token_key from base64 (if present)
-	if k, ok := config["token_key"]; ok {
-		key, err := base64.URLEncoding.DecodeString(k.(string))
-		if err != nil {
-			log.Fatal(err)
-		}
-		config["token_key"] = key
-	}
-
-	DEFAULT_MAX_CONNECTIONS := 1000
-	config["heka.current_host"] = config["shard.current_host"]
-	if _, ok := config["max_connections"]; ok {
-		var err error
-		val := config["max_connections"].(string)
-		ival, err := strconv.ParseInt(val, 10, 0)
-		if err != nil {
-			config["max_connections"] = DEFAULT_MAX_CONNECTIONS
-		} else {
-			config["max_connections"] = int(ival)
-		}
-	} else {
-		config["max_connections"] = DEFAULT_MAX_CONNECTIONS
-	}
+	config.SetDefault("shard.current_host", currentHost)
+	config.SetDefault("heak.current_host", currentHost)
 
 	return config
 
@@ -124,20 +89,35 @@ func IStr(i interface{}) (reply string) {
 }
 
 type Handler struct {
-	config  util.JsMap
-	logger  *util.HekaLogger
-	storage *storage.Storage
-	router  *router.Router
-	metrics *util.Metrics
+	config          *util.MzConfig
+	logger          *util.HekaLogger
+	storage         *storage.Storage
+	router          *router.Router
+	metrics         *util.Metrics
+	max_connections int64
+	token_key       []byte
 }
 
-func NewHandler(config util.JsMap, logger *util.HekaLogger,
-	storage *storage.Storage, router *router.Router, metrics *util.Metrics) *Handler {
+func NewHandler(config *util.MzConfig,
+	logger *util.HekaLogger,
+	storage *storage.Storage,
+	router *router.Router,
+	metrics *util.Metrics,
+	token_key []byte) *Handler {
+	max_connections, err := strconv.ParseInt(config.Get("max_connections", "1000"), 10, 64)
+	if err != nil || max_connections == 0 {
+		logger.Error("handler", "Invalid value for max_connections, using 1000",
+			util.Fields{"error": err.Error()})
+		max_connections = 1000
+	}
 	return &Handler{config: config,
-		logger:  logger,
-		storage: storage,
-		router:  router,
-		metrics: metrics}
+		logger:          logger,
+		storage:         storage,
+		router:          router,
+		metrics:         metrics,
+		max_connections: max_connections,
+		token_key:       token_key,
+	}
 }
 
 func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request) {
@@ -162,15 +142,13 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := ClientCount()
-	maxClients := self.config["max_connections"].(int)
-	ok := clientCount < maxClients
 	OK := "OK"
-	if !ok {
+	if clientCount >= int(self.max_connections) {
 		OK = "NOPE"
 	}
 	reply := fmt.Sprintf("{\"status\":\"%s\",\"clients\":%d}",
 		OK, clientCount)
-	if !ok {
+	if OK != "OK" {
 		http.Error(resp, reply, http.StatusServiceUnavailable)
 	} else {
 		resp.Write([]byte(reply))
@@ -183,8 +161,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	var msg string
 
 	clientCount := ClientCount()
-	maxClients := self.config["max_connections"].(int)
-	if okClients = clientCount < maxClients; !okClients {
+	if okClients = clientCount > int(self.max_connections); !okClients {
 		msg += "Exceeding max_connections, "
 	}
 	mcStatus, err := self.storage.Status()
@@ -195,10 +172,11 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	gcount := runtime.NumGoroutine()
 	repMap := util.JsMap{"ok": ok,
 		"clientCount": clientCount,
-		"maxClients":  maxClients,
+		"maxClients":  self.max_connections,
 		"mcstatus":    mcStatus,
 		"goroutines":  gcount,
-		"version":     self.config["VERSION"]}
+		"version":     self.config.Get("VERSION", "Unknown"),
+	}
 	if err != nil {
 		repMap["error"] = err.Error()
 	}
@@ -245,7 +223,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	var vers int64
 	var pping *PropPing
 
-	if ClientCount() > self.config["max_connections"].(int) {
+	if ClientCount() > int(self.max_connections) {
 		if self.logger != nil {
 			if toomany == 0 {
 				atomic.StoreInt32(&toomany, 1)
@@ -308,14 +286,13 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if token, ok := self.config["token_key"]; ok && len(token.([]uint8)) > 0 {
+	if token := self.token_key; len(token) > 0 {
 		if self.logger != nil {
 			// Note: dumping the []uint8 keys can produce terminal glitches
 			self.logger.Debug("main", "Decoding...", nil)
 		}
 		var err error
-		bpk, err := Decode(token.([]byte),
-			pk)
+		bpk, err := Decode(token, pk)
 		if err != nil {
 			if self.logger != nil {
 				self.logger.Error("update",
@@ -394,16 +371,14 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	//log.Printf("<< %s.%s = %d", uaid, chid, vers)
 
-	if iport, ok := self.config["port"]; ok {
-		port = iport.(string)
-	}
+	port = self.config.Get("port", "80")
 	if port == "80" {
 		port = ""
 	}
 	if port != "" {
 		port = ":" + port
 	}
-	currentHost := util.MzGet(self.config, "shard.current_host", "localhost")
+	currentHost := self.config.Get("shard.current_host", "localhost")
 	host, err := self.storage.GetUAIDHost(uaid)
 	if err != nil {
 		if err == storage.UnknownUAIDError {
@@ -423,7 +398,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 					util.Fields{"uaid": uaid,
 						"error": err.Error()})
 			}
-			host = util.MzGet(self.config, "shard.defaultHost", "localhost")
+			host = self.config.Get("shard.defaultHost", "localhost")
 		}
 	}
 
@@ -443,7 +418,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	}
 
-	if util.MzGetFlag(self.config, "shard.do_proxy") {
+	if self.config.GetFlag("shard.do_proxy") {
 		if host != currentHost && host != "localhost" {
 			if self.logger != nil {
 				self.logger.Info("update",
@@ -452,14 +427,14 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 						"destination": host + port})
 			}
 			// Use tcp routing.
-			if util.MzGetFlag(self.config, "shard.router") {
+			if self.config.GetFlag("shard.router") {
 				// If there was an error routing the update, don't
 				// tell the AppServer. Chances are it's temporary, and
 				// the client will get the update on next refresh/reconnect
 				self.router.SendUpdate(host, uaid, chid, vers, timer)
 			} else {
 				proto := "http"
-				if len(util.MzGet(self.config, "ssl.certfile", "")) > 0 {
+				if len(self.config.Get("ssl.certfile", "")) > 0 {
 					proto = "https"
 				}
 
@@ -517,8 +492,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Write([]byte("{}"))
 	self.metrics.Increment("updates.received")
 	// Ping the appropriate server
-    defer MuClient.Unlock()
-    MuClient.Lock()
+	defer MuClient.Unlock()
+	MuClient.Lock()
 	if client, ok := Clients[uaid]; ok {
 		Flush(client, chid, int64(vers))
 	}
@@ -526,7 +501,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if ClientCount() > self.config["max_connections"].(int) {
+	if ClientCount() > int(self.max_connections) {
 		if self.logger != nil {
 			if toomany == 0 {
 				// Don't flood the error log.
