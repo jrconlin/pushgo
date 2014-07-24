@@ -116,8 +116,9 @@ func main() {
 	// to), there wasn't much justification to add that complexity.
 	// Obviously, this can and will change over time.
 	route = &router.Router{
-		Port:   config.Get("shard.port", "3000"),
-		Logger: logger,
+		Port:    config.Get("shard.port", "3000"),
+		Logger:  logger,
+		Metrics: metrics,
 	}
 	defer func() {
 		if route != nil {
