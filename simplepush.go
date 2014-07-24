@@ -11,6 +11,7 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -37,7 +38,7 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "1.0"
+const VERSION = "1.1"
 
 // -- main
 func main() {
@@ -45,15 +46,18 @@ func main() {
 	var keyFile string
 
 	flag.Parse()
-	config := util.MzGetConfig(*configFile)
+	config, err := util.ReadMzConfig(*configFile)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 	// The config file requires some customization and normalization
 	config = simplepush.FixConfig(config)
-	config["VERSION"] = VERSION
+	config.Override("VERSION", VERSION)
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Report what the app believes the current host to be, and what version.
 	log.Printf("CurrentHost: %s, Version: %s",
-		config["shard.current_host"], VERSION)
+		config.Get("shard.current_host", "localhost"), VERSION)
 
 	// Only create profiles if requested. To view the application profiles,
 	// see http://blog.golang.org/profiling-go-programs
@@ -86,20 +90,19 @@ func main() {
 	// value specified in the config file. This allows short term logging
 	// for operations.
 	if *logging > 0 {
-		config["logger.enable"] = "1"
-		config["logger.filter"] = strconv.FormatInt(int64(*logging), 10)
+		config.Override("logger.enable", "1")
+		config.Override("logger.filter", strconv.FormatInt(int64(*logging), 10))
 	}
-	if v, ok := config["logger.enable"]; ok {
-		if v, _ := strconv.ParseBool(v.(string)); v {
-			logger = util.NewHekaLogger(config)
-			logger.Info("main", "Enabling full logger", nil)
-		}
+	if config.GetFlag("logger.enable") {
+		logger = util.NewHekaLogger(config)
+		logger.Info("main", "Enabling full logger", nil)
 	}
 
-	metrics := util.NewMetrics(util.MzGet(config,
+	metrics := util.NewMetrics(config.Get(
 		"metrics.prefix",
 		"simplepush"),
-		logger)
+		logger,
+		config)
 
 	// Routing allows stand-alone instances to send updates between themselves.
 	// Websock does not allow for native redirects in some browsers. Routing
@@ -113,7 +116,7 @@ func main() {
 	// to), there wasn't much justification to add that complexity.
 	// Obviously, this can and will change over time.
 	route = &router.Router{
-		Port:   util.MzGet(config, "shard.port", "3000"),
+		Port:   config.Get("shard.port", "3000"),
 		Logger: logger,
 	}
 	defer func() {
@@ -127,23 +130,32 @@ func main() {
 	// self expiring.)
 	store = storage.New(config, logger)
 
+	var key []byte
+	token_str := config.Get("token_key", "")
+	if len(token_str) > 0 {
+		key, err = base64.URLEncoding.DecodeString(token_str)
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+	}
+
 	// Initialize the common server.
-	simplepush.InitServer(config, logger, metrics, store)
-	handlers := simplepush.NewHandler(config, logger, store, route, metrics)
+	simplepush.InitServer(config, logger, metrics, store, key)
+	handlers := simplepush.NewHandler(config, logger, store, route, metrics, key)
 
 	// Config the server
 	var wsport string
 	var wshost string
 	var WSMux *http.ServeMux = http.DefaultServeMux
 	var RESTMux *http.ServeMux = http.DefaultServeMux
-	host := util.MzGet(config, "host", "localhost")
-	port := util.MzGet(config, "port", "8080")
+	host := config.Get("host", "localhost")
+	port := config.Get("port", "8080")
 
 	// Register the handlers
 	// each websocket gets it's own handler.
-	if util.MzGet(config, "wsport", port) != port {
-		wsport = util.MzGet(config, "wsport", port)
-		wshost = util.MzGet(config, "wshost", host)
+	if config.Get("wsport", port) != port {
+		wsport = config.Get("wsport", port)
+		wshost = config.Get("wshost", host)
 		WSMux = http.NewServeMux()
 	}
 
@@ -160,14 +172,10 @@ func main() {
 	}
 
 	// Get the (optional) SSL certs
-	if name, ok := config["ssl.certfile"]; ok {
-		certFile = name.(string)
-	}
-	if name, ok := config["ssl.keyfile"]; ok {
-		keyFile = name.(string)
-	}
-	wscertFile := util.MzGet(config, "ssl.ws.certfile", certFile)
-	wskeyFile := util.MzGet(config, "ssl.ws.keyfile", keyFile)
+	certFile = config.Get("ssl.certfile", "")
+	keyFile = config.Get("ssl.keyfile", "")
+	wscertFile := config.Get("ssl.ws.certfile", certFile)
+	wskeyFile := config.Get("ssl.ws.keyfile", keyFile)
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
@@ -225,7 +233,7 @@ func updater(update *router.Update,
 	logger *util.HekaLogger,
 	metrics *util.Metrics) (err error) {
 	//log.Printf("UPDATE::: %s", update)
-    metrics.Increment("updates.routed.incoming")
+	metrics.Increment("updates.routed.incoming")
 	pk, _ := storage.GenPK(update.Uaid, update.Chid)
 	err = store.UpdateChannel(pk, update.Vers)
 	if client, ok := simplepush.Clients[update.Uaid]; ok {

@@ -17,7 +17,7 @@ import (
 
 type PropPing struct {
 	connect util.JsMap
-	config  util.JsMap
+	config  *util.MzConfig
 	logger  *util.HekaLogger
 	store   *storage.Storage
 	metrics *util.Metrics
@@ -27,7 +27,7 @@ var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, config util.JsMap, logger *util.HekaLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
+func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.HekaLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
 
 	var err error
 	var c_js util.JsMap = make(util.JsMap)
@@ -68,25 +68,19 @@ func NewPropPing(connect string, uaid string, config util.JsMap, logger *util.He
 	}, nil
 }
 
-func init_gcm(connect *util.JsMap, config util.JsMap, logger *util.HekaLogger) error {
-	ttl, err := strconv.ParseInt(util.MzGet(config,
-		"gcm.ttl",
-		util.MzGet(config,
-			"db.timeout_live",
-			"259200")), 10, 0)
+func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.HekaLogger) error {
+	ttl, err := strconv.ParseInt(config.Get("gcm.ttl", config.Get("db.timeout_live", "259200")), 10, 0)
 	if err != nil {
 		ttl = 259200
 		logger.Warn("propping",
 			"Could not parse config option time, using 259200",
 			util.Fields{"error": err.Error()})
 	}
-	collapse_key := util.MzGet(config, "gcm.collapse_key", "simplepush")
-	project_id := util.MzGet(config, "gcm.project_id", "simplepush-gcm")
-	dry_run := util.MzGetFlag(config, "gcm.dry_run")
-	api_key := util.MzGet(config, "gcm.api_key", "")
-	gcm_url := util.MzGet(config,
-		"gcm.url",
-		"https://android.googleapis.com/gcm/send")
+	collapse_key := config.Get("gcm.collapse_key", "simplepush")
+	project_id := config.Get("gcm.project_id", "simplepush-gcm")
+	dry_run := config.GetFlag("gcm.dry_run")
+	api_key := config.Get("gcm.api_key", "")
+	gcm_url := config.Get("gcm.url", "https://android.googleapis.com/gcm/send")
 	if api_key == "" {
 		logger.Error("propping",
 			"No gcm.api_key defined in config file. Cannot send message.",

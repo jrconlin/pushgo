@@ -4,6 +4,8 @@
 
 package util
 
+// very light weight, unformatted UUID4 generator/parser. Because sometimes
+// you just need a reasonably unique hash
 // taken from http://www.ashishbanerjee.com/home/go/go-generate-uuid
 
 import (

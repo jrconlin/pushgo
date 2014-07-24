@@ -40,18 +40,14 @@ var MuClient sync.Mutex
 var serverSingleton *Serv
 
 type Serv struct {
-	config  util.JsMap
+	config  *util.MzConfig
 	logger  *util.HekaLogger
 	metrics *util.Metrics
 	storage *storage.Storage
 	key     []byte
 }
 
-func NewServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage) *Serv {
-	var key []byte
-	if k, ok := config["token_key"]; ok {
-		key = k.([]byte)
-	}
+func NewServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
 	return &Serv{config: config,
 		key:     key,
 		logger:  logger,
@@ -60,8 +56,8 @@ func NewServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics
 	}
 }
 
-func InitServer(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage) (err error) {
-	serverSingleton = NewServer(config, logger, metrics, storage)
+func InitServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
+	serverSingleton = NewServer(config, logger, metrics, storage, key)
 	return nil
 }
 
@@ -75,8 +71,8 @@ func ClientCount() int {
 
 // report if there's a collision with the UAIDs
 func ClientCollision(uaid string) (collision bool) {
-    defer MuClient.Unlock()
-    MuClient.Lock()
+	defer MuClient.Unlock()
+	MuClient.Lock()
 	_, collision = Clients[uaid]
 	return collision
 }
@@ -227,15 +223,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	args := cmd.Arguments.(util.JsMap)
 	args["status"] = 200
 	var endPoint string
-	if _, ok := self.config["push.endpoint"]; !ok {
-		if _, ok := self.config["pushEndpoint"]; !ok {
-			endPoint = "http://localhost/update/<token>"
-		} else {
-			endPoint = self.config["pushEndpoint"].(string)
-		}
-	} else {
-		endPoint = self.config["push.endpoint"].(string)
-	}
+	endPoint = self.config.Get("push.endpoint", self.config.Get("pushEndpoint", "http://localhost/update/<token>"))
 	// Generate the call back URL
 	token, err := storage.GenPK(sock.Uaid,
 		args["channelID"].(string))
@@ -259,8 +247,8 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	}
 	// cheezy variable replacement.
 	endPoint = strings.Replace(endPoint, "<token>", token, -1)
-	host := self.config["shard.current_host"].(string) + ":" +
-		self.config["port"].(string)
+	host := self.config.Get("shard.current_host", "localhost") + ":" +
+		self.config.Get("port", "80")
 	endPoint = strings.Replace(endPoint, "<current_host>", host, -1)
 	args["push.endpoint"] = endPoint
 	if self.logger != nil {

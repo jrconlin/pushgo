@@ -30,7 +30,7 @@ type Worker struct {
 	logger      *util.HekaLogger
 	state       int
 	filter      *regexp.Regexp
-	config      util.JsMap
+	config      *util.MzConfig
 	stopped     bool
 	maxChannels int64
 	lastPing    time.Time
@@ -53,18 +53,16 @@ const (
 // Allow [0-9a-z_-]/i as valid ChannelID characters.
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
 
-func NewWorker(config util.JsMap, logger *util.HekaLogger, metrics *util.Metrics) *Worker {
+func NewWorker(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics) *Worker {
 	var maxChannels int64
 	var pingInterval int64
 
-	if v, ok := config["db.max_channels"]; ok {
-		maxChannels, _ = strconv.ParseInt(v.(string), 0, 0)
-	}
+	maxChannels, _ = strconv.ParseInt(config.Get("db.max_channels", "0"), 10, 64)
 	if maxChannels == 0 {
 		maxChannels = CHID_DEFAULT_MAX_NUM
 	}
-	if v, ok := config["client.min_ping_interval"]; ok {
-		if pDir, err := time.ParseDuration(v.(string)); err != nil {
+	if v := config.Get("client.min_ping_interval", ""); len(v) > 0 {
+		if pDir, err := time.ParseDuration(v); err != nil {
 			pingInterval = int64(pDir.Seconds())
 		}
 	}
@@ -88,8 +86,8 @@ func (self *Worker) sniffer(sock *PushWS) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	var (
-		socket        = sock.Socket
-		raw    []byte = make([]byte, 1024)
+		socket = sock.Socket
+		raw    []byte
 		//eofCount    int    = 0
 		err         error
 		messageType string
@@ -222,8 +220,8 @@ func (self *Worker) handleError(sock *PushWS, message util.JsMap, err error) (re
 
 // General workhorse loop for the websocket handler.
 func (self *Worker) Run(sock *PushWS) {
-	if timeout_s, ok := self.config["client.hello_timeout"]; ok {
-		timeout, _ := time.ParseDuration(timeout_s.(string))
+	if timeout_s := self.config.Get("client.hello_timeout", ""); len(timeout_s) > 0 {
+		timeout, _ := time.ParseDuration(timeout_s)
 		time.AfterFunc(timeout,
 			func() {
 				if sock.Uaid == "" {
@@ -283,7 +281,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
 	}
-	if redir, ok := self.config["db.redirect"]; ok {
+	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
 		resp := util.JsMap{
 			"messageType": data["messageType"],
 			"status":      302,
@@ -614,7 +612,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 				strconv.FormatInt(update["version"].(int64), 10)
 			// log.Print(line)
 			updatess = append(updatess, line)
-            self.metrics.Increment("updates.sent")
+			self.metrics.Increment("updates.sent")
 		}
 	}
 
@@ -641,7 +639,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		return sperrors.TooManyPingsError
 	}
 	data := buffer.(util.JsMap)
-	if util.MzGetFlag(self.config, "push.long_pongs") {
+	if self.config.GetFlag("push.long_pongs") {
 		websocket.JSON.Send(sock.Socket, util.JsMap{
 			"messageType": data["messageType"],
 			"status":      200})
