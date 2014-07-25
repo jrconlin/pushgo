@@ -90,7 +90,7 @@ func IStr(i interface{}) (reply string) {
 
 type Handler struct {
 	config          *util.MzConfig
-	logger          *util.HekaLogger
+	logger          *util.MzLogger
 	storage         *storage.Storage
 	router          *router.Router
 	metrics         *util.Metrics
@@ -99,7 +99,7 @@ type Handler struct {
 }
 
 func NewHandler(config *util.MzConfig,
-	logger *util.HekaLogger,
+	logger *util.MzLogger,
 	storage *storage.Storage,
 	router *router.Router,
 	metrics *util.Metrics,
@@ -532,7 +532,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			"RemoteAddr": ws.Request().RemoteAddr,
 		})
 	}
-	defer func(logger *util.HekaLogger) {
+	defer func(logger *util.MzLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			if logger != nil {

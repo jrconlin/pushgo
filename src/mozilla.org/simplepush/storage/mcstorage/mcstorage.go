@@ -52,7 +52,7 @@ var (
 type Storage struct {
 	config     *util.MzConfig
 	mcs        chan gomc.Client
-	logger     *util.HekaLogger
+	logger     *util.MzLogger
 	mc_timeout time.Duration
 	poolSize   int64
 	timeouts   map[string]int64
@@ -249,7 +249,7 @@ func keydecode(key string) []byte {
 	return ret
 }
 
-func New(config *util.MzConfig, logger *util.HekaLogger) *Storage {
+func New(config *util.MzConfig, logger *util.MzLogger) *Storage {
 	var err error
 
 	if configEndpoint := config.Get("elasticache.config_endpoint", ""); len(configEndpoint) > 0 {
@@ -334,7 +334,7 @@ func New(config *util.MzConfig, logger *util.HekaLogger) *Storage {
 }
 
 // Generate a new Memcache Client
-func newMC(servers []string, config *util.MzConfig, logger *util.HekaLogger) (mc gomc.Client) {
+func newMC(servers []string, config *util.MzConfig, logger *util.MzLogger) (mc gomc.Client) {
 	var err error
 	/*	if mcsPoolSize >= mcsMaxPoolSize {
 			return nil

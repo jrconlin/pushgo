@@ -20,7 +20,7 @@ var (
 
 type Router struct {
 	Port   string
-	Logger *util.HekaLogger
+	Logger *util.MzLogger
     Metrics *util.Metrics
 }
 
@@ -37,7 +37,7 @@ type Update struct {
 	Time time.Time `json:"time"`
 }
 
-type Updater func(*Update, *util.HekaLogger, *util.Metrics) error
+type Updater func(*Update, *util.MzLogger, *util.Metrics) error
 
 func (self *Router) HandleUpdates(updater Updater) {
 	/* There appears to be a difference in how the connection is specified.

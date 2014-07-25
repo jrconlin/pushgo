@@ -41,13 +41,13 @@ var serverSingleton *Serv
 
 type Serv struct {
 	config  *util.MzConfig
-	logger  *util.HekaLogger
+	logger  *util.MzLogger
 	metrics *util.Metrics
 	storage *storage.Storage
 	key     []byte
 }
 
-func NewServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
+func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
 	return &Serv{config: config,
 		key:     key,
 		logger:  logger,
@@ -56,7 +56,7 @@ func NewServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Met
 	}
 }
 
-func InitServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
+func InitServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
 	serverSingleton = NewServer(config, logger, metrics, storage, key)
 	return nil
 }

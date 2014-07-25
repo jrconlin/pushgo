@@ -31,7 +31,7 @@ var (
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,
 		"logging level (0=none,1=critical ... 10=verbose")
-	logger  *util.HekaLogger
+	logger  *util.MzLogger
 	metrics *util.Metrics
 	store   *storage.Storage
 	route   *router.Router
@@ -94,7 +94,7 @@ func main() {
 		config.Override("logger.filter", strconv.FormatInt(int64(*logging), 10))
 	}
 	if config.GetFlag("logger.enable") {
-		logger = util.NewHekaLogger(config)
+		logger = util.NewMzLogger(config)
 		logger.Info("main", "Enabling full logger", nil)
 	}
 
@@ -231,7 +231,7 @@ func main() {
 
 // Handle a routed update.
 func updater(update *router.Update,
-	logger *util.HekaLogger,
+	logger *util.MzLogger,
 	metrics *util.Metrics) (err error) {
 	//log.Printf("UPDATE::: %s", update)
 	metrics.Increment("updates.routed.incoming")
