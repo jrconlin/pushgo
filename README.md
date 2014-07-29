@@ -76,3 +76,17 @@ explaining things.
 
 To test this, or any other SimplePush server, please use [the stand
 alone test suite](https://github.com/jrconlin/simplepush_test).
+
+## Docker
+
+Pushgo is available in a docker container for easy deployment.
+
+Install the container:
+
+* docker pull bbangert/pushgo:dev
+
+It's recommended that you create a config.ini as described above, and
+then volume mount it into the container. If you had your config as
+``config/pushgo.ini`` then you could run:
+
+* docker run --rm -v `pwd`/config:/opt/config bbangert/pushgo:dev -config="/opt/config/push.ini"
