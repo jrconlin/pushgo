@@ -32,8 +32,10 @@ type Request interface {
 	json.Marshaler
 	Type() PacketType
 	Id() string
-	replies() chan Reply
-	errors() chan error
+	Reply(Reply)
+	Error(error)
+	Do() (Reply, error)
+	Close()
 }
 
 type Reply interface {
@@ -45,30 +47,37 @@ type Reply interface {
 type ClientHelo struct {
 	DeviceId   string
 	ChannelIds []string
-	replyChan  chan Reply
-	errChan    chan error
+	replies    chan Reply
+	errors     chan error
 }
 
-func (*ClientHelo) Type() PacketType         { return Helo }
-func (helo *ClientHelo) Id() string          { return helo.DeviceId }
-func (helo *ClientHelo) replies() chan Reply { return helo.replyChan }
-func (helo *ClientHelo) errors() chan error  { return helo.errChan }
+func (*ClientHelo) Type() PacketType    { return Helo }
+func (h *ClientHelo) Id() string        { return h.DeviceId }
+func (h *ClientHelo) Reply(reply Reply) { h.replies <- reply }
+func (h *ClientHelo) Error(err error)   { h.errors <- err }
 
-func (helo *ClientHelo) MarshalJSON() ([]byte, error) {
-	var channelIds []string
-	if helo.ChannelIds == nil {
-		channelIds = make([]string, 0)
-	} else {
-		channelIds = helo.ChannelIds
+func (h *ClientHelo) Close() {
+	close(h.replies)
+	close(h.errors)
+}
+
+func (h *ClientHelo) Do() (reply Reply, err error) {
+	select {
+	case reply = <-h.replies:
+	case err = <-h.errors:
 	}
+	return
+}
+
+func (h *ClientHelo) MarshalJSON() ([]byte, error) {
 	value := struct {
 		MessageType string   `json:"messageType"`
 		DeviceId    string   `json:"uaid"`
 		ChannelIds  []string `json:"channelIDs"`
 	}{
-		helo.Type().String(),
-		helo.DeviceId,
-		channelIds,
+		h.Type().String(),
+		h.DeviceId,
+		h.ChannelIds,
 	}
 	return json.Marshal(value)
 }
@@ -80,19 +89,32 @@ type ServerHelo struct {
 }
 
 func (*ServerHelo) Type() PacketType { return Helo }
-func (helo *ServerHelo) Id() string  { return helo.DeviceId }
-func (helo *ServerHelo) Status() int { return helo.StatusCode }
+func (h *ServerHelo) Id() string     { return h.DeviceId }
+func (h *ServerHelo) Status() int    { return h.StatusCode }
 
 type ClientRegister struct {
 	ChannelId string
-	replyChan chan Reply
-	errChan   chan error
+	replies   chan Reply
+	errors    chan error
 }
 
-func (*ClientRegister) Type() PacketType      { return Register }
-func (r *ClientRegister) Id() string          { return r.ChannelId }
-func (r *ClientRegister) replies() chan Reply { return r.replyChan }
-func (r *ClientRegister) errors() chan error  { return r.errChan }
+func (*ClientRegister) Type() PacketType    { return Register }
+func (r *ClientRegister) Id() string        { return r.ChannelId }
+func (r *ClientRegister) Reply(reply Reply) { r.replies <- reply }
+func (r *ClientRegister) Error(err error)   { r.errors <- err }
+
+func (r *ClientRegister) Close() {
+	close(r.replies)
+	close(r.errors)
+}
+
+func (r *ClientRegister) Do() (reply Reply, err error) {
+	select {
+	case reply = <-r.replies:
+	case err = <-r.errors:
+	}
+	return
+}
 
 func (r *ClientRegister) MarshalJSON() ([]byte, error) {
 	value := struct {
@@ -117,13 +139,15 @@ func (r *ServerRegister) Status() int    { return r.StatusCode }
 
 type ClientUnregister struct {
 	ChannelId string
-	errChan   chan error
+	errors    chan error
 }
 
-func (*ClientUnregister) Type() PacketType      { return Unregister }
-func (u *ClientUnregister) Id() string          { return u.ChannelId }
-func (u *ClientUnregister) replies() chan Reply { return nil }
-func (u *ClientUnregister) errors() chan error  { return u.errChan }
+func (*ClientUnregister) Type() PacketType     { return Unregister }
+func (u *ClientUnregister) Id() string         { return u.ChannelId }
+func (u *ClientUnregister) Reply(Reply)        {}
+func (u *ClientUnregister) Error(err error)    { u.errors <- err }
+func (u *ClientUnregister) Close()             { close(u.errors) }
+func (u *ClientUnregister) Do() (Reply, error) { return nil, <-u.errors }
 
 func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 	value := struct {
@@ -138,14 +162,13 @@ func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 
 type ClientPurge chan error
 
-func (ClientPurge) Type() PacketType     { return Purge }
-func (ClientPurge) Id() string           { return "*" }
-func (ClientPurge) replies() chan Reply  { return nil }
-func (c ClientPurge) errors() chan error { return c }
-
-func (c ClientPurge) MarshalJSON() ([]byte, error) {
-	return []byte(`{"messageType":"purge"}`), nil
-}
+func (ClientPurge) Type() PacketType               { return Purge }
+func (ClientPurge) Id() string                     { return "*" }
+func (ClientPurge) Reply(Reply)                    {}
+func (p ClientPurge) Error(err error)              { p <- err }
+func (p ClientPurge) Close()                       { close(p) }
+func (p ClientPurge) Do() (Reply, error)           { return nil, <-p }
+func (c ClientPurge) MarshalJSON() ([]byte, error) { return []byte(`{"messageType":"purge"}`), nil }
 
 type ServerUpdates []Update
 
@@ -155,13 +178,15 @@ func (ServerUpdates) Status() int      { return 200 }
 
 type ClientACK struct {
 	Updates []Update
-	errChan chan error
+	errors  chan error
 }
 
-func (*ClientACK) Type() PacketType      { return ACK }
-func (a *ClientACK) Id() string          { return "" }
-func (a *ClientACK) replies() chan Reply { return nil }
-func (a *ClientACK) errors() chan error  { return a.errChan }
+func (*ClientACK) Type() PacketType     { return ACK }
+func (a *ClientACK) Id() string         { return "*" }
+func (*ClientACK) Reply(Reply)          {}
+func (a *ClientACK) Error(err error)    { a.errors <- err }
+func (a *ClientACK) Close()             { close(a.errors) }
+func (a *ClientACK) Do() (Reply, error) { return nil, <-a.errors }
 
 func (a *ClientACK) MarshalJSON() ([]byte, error) {
 	value := struct {

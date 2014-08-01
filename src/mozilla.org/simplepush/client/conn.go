@@ -178,13 +178,14 @@ func (c *Conn) Send() {
 				// Multiple handshake attempts with the same device ID will be ignored by
 				// the server. Handshakes with different IDs are not supported.
 				if request.Id() != helo.Id() {
-					request.errors() <- ErrMismatchedIds
+					request.Error(ErrMismatchedIds)
 				}
-				close(request.errors())
+				request.Close()
 				break
 			}
 			if err := ws.JSON.Send(c.Socket, request); err != nil {
-				request.errors() <- err
+				request.Error(err)
+				request.Close()
 				break
 			}
 			// Track replies for `Helo` and `Register` packets.
@@ -195,13 +196,13 @@ func (c *Conn) Send() {
 			if request.Type() == Register {
 				if _, ok := registrations[request.Id()]; ok {
 					// Duplicate registration attempt for an in-progress registration.
-					request.errors() <- ErrDuplicateRequest
+					request.Error(ErrDuplicateRequest)
 					break
 				}
 				registrations[request.Id()] = request
 				break
 			}
-			close(request.errors())
+			request.Close()
 
 		case reply := <-c.replies:
 			if reply.Type() != Helo && reply.Type() != Register {
@@ -226,48 +227,37 @@ func (c *Conn) Send() {
 				}
 				delete(registrations, request.Id())
 			}
-			request.replies() <- reply
-			close(request.errors())
+			request.Reply(reply)
+			request.Close()
 		}
 	}
 	for _, request := range registrations {
 		// Unblock pending registrations.
-		request.errors() <- io.EOF
+		request.Error(io.EOF)
+		request.Close()
 	}
 }
 
 // Attempts to send an outgoing request, returning an error if the connection
 // has been closed.
-func (c *Conn) trySend(request Request) error {
+func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
 	select {
 	case c.requests <- request:
+		return request.Do()
 	case <-c.signalChan:
-		return io.EOF
 	}
-	return nil
-}
-
-func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
-	if err = c.trySend(request); err != nil {
-		return
-	}
-	select {
-	case reply = <-request.replies():
-	case err = <-request.errors():
-	}
-	return
+	return nil, io.EOF
 }
 
 // WriteHelo initiates a handshake with the server. Duplicate handshakes are
 // permitted if the device ID is identical to the prior ID, or left empty;
 // otherwise, the server will close the connection.
 func (c *Conn) WriteHelo(deviceId string, channelIds []string) (actualId string, err error) {
-	replies, errors := make(chan Reply), make(chan error)
 	request := &ClientHelo{
 		DeviceId:   deviceId,
 		ChannelIds: channelIds,
-		replyChan:  replies,
-		errChan:    errors,
+		replies:    make(chan Reply),
+		errors:     make(chan error),
 	}
 	reply, err := c.WriteRequest(request)
 	if err != nil {
@@ -294,11 +284,10 @@ func (c *Conn) WriteHelo(deviceId string, channelIds []string) (actualId string,
 // read synchronously because the push server may interleave other replies and
 // notification requests before fulfilling the registration.
 func (c *Conn) Register(channelId string) (endpoint string, err error) {
-	replies, errors := make(chan Reply), make(chan error)
 	request := &ClientRegister{
 		ChannelId: channelId,
-		replyChan: replies,
-		errChan:   errors,
+		replies:   make(chan Reply),
+		errors:    make(chan error),
 	}
 	reply, err := c.WriteRequest(request)
 	if err != nil {
@@ -323,10 +312,9 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 // Unregister signals that the client is no longer interested in receiving
 // updates for a particular channel. The server never replies to this message.
 func (c *Conn) Unregister(channelId string) (err error) {
-	errors := make(chan error)
 	request := &ClientUnregister{
 		ChannelId: channelId,
-		errChan:   errors,
+		errors:    make(chan error),
 	}
 	_, err = c.WriteRequest(request)
 	return
@@ -362,7 +350,7 @@ func (c *Conn) ReadMessage() (update Update, err error) {
 func (c *Conn) AcceptBatch(updates []Update) (err error) {
 	request := &ClientACK{
 		Updates: updates,
-		errChan: make(chan error),
+		errors:  make(chan error),
 	}
 	_, err = c.WriteRequest(request)
 	return
