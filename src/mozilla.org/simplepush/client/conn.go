@@ -231,8 +231,12 @@ func (c *Conn) Send() {
 			request.Close()
 		}
 	}
+	// Unblock pending registrations.
+	if helo != nil {
+		helo.Error(io.EOF)
+		helo.Close()
+	}
 	for _, request := range registrations {
-		// Unblock pending registrations.
 		request.Error(io.EOF)
 		request.Close()
 	}

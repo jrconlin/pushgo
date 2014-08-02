@@ -11,6 +11,7 @@ var packetNames = map[PacketType]string{
 	Notification: "notification",
 	ACK:          "ack",
 	Purge:        "purge",
+	Ping:         "ping",
 }
 
 type PacketType int
@@ -22,6 +23,7 @@ const (
 	Notification
 	ACK
 	Purge
+	Ping
 )
 
 func (t PacketType) String() string {
@@ -182,7 +184,7 @@ type ClientACK struct {
 }
 
 func (*ClientACK) Type() PacketType     { return ACK }
-func (a *ClientACK) Id() string         { return "*" }
+func (*ClientACK) Id() string           { return "*" }
 func (*ClientACK) Reply(Reply)          {}
 func (a *ClientACK) Error(err error)    { a.errors <- err }
 func (a *ClientACK) Close()             { close(a.errors) }
