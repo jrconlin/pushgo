@@ -164,6 +164,7 @@ func (c *Conn) Receive() {
 		case replies <- reply:
 		}
 	}
+	close(c.messages)
 }
 
 func (c *Conn) Send() {
