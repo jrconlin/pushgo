@@ -469,9 +469,9 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		if !hasChannelId {
 			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "pushEndpoint"}
 		}
-		var version int
+		var version int64
 		if asFloat, ok := update["version"].(float64); ok {
-			version = int(asFloat)
+			version = int64(asFloat)
 		} else {
 			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "version"}
 		}

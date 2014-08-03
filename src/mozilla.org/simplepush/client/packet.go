@@ -204,5 +204,5 @@ func (a *ClientACK) MarshalJSON() ([]byte, error) {
 
 type Update struct {
 	ChannelId string `json:"channelID"`
-	Version   int    `json:"version"`
+	Version   int64  `json:"version"`
 }
