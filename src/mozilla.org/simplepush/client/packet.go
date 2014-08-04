@@ -50,7 +50,6 @@ type Reply interface {
 	Type() PacketType
 	HasRequest() bool
 	Sync() bool
-	CanSpool() bool
 	Id() string
 	Status() int
 }
@@ -100,7 +99,6 @@ type ServerHelo struct {
 func (*ServerHelo) Type() PacketType { return Helo }
 func (*ServerHelo) HasRequest() bool { return true }
 func (*ServerHelo) Sync() bool       { return true }
-func (*ServerHelo) CanSpool() bool   { return false }
 func (h *ServerHelo) Id() string     { return h.DeviceId }
 func (h *ServerHelo) Status() int    { return h.StatusCode }
 
@@ -147,7 +145,6 @@ type ServerRegister struct {
 func (*ServerRegister) Type() PacketType { return Register }
 func (*ServerRegister) HasRequest() bool { return true }
 func (*ServerRegister) Sync() bool       { return false }
-func (*ServerRegister) CanSpool() bool   { return false }
 func (r *ServerRegister) Id() string     { return r.ChannelId }
 func (r *ServerRegister) Status() int    { return r.StatusCode }
 
@@ -194,15 +191,6 @@ func (p ClientPurge) Error(err error)              { p <- err }
 func (p ClientPurge) Close()                       { close(p) }
 func (p ClientPurge) Do() (Reply, error)           { return nil, <-p }
 func (c ClientPurge) MarshalJSON() ([]byte, error) { return []byte(`{"messageType":"purge"}`), nil }
-
-type ServerUpdates []Update
-
-func (ServerUpdates) Type() PacketType { return Notification }
-func (ServerUpdates) HasRequest() bool { return false }
-func (ServerUpdates) Sync() bool       { return false }
-func (ServerUpdates) CanSpool() bool   { return true }
-func (ServerUpdates) Id() string       { return "*" }
-func (ServerUpdates) Status() int      { return 200 }
 
 type ClientACK struct {
 	Updates []Update

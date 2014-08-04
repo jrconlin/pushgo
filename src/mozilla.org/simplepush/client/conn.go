@@ -16,28 +16,46 @@ var (
 )
 
 type Conn struct {
-	sync.Mutex
-	Socket     *ws.Conn
-	requests   chan Request
-	replies    chan Reply
-	messages   chan Update
-	signalChan chan bool
-	closeWait  sync.WaitGroup
-	lastErr    error
-	isClosing  bool
+	Socket        *ws.Conn // The underlying WebSocket connection.
+	DecodeDefault bool     // Use the default message decoders if a custom decoder is not registered.
+	requests      chan Request
+	replies       chan Reply
+	pending       []Update
+	pendingLock   sync.Mutex
+	messages      chan Update
+	channels      Channels
+	channelLock   sync.RWMutex
+	decoders      Decoders
+	decoderLock   sync.RWMutex
+	signalChan    chan bool
+	closeLock     sync.Mutex
+	closeWait     sync.WaitGroup
+	lastErr       error
+	isClosing     bool
 }
 
-type Requests map[string]Request
+type (
+	Channels map[string]bool
+	Decoders map[string]Decoder
+	Requests map[string]Request
+	Fields   map[string]interface{}
+)
 
-type Fields map[string]interface{}
+type Decoder interface {
+	Decode(c *Conn, statusCode int, fields Fields) (Reply, error)
+}
 
-type Decoder func(c *Conn, statusCode int, fields Fields) (Reply, error)
+type decoderFn func(c *Conn, statusCode int, fields Fields) (Reply, error)
 
-var Decoders = map[string]Decoder{
-	"ping":         decodePing,
-	"hello":        decodeHelo,
-	"register":     decodeRegister,
-	"notification": decodeNotification,
+func (d decoderFn) Decode(c *Conn, statusCode int, fields Fields) (Reply, error) {
+	return d(c, statusCode, fields)
+}
+
+var DefaultDecoders = Decoders{
+	"ping":         decoderFn(decodePing),
+	"hello":        decoderFn(decodeHelo),
+	"register":     decoderFn(decodeRegister),
+	"notification": decoderFn(decodeNotification),
 }
 
 func Dial(origin string) (*Conn, error) {
@@ -78,11 +96,14 @@ func DialOrigin(origin string) (*Conn, error) {
 
 func NewConn(socket *ws.Conn) *Conn {
 	conn := &Conn{
-		Socket:     socket,
-		requests:   make(chan Request),
-		replies:    make(chan Reply),
-		messages:   make(chan Update),
-		signalChan: make(chan bool),
+		Socket:        socket,
+		DecodeDefault: true,
+		requests:      make(chan Request),
+		replies:       make(chan Reply),
+		messages:      make(chan Update),
+		channels:      make(Channels),
+		decoders:      make(Decoders),
+		signalChan:    make(chan bool),
 	}
 	conn.closeWait.Add(2)
 	go conn.Send()
@@ -90,32 +111,62 @@ func NewConn(socket *ws.Conn) *Conn {
 	return conn
 }
 
+// RegisterDecoder registers a decoder `d` for the specified `messageType`.
+// Message types are case-insensitive.
+func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
+	defer c.decoderLock.Unlock()
+	c.decoderLock.Lock()
+	c.decoders[strings.ToLower(messageType)] = d
+}
+
+// Decoder returns a registered custom decoder, or the default decoder if
+// `DecodeDefault` is `true`.
+func (c *Conn) Decoder(messageType string) (d Decoder) {
+	defer c.decoderLock.RUnlock()
+	c.decoderLock.RLock()
+	name := strings.ToLower(messageType)
+	if d = c.decoders[name]; d == nil && c.DecodeDefault {
+		d = DefaultDecoders[name]
+	}
+	return
+}
+
+// UnregisterDecoder unregisters a custom decoder.
+func (c *Conn) UnregisterDecoder(messageType string) {
+	defer c.decoderLock.Unlock()
+	c.decoderLock.Lock()
+	delete(c.decoders, strings.ToLower(messageType))
+}
+
 // Close closes the connection to the push server, unblocking all
 // `ReadMessage()`, `AcceptBatch()`, and `AcceptUpdate()` calls.
+// All registrations and pending updates will be dropped.
 func (c *Conn) Close() (err error) {
 	err, ok := c.stop()
 	if !ok {
 		return err
 	}
 	c.closeWait.Wait()
+	c.removeAllChannels()
+	c.removeAllPending()
 	return
 }
 
-// Acquires `c.Mutex`, closes the socket, and releases the lock, recording
+// Acquires `c.closeLock`, closes the socket, and releases the lock, recording
 // the error in the `lastErr` field.
 func (c *Conn) fatal(err error) {
-	defer c.Unlock()
-	c.Lock()
+	defer c.closeLock.Unlock()
+	c.closeLock.Lock()
 	c.signalClose()
 	c.lastErr = err
 }
 
-// Acquires `c.Mutex`, closes the socket, and releases the lock, reporting
+// Acquires `c.closeLock`, closes the socket, and releases the lock, reporting
 // any errors to the caller. The Boolean specifies whether the caller should
 // wait for the socket to close before returning.
 func (c *Conn) stop() (error, bool) {
-	defer c.Unlock()
-	c.Lock()
+	defer c.closeLock.Unlock()
+	c.closeLock.Lock()
 	if c.isClosing {
 		return c.lastErr, false
 	}
@@ -123,7 +174,7 @@ func (c *Conn) stop() (error, bool) {
 }
 
 // Closes the underlying socket and unblocks the read and write loops. Assumes
-// the caller holds `c.Mutex`.
+// the caller holds `c.closeLock`.
 func (c *Conn) signalClose() (err error) {
 	if c.isClosing {
 		return
@@ -136,8 +187,6 @@ func (c *Conn) signalClose() (err error) {
 
 func (c *Conn) Receive() {
 	defer c.closeWait.Done()
-	var pending []Update
-	subscriptions := make(map[string]bool)
 	for ok := true; ok; {
 		reply, err := c.readMessage()
 		if err != nil {
@@ -149,34 +198,23 @@ func (c *Conn) Receive() {
 			update   Update
 			messages chan Update
 		)
-		if reply.HasRequest() {
+		if reply != nil && reply.HasRequest() {
 			// This is a reply to a client request.
 			replies = c.replies
-			if reply.Type() == Register {
-				// This is a subscription acknowledgement.
-				subscriptions[reply.Id()] = true
-			}
-		} else if reply.CanSpool() {
-			if updates, ok := reply.(ServerUpdates); ok {
-				for _, update = range updates {
-					if subscriptions[update.ChannelId] {
-						// This is an incoming update on a subscribed channel.
-						pending = append(pending, update)
-					}
-				}
-			}
 		}
-		if len(pending) > 0 {
-			update = pending[0]
+		c.pendingLock.Lock()
+		if len(c.pending) > 0 {
+			update = c.pending[0]
 			messages = c.messages
 		}
 		select {
 		case ok = <-c.signalChan:
 		case messages <- update:
-			pending = pending[1:]
+			c.pending = c.pending[1:]
 
 		case replies <- reply:
 		}
+		c.pendingLock.Unlock()
 	}
 	close(c.messages)
 }
@@ -278,6 +316,12 @@ func (c *Conn) Send() {
 	}
 }
 
+func (c *Conn) removeAllPending() {
+	defer c.pendingLock.Unlock()
+	c.pendingLock.Lock()
+	c.pending = c.pending[:0:0]
+}
+
 // Attempts to send an outgoing request, returning an error if the connection
 // has been closed.
 func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
@@ -362,6 +406,34 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 	return "", &ServerError{"register", c.Socket.RemoteAddr(), "Unexpected status code.", register.StatusCode}
 }
 
+// Registered indicates whether the client is subscribed to the specified
+// channel.
+func (c *Conn) Registered(channelId string) bool {
+	defer c.channelLock.RUnlock()
+	c.channelLock.RLock()
+	return c.channels[channelId]
+}
+
+func (c *Conn) addChannel(channelId string) {
+	defer c.channelLock.Unlock()
+	c.channelLock.Lock()
+	c.channels[channelId] = true
+}
+
+func (c *Conn) removeChannel(channelId string) {
+	defer c.channelLock.Unlock()
+	c.channelLock.Lock()
+	delete(c.channels, channelId)
+}
+
+func (c *Conn) removeAllChannels() {
+	defer c.channelLock.Unlock()
+	c.channelLock.Lock()
+	for id := range c.channels {
+		delete(c.channels, id)
+	}
+}
+
 // Unregister signals that the client is no longer interested in receiving
 // updates for a particular channel. The server never replies to this message.
 func (c *Conn) Unregister(channelId string) (err error) {
@@ -369,7 +441,10 @@ func (c *Conn) Unregister(channelId string) (err error) {
 		ChannelId: channelId,
 		errors:    make(chan error),
 	}
-	_, err = c.WriteRequest(request)
+	if _, err = c.WriteRequest(request); err != nil {
+		return
+	}
+	c.removeChannel(channelId)
 	return
 }
 
@@ -462,8 +537,8 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 		// and `error` fields, and `status` if present.
 		return nil, &ServerError{messageType, c.Socket.RemoteAddr(), errorText, statusCode}
 	}
-	if decoder, ok := Decoders[strings.ToLower(messageType)]; ok {
-		return decoder(c, statusCode, fields)
+	if decoder := c.Decoder(messageType); decoder != nil {
+		return decoder.Decode(c, statusCode, fields)
 	}
 	return nil, nil
 }
@@ -500,6 +575,7 @@ func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		ChannelId:  channelId,
 		Endpoint:   endpoint,
 	}
+	c.addChannel(channelId)
 	return reply, nil
 }
 
@@ -508,8 +584,9 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	if !hasUpdates {
 		return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "updates"}
 	}
-	reply := make(ServerUpdates, len(updates))
-	for index, field := range updates {
+	defer c.pendingLock.Unlock()
+	c.pendingLock.Lock()
+	for _, field := range updates {
 		update, hasUpdate := field.(map[string]interface{})
 		if !hasUpdate {
 			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "update"}
@@ -518,16 +595,19 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		if !hasChannelId {
 			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "pushEndpoint"}
 		}
+		if !c.Registered(channelId) {
+			continue
+		}
 		var version int64
 		if asFloat, ok := update["version"].(float64); ok {
 			version = int64(asFloat)
 		} else {
 			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "version"}
 		}
-		reply[index] = Update{
+		c.pending = append(c.pending, Update{
 			ChannelId: channelId,
 			Version:   version,
-		}
+		})
 	}
-	return reply, nil
+	return nil, nil
 }
