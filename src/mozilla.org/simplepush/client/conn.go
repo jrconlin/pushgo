@@ -403,6 +403,7 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 		if len(register.Endpoint) == 0 {
 			return "", &IncompleteError{"register", c.Origin(), "endpoint"}
 		}
+		c.addChannel(channelId)
 		return register.Endpoint, nil
 	}
 	if register.StatusCode == 409 {
@@ -580,7 +581,6 @@ func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		ChannelId:  channelId,
 		Endpoint:   endpoint,
 	}
-	c.addChannel(channelId)
 	return reply, nil
 }
 
