@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-var ErrTimedOut = &ClientError{"Notification test timed out."}
+var (
+	ErrTimedOut   = &ClientError{"Notification test timed out."}
+	ErrChanClosed = &ClientError{"The notification channel was closed by the connection."}
+)
 
 func DoTest(origin string, channels, updates int) error {
 	client := &TestClient{
@@ -25,6 +28,27 @@ func DoTest(origin string, channels, updates int) error {
 		pushVersions:  make(map[string]int64, channels),
 	}
 	return client.Do()
+}
+
+func Notify(endpoint string, version int64) (err error) {
+	values := make(url.Values)
+	values.Add("version", strconv.FormatInt(version, 10))
+	request, err := http.NewRequest("PUT", endpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := new(http.Client)
+	response, err := client.Do(request)
+	if err != nil {
+		return
+	}
+	defer response.Body.Close()
+	io.Copy(ioutil.Discard, response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &ServerError{"internal", endpoint, "Unexpected status code.", response.StatusCode}
+	}
+	return
 }
 
 type clientState func(*TestClient) (clientState, error)
@@ -60,27 +84,6 @@ func (t *TestClient) Do() (err error) {
 	}
 	if err := t.conn.Close(); err != nil {
 		return err
-	}
-	return
-}
-
-func (t *TestClient) Notify(endpoint string, version int64) (err error) {
-	values := make(url.Values)
-	values.Add("version", strconv.FormatInt(version, 10))
-	request, err := http.NewRequest("PUT", endpoint, strings.NewReader(values.Encode()))
-	if err != nil {
-		return
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := new(http.Client)
-	response, err := client.Do(request)
-	if err != nil {
-		return
-	}
-	defer response.Body.Close()
-	io.Copy(ioutil.Discard, response.Body)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &ServerError{"internal", endpoint, "Unexpected status code.", response.StatusCode}
 	}
 	return
 }
@@ -132,6 +135,9 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 	}
 	if err := t.conn.AcceptBatch(updates); err != nil {
 		return err
+	}
+	if len(updates) != len(t.pushEndpoints) {
+		return ErrChanClosed
 	}
 	return
 }
@@ -193,12 +199,12 @@ func register(t *TestClient) (clientState, error) {
 }
 
 func update(t *TestClient) (clientState, error) {
-	var waitGroup sync.WaitGroup
+	var notifyWait sync.WaitGroup
 	signal, errors := make(chan bool), make(chan error)
 	// Listen for incoming messages.
-	waitGroup.Add(1)
+	notifyWait.Add(1)
 	go func() {
-		defer waitGroup.Done()
+		defer notifyWait.Done()
 		select {
 		case <-signal:
 		case errors <- t.waitAll(signal):
@@ -206,20 +212,20 @@ func update(t *TestClient) (clientState, error) {
 	}()
 	// Notify each registered channel.
 	notifyOne := func(endpoint string, version int64) {
-		defer waitGroup.Done()
+		defer notifyWait.Done()
 		select {
 		case <-signal:
-		case errors <- t.Notify(endpoint, version):
+		case errors <- Notify(endpoint, version):
 		}
 	}
-	waitGroup.Add(len(t.pushEndpoints) * t.Updates)
+	notifyWait.Add(len(t.pushEndpoints) * t.Updates)
 	for channelId, endpoint := range t.pushEndpoints {
 		for index := 0; index < t.Updates; index++ {
 			go notifyOne(endpoint, t.nextVersion(channelId))
 		}
 	}
 	go func() {
-		waitGroup.Wait()
+		notifyWait.Wait()
 		close(errors)
 	}()
 	for err := range errors {
