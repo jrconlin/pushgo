@@ -27,6 +27,8 @@ type Conn struct {
 	isClosing  bool
 }
 
+type Requests map[string]Request
+
 type Fields map[string]interface{}
 
 type Decoder func(c *Conn, statusCode int, fields Fields) (Reply, error)
@@ -147,18 +149,20 @@ func (c *Conn) Receive() {
 			update   Update
 			messages chan Update
 		)
-		if reply.Type() == Helo || reply.Type() == Register {
+		if reply.HasRequest() {
 			// This is a reply to a client request.
 			replies = c.replies
 			if reply.Type() == Register {
 				// This is a subscription acknowledgement.
 				subscriptions[reply.Id()] = true
 			}
-		} else if updates, ok := reply.(ServerUpdates); ok {
-			for _, update = range updates {
-				if subscriptions[update.ChannelId] {
-					// This is an incoming update on a subscribed channel.
-					pending = append(pending, update)
+		} else if reply.CanSpool() {
+			if updates, ok := reply.(ServerUpdates); ok {
+				for _, update = range updates {
+					if subscriptions[update.ChannelId] {
+						// This is an incoming update on a subscribed channel.
+						pending = append(pending, update)
+					}
 				}
 			}
 		}
@@ -179,77 +183,98 @@ func (c *Conn) Receive() {
 
 func (c *Conn) Send() {
 	defer c.closeWait.Done()
-	var helo Request
-	registrations := make(map[string]Request)
+	requests, outboxes := make(map[PacketType]Request), make(map[PacketType]Requests)
 	for ok := true; ok; {
 		select {
 		case ok = <-c.signalChan:
 		case request := <-c.requests:
-			if request.Type() == Helo && helo != nil {
-				// Multiple handshake attempts with the same device ID will be ignored by
-				// the server. Handshakes with different IDs are not supported.
-				if request.Id() != helo.Id() {
-					request.Error(ErrMismatchedIds)
+			var (
+				outbox    Requests
+				hasOutbox bool
+			)
+			if request.CanReply() {
+				if request.Sync() {
+					pending, isPending := requests[request.Type()]
+					// Multiple synchronous requests (e.g., `Helo` handshakes) with the same
+					// ID should be idempotent. Synchronous requests with different IDs are
+					// not supported.
+					if isPending {
+						if request.Id() != pending.Id() {
+							request.Error(ErrMismatchedIds)
+						}
+						request.Close()
+						break
+					}
+				} else if outbox, hasOutbox = outboxes[request.Type()]; hasOutbox {
+					// Reject duplicate pending requests.
+					if _, isPending := outbox[request.Id()]; isPending {
+						request.Error(ErrDuplicateRequest)
+						request.Close()
+						break
+					}
 				}
-				request.Close()
-				break
 			}
 			if err := ws.JSON.Send(c.Socket, request); err != nil {
 				request.Error(err)
 				request.Close()
 				break
 			}
-			// Track replies for `Helo` and `Register` packets.
-			if request.Type() == Helo {
-				helo = request
+			if !request.CanReply() {
+				request.Close()
 				break
 			}
-			if request.Type() == Register {
-				if _, ok := registrations[request.Id()]; ok {
-					// Duplicate registration attempt for an in-progress registration.
-					request.Error(ErrDuplicateRequest)
-					break
-				}
-				registrations[request.Id()] = request
+			// Track replies.
+			if request.Sync() {
+				requests[request.Type()] = request
 				break
 			}
-			request.Close()
+			if !hasOutbox {
+				outboxes[request.Type()] = make(Requests)
+				outbox = outboxes[request.Type()]
+			}
+			outbox[request.Id()] = request
 
 		case reply := <-c.replies:
-			if reply.Type() != Helo && reply.Type() != Register {
-				c.fatal(ErrInvalidState)
+			if !reply.HasRequest() {
 				break
 			}
-			var request Request
-			if reply.Type() == Helo {
-				if helo == nil {
-					// Unsolicited `Helo` reply.
-					c.fatal(ErrInvalidState)
-					break
+			var (
+				request   Request
+				isPending bool
+			)
+			if reply.Sync() {
+				request, isPending = requests[reply.Type()]
+				if isPending {
+					delete(requests, reply.Type())
 				}
-				request = helo
-				helo = nil
-			} else if reply.Type() == Register {
-				ok := false
-				if request, ok = registrations[reply.Id()]; !ok {
-					// Unsolicited `Register` reply.
-					c.fatal(ErrInvalidState)
-					break
+			} else if outbox, ok := outboxes[reply.Type()]; ok {
+				request, isPending = outbox[reply.Id()]
+				if isPending {
+					delete(outbox, reply.Id())
 				}
-				delete(registrations, request.Id())
+			}
+			if !isPending {
+				// Unsolicited reply.
+				c.fatal(ErrInvalidState)
+				break
 			}
 			request.Reply(reply)
 			request.Close()
 		}
 	}
-	// Unblock pending registrations.
-	if helo != nil {
-		helo.Error(io.EOF)
-		helo.Close()
-	}
-	for _, request := range registrations {
+	// Unblock pending requests.
+	for requestType, request := range requests {
+		delete(requests, requestType)
 		request.Error(io.EOF)
 		request.Close()
+	}
+	for requestType, outbox := range outboxes {
+		delete(outboxes, requestType)
+		for id, request := range outbox {
+			delete(outbox, id)
+			request.Error(io.EOF)
+			request.Close()
+		}
 	}
 }
 
