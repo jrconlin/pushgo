@@ -51,17 +51,27 @@ func Dial(origin string) (*Conn, error) {
 }
 
 func DialId(origin string, deviceId *string, channelIds []string) (*Conn, error) {
+	conn, err := DialOrigin(origin)
+	if err != nil {
+		return nil, err
+	}
+	actualId, err := conn.WriteHelo(*deviceId, channelIds)
+	if err != nil {
+		if err := conn.Close(); err != nil {
+			return nil, err
+		}
+		return nil, err
+	}
+	*deviceId = actualId
+	return conn, nil
+}
+
+func DialOrigin(origin string) (*Conn, error) {
 	socket, err := ws.Dial(origin, "", origin)
 	if err != nil {
 		return nil, err
 	}
-	conn := NewConn(socket)
-	resetId, err := conn.WriteHelo(*deviceId, channelIds)
-	if err != nil {
-		return nil, err
-	}
-	*deviceId = resetId
-	return conn, nil
+	return NewConn(socket), nil
 }
 
 func NewConn(socket *ws.Conn) *Conn {

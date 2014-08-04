@@ -1,7 +1,6 @@
 package client
 
 import (
-	ws "code.google.com/p/go.net/websocket"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -128,11 +127,11 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 }
 
 func helo(t *TestClient) (clientState, error) {
-	socket, err := ws.Dial(t.Origin, "", t.Origin)
+	conn, err := DialOrigin(t.Origin)
 	if err != nil {
 		return nil, err
 	}
-	t.conn = NewConn(socket)
+	t.conn = conn
 	deviceId, err := t.conn.WriteHelo(t.deviceId, []string{})
 	if err != nil {
 		clientErr, ok := err.(Error)
