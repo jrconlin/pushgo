@@ -295,6 +295,19 @@ func (c *Conn) WriteHelo(deviceId string, channelIds []string) (actualId string,
 	return "", &ServerError{"hello", c.Socket.RemoteAddr(), "Unexpected status code.", helo.StatusCode}
 }
 
+// Subscribe subscribes a client to a new channel.
+func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
+	channelId, err = GenerateId()
+	if err != nil {
+		return "", "", err
+	}
+	endpoint, err = c.Register(channelId)
+	if err != nil {
+		return "", "", err
+	}
+	return
+}
+
 // Register subscribes a client to the specified channel. The reply is not
 // read synchronously because the push server may interleave other replies and
 // notification requests before fulfilling the registration.

@@ -162,6 +162,16 @@ func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 	return json.Marshal(value)
 }
 
+type ClientPing chan error
+
+func (ClientPing) Type() PacketType               { return Ping }
+func (ClientPing) Id() string                     { return "*" }
+func (ClientPing) Reply(Reply)                    {}
+func (p ClientPing) Error(err error)              { p <- err }
+func (p ClientPing) Close()                       { close(p) }
+func (p ClientPing) Do() (Reply, error)           { return nil, <-p }
+func (p ClientPing) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+
 type ClientPurge chan error
 
 func (ClientPurge) Type() PacketType               { return Purge }
