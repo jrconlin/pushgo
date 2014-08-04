@@ -45,17 +45,17 @@ type Decoder interface {
 	Decode(c *Conn, statusCode int, fields Fields) (Reply, error)
 }
 
-type decoderFn func(c *Conn, statusCode int, fields Fields) (Reply, error)
+type DecoderFunc func(c *Conn, statusCode int, fields Fields) (Reply, error)
 
-func (d decoderFn) Decode(c *Conn, statusCode int, fields Fields) (Reply, error) {
+func (d DecoderFunc) Decode(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	return d(c, statusCode, fields)
 }
 
 var DefaultDecoders = Decoders{
-	"ping":         decoderFn(decodePing),
-	"hello":        decoderFn(decodeHelo),
-	"register":     decoderFn(decodeRegister),
-	"notification": decoderFn(decodeNotification),
+	"ping":         DecoderFunc(decodePing),
+	"hello":        DecoderFunc(decodeHelo),
+	"register":     DecoderFunc(decodeRegister),
+	"notification": DecoderFunc(decodeNotification),
 }
 
 func Dial(origin string) (*Conn, error) {
