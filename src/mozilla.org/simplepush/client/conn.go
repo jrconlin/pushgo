@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -15,9 +16,16 @@ var (
 	ErrInvalidState     = &ClientError{"Invalid client state."}
 )
 
+// TODO: Extract the spooling logic (`pending{Lock}, messages, SpoolAll`) into
+// a higher-level client that supports streaming notifications, automatic
+// reconnects, etc.
+
 type Conn struct {
-	Socket        *ws.Conn // The underlying WebSocket connection.
-	DecodeDefault bool     // Use the default message decoders if a custom decoder is not registered.
+	Socket        *ws.Conn      // The underlying WebSocket connection.
+	PingInterval  time.Duration // The amount of time the connection may remain idle before sending a ping.
+	PingDeadlime  time.Duration // The amount of time to wait for a pong before closing the connection.
+	DecodeDefault bool          // Use the default message decoders if a custom decoder is not registered.
+	SpoolAll      bool          // Spool incoming notifications sent on unregistered channels.
 	requests      chan Request
 	replies       chan Reply
 	pending       []Update
@@ -63,7 +71,7 @@ func Dial(origin string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := DialId(origin, &deviceId, make([]string, 0))
+	conn, err := DialId(origin, &deviceId, []string{})
 	if err != nil {
 		return nil, err
 	}
@@ -91,13 +99,16 @@ func DialOrigin(origin string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewConn(socket), nil
+	return NewConn(socket, false), nil
 }
 
-func NewConn(socket *ws.Conn) *Conn {
+func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
 	conn := &Conn{
 		Socket:        socket,
+		PingInterval:  30 * time.Minute,
+		PingDeadlime:  10 * time.Second,
 		DecodeDefault: true,
+		SpoolAll:      spoolAll,
 		requests:      make(chan Request),
 		replies:       make(chan Reply),
 		messages:      make(chan Update),
@@ -600,7 +611,7 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		if !hasChannelId {
 			return nil, &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
 		}
-		if !c.Registered(channelId) {
+		if !c.SpoolAll && !c.Registered(channelId) {
 			continue
 		}
 		var version int64
