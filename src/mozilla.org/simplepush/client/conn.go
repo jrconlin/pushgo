@@ -111,6 +111,11 @@ func NewConn(socket *ws.Conn) *Conn {
 	return conn
 }
 
+// Origin returns the origin of the Simple Push server.
+func (c *Conn) Origin() string {
+	return c.Socket.RemoteAddr().String()
+}
+
 // RegisterDecoder registers a decoder `d` for the specified `messageType`.
 // Message types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
@@ -354,14 +359,14 @@ func (c *Conn) WriteHelo(deviceId string, channelIds []string) (actualId string,
 	}
 	if helo.StatusCode >= 300 && helo.StatusCode < 400 {
 		if len(helo.Redirect) == 0 {
-			return "", &IncompleteError{"hello", c.Socket.RemoteAddr(), "redirect"}
+			return "", &IncompleteError{"hello", c.Origin(), "redirect"}
 		}
 		return "", &RedirectError{helo.Redirect, helo.StatusCode}
 	}
 	if helo.StatusCode >= 200 && helo.StatusCode < 300 {
 		return helo.DeviceId, nil
 	}
-	return "", &ServerError{"hello", c.Socket.RemoteAddr(), "Unexpected status code.", helo.StatusCode}
+	return "", &ServerError{"hello", c.Origin(), "Unexpected status code.", helo.StatusCode}
 }
 
 // Subscribe subscribes a client to a new channel.
@@ -396,14 +401,14 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 	}
 	if register.StatusCode >= 200 && register.StatusCode < 300 {
 		if len(register.Endpoint) == 0 {
-			return "", &IncompleteError{"register", c.Socket.RemoteAddr(), "endpoint"}
+			return "", &IncompleteError{"register", c.Origin(), "endpoint"}
 		}
 		return register.Endpoint, nil
 	}
 	if register.StatusCode == 409 {
 		return "", &ClientError{"The channel ID `" + channelId + "` is in use."}
 	}
-	return "", &ServerError{"register", c.Socket.RemoteAddr(), "Unexpected status code.", register.StatusCode}
+	return "", &ServerError{"register", c.Origin(), "Unexpected status code.", register.StatusCode}
 }
 
 // Registered indicates whether the client is subscribed to the specified
@@ -530,12 +535,12 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 		} else {
 			message = "Invalid message received from server."
 		}
-		return nil, &ServerError{"internal", c.Socket.RemoteAddr(), message, statusCode}
+		return nil, &ServerError{"internal", c.Origin(), message, statusCode}
 	}
 	if hasErrorText {
 		// Typed error response. Construct an error reply with the `messageType`
 		// and `error` fields, and `status` if present.
-		return nil, &ServerError{messageType, c.Socket.RemoteAddr(), errorText, statusCode}
+		return nil, &ServerError{messageType, c.Origin(), errorText, statusCode}
 	}
 	if decoder := c.Decoder(messageType); decoder != nil {
 		return decoder.Decode(c, statusCode, fields)
@@ -550,7 +555,7 @@ func decodePing(c *Conn, statusCode int, fields Fields) (Reply, error) {
 func decodeHelo(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	deviceId, hasDeviceId := fields["uaid"].(string)
 	if !hasDeviceId {
-		return nil, &IncompleteError{"hello", c.Socket.RemoteAddr(), "uaid"}
+		return nil, &IncompleteError{"hello", c.Origin(), "uaid"}
 	}
 	redirect, _ := fields["redirect"].(string)
 	reply := &ServerHelo{
@@ -564,11 +569,11 @@ func decodeHelo(c *Conn, statusCode int, fields Fields) (Reply, error) {
 func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	channelId, hasChannelId := fields["channelID"].(string)
 	if !hasChannelId {
-		return nil, &IncompleteError{"register", c.Socket.RemoteAddr(), "channelID"}
+		return nil, &IncompleteError{"register", c.Origin(), "channelID"}
 	}
 	endpoint, hasEndpoint := fields["pushEndpoint"].(string)
 	if !hasEndpoint {
-		return nil, &IncompleteError{"register", c.Socket.RemoteAddr(), "pushEndpoint"}
+		return nil, &IncompleteError{"register", c.Origin(), "pushEndpoint"}
 	}
 	reply := &ServerRegister{
 		StatusCode: statusCode,
@@ -582,18 +587,18 @@ func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
 func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	updates, hasUpdates := fields["updates"].([]interface{})
 	if !hasUpdates {
-		return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "updates"}
+		return nil, &IncompleteError{"notification", c.Origin(), "updates"}
 	}
 	defer c.pendingLock.Unlock()
 	c.pendingLock.Lock()
 	for _, field := range updates {
 		update, hasUpdate := field.(map[string]interface{})
 		if !hasUpdate {
-			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "update"}
+			return nil, &IncompleteError{"notification", c.Origin(), "update"}
 		}
 		channelId, hasChannelId := update["channelID"].(string)
 		if !hasChannelId {
-			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "pushEndpoint"}
+			return nil, &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
 		}
 		if !c.Registered(channelId) {
 			continue
@@ -602,7 +607,7 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 		if asFloat, ok := update["version"].(float64); ok {
 			version = int64(asFloat)
 		} else {
-			return nil, &IncompleteError{"notification", c.Socket.RemoteAddr(), "version"}
+			return nil, &IncompleteError{"notification", c.Origin(), "version"}
 		}
 		c.pending = append(c.pending, Update{
 			ChannelId: channelId,

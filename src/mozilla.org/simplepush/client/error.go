@@ -1,7 +1,6 @@
 package client
 
 import (
-	"net"
 	"strconv"
 )
 
@@ -21,7 +20,7 @@ func (err *ClientError) Host() string  { return "*" }
 
 type ServerError struct {
 	messageType string
-	host        net.Addr
+	host        string
 	message     string
 	statusCode  int
 }
@@ -38,15 +37,15 @@ func (err *ServerError) Error() string {
 func (err *ServerError) Status() int { return err.statusCode }
 
 func (err *ServerError) Host() string {
-	if err.host == nil {
+	if len(err.host) == 0 {
 		return "*"
 	}
-	return err.host.String()
+	return err.host
 }
 
 type IncompleteError struct {
 	messageType string
-	host        net.Addr
+	host        string
 	field       string
 }
 
@@ -62,10 +61,10 @@ func (err *IncompleteError) Error() string {
 func (err *IncompleteError) Status() int { return -1 }
 
 func (err *IncompleteError) Host() string {
-	if err.host == nil {
+	if len(err.host) == 0 {
 		return "*"
 	}
-	return err.host.String()
+	return err.host
 }
 
 type RedirectError struct {

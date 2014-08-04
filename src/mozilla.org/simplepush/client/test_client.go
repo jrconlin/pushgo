@@ -45,11 +45,18 @@ type TestClient struct {
 	deviceId        string
 }
 
+func (t *TestClient) ok() bool {
+	return t != nil && t.conn != nil
+}
+
 func (t *TestClient) Do() (err error) {
 	for state := helo; state != nil; {
 		if state, err = state(t); err != nil {
 			break
 		}
+	}
+	if !t.ok() {
+		return ErrInvalidState
 	}
 	if err := t.conn.Close(); err != nil {
 		return err
@@ -73,7 +80,7 @@ func (t *TestClient) Notify(endpoint string, version int64) (err error) {
 	defer response.Body.Close()
 	io.Copy(ioutil.Discard, response.Body)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &ServerError{"internal", t.conn.Socket.RemoteAddr(), "Unexpected status code.", response.StatusCode}
+		return &ServerError{"internal", endpoint, "Unexpected status code.", response.StatusCode}
 	}
 	return
 }
@@ -92,6 +99,9 @@ func (t *TestClient) lastVersion(channelId string) int64 {
 }
 
 func (t *TestClient) waitAll(signal chan bool) (err error) {
+	if !t.ok() {
+		return ErrInvalidState
+	}
 	timeout := time.After(t.Timeout)
 	updates := make([]Update, 0, len(t.pushEndpoints))
 	// Wait for all updates, but only acknowledge the latest version. This can
@@ -150,6 +160,9 @@ func helo(t *TestClient) (clientState, error) {
 }
 
 func register(t *TestClient) (clientState, error) {
+	if !t.ok() {
+		return nil, ErrInvalidState
+	}
 	for index := 0; index < t.Channels; index++ {
 		currentRegister := 0
 		for {
