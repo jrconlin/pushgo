@@ -174,7 +174,9 @@ func (c *Conn) fatal(err error) {
 	defer c.closeLock.Unlock()
 	c.closeLock.Lock()
 	c.signalClose()
-	c.lastErr = err
+	if c.lastErr == nil {
+		c.lastErr = err
+	}
 }
 
 // Acquires `c.closeLock`, closes the socket, and releases the lock, reporting
