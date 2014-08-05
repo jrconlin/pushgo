@@ -226,7 +226,13 @@ func stringsFromBinPK(pk []byte) (uaid, chid string, err error) {
 func binGenPK(uaid, chid []byte) (pk []byte, err error) {
 	pk = make([]byte, 32)
 	aoff := 16 - len(uaid)
+	if aoff < 0 {
+		aoff = 0
+	}
 	boff := 32 - len(chid)
+	if boff < 16 {
+		boff = 16
+	}
 	copy(pk[aoff:], uaid)
 	copy(pk[boff:], chid)
 	return pk, nil
