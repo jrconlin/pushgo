@@ -189,7 +189,7 @@ func register(t *TestClient) (clientState, error) {
 			if !ok || clientErr.Status() != 409 {
 				return nil, err
 			}
-			// If the channel already exists, unregister and re-register.
+			// If the channel already exists, deregister and re-register.
 			if err := t.conn.Unregister(channelId); err != nil {
 				return nil, err
 			}

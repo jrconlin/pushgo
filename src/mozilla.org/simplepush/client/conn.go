@@ -25,7 +25,7 @@ type Conn struct {
 	PingInterval  time.Duration // The amount of time the connection may remain idle before sending a ping.
 	PingDeadlime  time.Duration // The amount of time to wait for a pong before closing the connection.
 	DecodeDefault bool          // Use the default message decoders if a custom decoder is not registered.
-	SpoolAll      bool          // Spool incoming notifications sent on unregistered channels.
+	SpoolAll      bool          // Spool incoming notifications sent on deregistered channels.
 	requests      chan Request
 	replies       chan Reply
 	pending       []Update
@@ -147,7 +147,7 @@ func (c *Conn) Decoder(messageType string) (d Decoder) {
 	return
 }
 
-// UnregisterDecoder unregisters a custom decoder.
+// UnregisterDecoder deregisters a custom decoder.
 func (c *Conn) UnregisterDecoder(messageType string) {
 	defer c.decoderLock.Unlock()
 	c.decoderLock.Lock()
@@ -235,6 +235,12 @@ func (c *Conn) Receive() {
 	close(c.messages)
 }
 
+// Cancels a pending request.
+func cancel(request Request) {
+	request.Error(io.EOF)
+	request.Close()
+}
+
 func (c *Conn) Send() {
 	defer c.closeWait.Done()
 	requests, outboxes := make(map[PacketType]Request), make(map[PacketType]Requests)
@@ -245,15 +251,29 @@ func (c *Conn) Send() {
 			var (
 				outbox    Requests
 				hasOutbox bool
+				id        string
 			)
 			if request.CanReply() {
+				var err error
+				id, err = request.Id()
+				if err != nil {
+					cancel(request)
+					c.fatal(err)
+					break
+				}
 				if request.Sync() {
 					pending, isPending := requests[request.Type()]
 					// Multiple synchronous requests (e.g., `Helo` handshakes) with the same
 					// ID should be idempotent. Synchronous requests with different IDs are
 					// not supported.
 					if isPending {
-						if request.Id() != pending.Id() {
+						pendingId, err := pending.Id()
+						if err != nil {
+							cancel(request)
+							c.fatal(err)
+							break
+						}
+						if pendingId != id {
 							request.Error(ErrMismatchedIds)
 						}
 						request.Close()
@@ -261,7 +281,7 @@ func (c *Conn) Send() {
 					}
 				} else if outbox, hasOutbox = outboxes[request.Type()]; hasOutbox {
 					// Reject duplicate pending requests.
-					if _, isPending := outbox[request.Id()]; isPending {
+					if _, isPending := outbox[id]; isPending {
 						request.Error(ErrDuplicateRequest)
 						request.Close()
 						break
@@ -286,10 +306,15 @@ func (c *Conn) Send() {
 				outboxes[request.Type()] = make(Requests)
 				outbox = outboxes[request.Type()]
 			}
-			outbox[request.Id()] = request
+			outbox[id] = request
 
 		case reply := <-c.replies:
 			if !reply.HasRequest() {
+				break
+			}
+			id, err := reply.Id()
+			if err != nil {
+				c.fatal(err)
 				break
 			}
 			var (
@@ -302,9 +327,9 @@ func (c *Conn) Send() {
 					delete(requests, reply.Type())
 				}
 			} else if outbox, ok := outboxes[reply.Type()]; ok {
-				request, isPending = outbox[reply.Id()]
+				request, isPending = outbox[id]
 				if isPending {
-					delete(outbox, reply.Id())
+					delete(outbox, id)
 				}
 			}
 			if !isPending {
@@ -319,15 +344,13 @@ func (c *Conn) Send() {
 	// Unblock pending requests.
 	for requestType, request := range requests {
 		delete(requests, requestType)
-		request.Error(io.EOF)
-		request.Close()
+		cancel(request)
 	}
 	for requestType, outbox := range outboxes {
 		delete(outboxes, requestType)
 		for id, request := range outbox {
 			delete(outbox, id)
-			request.Error(io.EOF)
-			request.Close()
+			cancel(request)
 		}
 	}
 }
