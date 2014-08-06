@@ -15,6 +15,7 @@ package router
 
 import (
 	"github.com/coreos/go-etcd/etcd"
+	//"github.com/gorilla/http"
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
@@ -24,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,7 +49,8 @@ type Router struct {
 	metrics     *util.Metrics
 	bucketSize  int64
 	template    *template.Template
-	timeout     time.Duration
+	ctimeout    time.Duration
+	rwtimeout   time.Duration
 	defaultTTL  uint64
 	client      *etcd.Client
 	lastRefresh time.Time
@@ -148,10 +151,29 @@ func (self *Router) send(cli *http.Client, req *http.Request, host string) (err 
 	return err
 }
 
+func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
+
+	return func(netw, addr string) (c net.Conn, err error) {
+		c, err = net.DialTimeout(netw, addr, cTimeout)
+		if err != nil {
+			return nil, err
+		}
+		// do we need this if ResponseHeaderTimeout is set?
+		c.SetDeadline(time.Now().Add(rwTimeout))
+		return c, nil
+	}
+}
+
 func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
 	self.logger.Debug("router", "Sending push...", util.Fields{"msg": string(msg),
 		"servers": strings.Join(serverList, ", ")})
-	cli := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{}}}
+	cli := &http.Client{
+		Transport: &http.Transport{
+			Dial: TimeoutDialer(self.ctimeout, self.rwtimeout),
+			ResponseHeaderTimeout: self.rwtimeout,
+			TLSClientConfig:       &tls.Config{},
+		},
+	}
 	test := make(chan bool)
 	count := 0
 	// blast it out to all servers in the already randomized list.
@@ -249,9 +271,13 @@ func New(config *util.MzConfig,
 			util.Fields{"error": err.Error()})
 		return
 	}
-	timeout, err := time.ParseDuration(config.Get("shard.timeout", "3s"))
+	ctimeout, err := time.ParseDuration(config.Get("shard.ctimeout", "3s"))
 	if err != nil {
-		timeout, _ = time.ParseDuration("3s")
+		ctimeout, _ = time.ParseDuration("3s")
+	}
+	rwtimeout, err := time.ParseDuration(config.Get("shard.rwtimeout", "3s"))
+	if err != nil {
+		rwtimeout, _ = time.ParseDuration("3s")
 	}
 	scheme := config.Get("shard.scheme", "http")
 	// default time for the server to be "live"
@@ -295,7 +321,8 @@ func New(config *util.MzConfig,
 		client:     client,
 		defaultTTL: defaultTTL,
 		collider:   collider,
-		timeout:    timeout,
+		ctimeout:   ctimeout,
+		rwtimeout:  rwtimeout,
 		scheme:     scheme,
 		bucketSize: bucketSize,
 	}
