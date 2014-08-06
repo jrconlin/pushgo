@@ -58,6 +58,7 @@ type Router struct {
 	collider    func(string) bool
 	host        string
 	scheme      string
+	rclient     *http.Client
 }
 
 // Get the servers from the etcd cluster
@@ -166,15 +167,7 @@ func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c 
 func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
 	self.logger.Debug("router", "Sending push...", util.Fields{"msg": string(msg),
 		"servers": strings.Join(serverList, ", ")})
-	cli := &http.Client{
-		Transport: &http.Transport{
-			Dial: TimeoutDialer(self.ctimeout, self.rwtimeout),
-			ResponseHeaderTimeout: self.rwtimeout,
-			TLSClientConfig:       &tls.Config{},
-		},
-	}
 	test := make(chan bool)
-	count := 0
 	// blast it out to all servers in the already randomized list.
 	for _, server := range serverList {
 		if server == self.host || server == "" {
@@ -199,25 +192,25 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 							"url":  url,
 							"body": msg})
 					req.Header.Add("Content-Type", "application/json")
-					if err = self.send(cli, req, server); err == nil {
+					if err = self.send(self.rclient, req, server); err == nil {
 						self.logger.Debug("router", "Server accepted", util.Fields{"server": server})
 						test <- true
 						return
 					}
 				}
-				test <- false
 			}(server, url.String(), string(msg))
-			count = count + 1
 		} else {
 			self.logger.Error("router", "Could not build routing URL", util.Fields{"error": err.Error()})
 			return success, err
 		}
 	}
-	for i := 0; i < count; i++ {
-		if <-test {
-			self.logger.Info("router", "record found", nil)
-			success = true
-		}
+	select {
+	case <-test:
+		success = true
+		break
+	case <-time.After(self.ctimeout + self.rwtimeout):
+		success = false
+		break
 	}
 	return success, nil
 }
@@ -309,6 +302,13 @@ func New(config *util.MzConfig,
 				"error": err.Error()})
 		}
 	}
+	rclient := &http.Client{
+		Transport: &http.Transport{
+			Dial: TimeoutDialer(ctimeout, rwtimeout),
+			ResponseHeaderTimeout: rwtimeout,
+			TLSClientConfig:       &tls.Config{},
+		},
+	}
 
 	self = &Router{config: config,
 		logger:     logger,
@@ -321,6 +321,7 @@ func New(config *util.MzConfig,
 		rwtimeout:  rwtimeout,
 		scheme:     scheme,
 		bucketSize: bucketSize,
+		rclient:    rclient,
 	}
 	if _, err = self.getServers(); err != nil {
 		logger.Critical("router", "Could not initialize server list",
