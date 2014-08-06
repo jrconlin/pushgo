@@ -52,7 +52,7 @@ var (
 type Storage struct {
 	config     *util.MzConfig
 	mcs        chan gomc.Client
-	logger     *util.MzLogger
+	logger     *util.HekaLogger
 	mc_timeout time.Duration
 	poolSize   int64
 	timeouts   map[string]int64
@@ -226,13 +226,7 @@ func stringsFromBinPK(pk []byte) (uaid, chid string, err error) {
 func binGenPK(uaid, chid []byte) (pk []byte, err error) {
 	pk = make([]byte, 32)
 	aoff := 16 - len(uaid)
-	if aoff < 0 {
-		aoff = 0
-	}
 	boff := 32 - len(chid)
-	if boff < 16 {
-		boff = 16
-	}
 	copy(pk[aoff:], uaid)
 	copy(pk[boff:], chid)
 	return pk, nil
@@ -255,7 +249,7 @@ func keydecode(key string) []byte {
 	return ret
 }
 
-func New(config *util.MzConfig, logger *util.MzLogger) *Storage {
+func New(config *util.MzConfig, logger *util.HekaLogger) *Storage {
 	var err error
 
 	if configEndpoint := config.Get("elasticache.config_endpoint", ""); len(configEndpoint) > 0 {
@@ -340,7 +334,7 @@ func New(config *util.MzConfig, logger *util.MzLogger) *Storage {
 }
 
 // Generate a new Memcache Client
-func newMC(servers []string, config *util.MzConfig, logger *util.MzLogger) (mc gomc.Client) {
+func newMC(servers []string, config *util.MzConfig, logger *util.HekaLogger) (mc gomc.Client) {
 	var err error
 	/*	if mcsPoolSize >= mcsMaxPoolSize {
 			return nil

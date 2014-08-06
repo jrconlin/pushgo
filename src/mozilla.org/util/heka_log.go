@@ -5,7 +5,10 @@
 package util
 
 import (
-    "errors"
+	"code.google.com/p/go-uuid/uuid"
+	"github.com/mozilla-services/heka/client"
+	"github.com/mozilla-services/heka/message"
+
 	"fmt"
 	"log"
 	"os"
@@ -13,9 +16,13 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 )
 
-type MzLogger struct {
+type HekaLogger struct {
+	client   client.Client
+	encoder  client.Encoder
+	sender   client.Sender
 	logname  string
 	pid      int32
 	hostname string
@@ -33,6 +40,16 @@ const (
 	DEBUG
 )
 
+type HekaStdoutSender struct{}
+
+func (h *HekaStdoutSender) SendMessage(outBytes []byte) (err error) {
+	_, err = os.Stdout.Write(outBytes)
+	return
+}
+
+func (h *HekaStdoutSender) Close() {
+}
+
 // The fields to relay. NOTE: object reflection is VERY CPU expensive.
 // I specify strings here to reduce that as much as possible. Please do
 // not change this to something like map[string]interface{} since that
@@ -40,9 +57,12 @@ const (
 type Fields map[string]string
 
 // Create a new Heka logging interface.
-func NewMzLogger(conf *MzConfig) *MzLogger {
+func NewHekaLogger(conf *MzConfig) *HekaLogger {
 	//Preflight
+	var encoder client.Encoder = nil
+	var sender client.Sender = nil
 	var logname string = ""
+	var err error
 	var tracer bool = false
 	var filter int64
 
@@ -52,12 +72,47 @@ func NewMzLogger(conf *MzConfig) *MzLogger {
 	conf.SetDefaultFlag("heka.show_caller", false)
 	conf.SetDefault("logger.filter", "10")
 	filter, _ = strconv.ParseInt(conf.Get("logger.filter", "10"), 0, 0)
-	return &MzLogger{logname: logname,
+	if conf.GetFlag("heka.use") {
+		encoder = client.NewProtobufEncoder(nil)
+		if conf.GetFlag("heka.stdout") {
+			sender = new(HekaStdoutSender)
+		} else {
+			sender, err = client.NewNetworkSender(conf.Get("heka.sender", "tcp"),
+				conf.Get("heka.server_addr", "127.0.0.1:5565"))
+			if err != nil {
+				log.Panic("Could not create sender ", err)
+			}
+		}
+		logname = conf.Get("heka.logger_name", "package")
+	}
+	return &HekaLogger{encoder: encoder,
+		sender:   sender,
+		logname:  logname,
 		pid:      pid,
 		hostname: conf.Get("heka.current_host", dhost),
 		conf:     conf,
 		tracer:   tracer,
 		filter:   filter}
+}
+
+// Fields are additional logging data passed to Heka. They are technically
+// undefined, but searchable and actionable.
+func addFields(msg *message.Message, fields Fields) (err error) {
+	for key, ival := range fields {
+		var field *message.Field
+		if ival == "" {
+			ival = "*empty*"
+		}
+		if key == "" {
+			continue
+		}
+		field, err = message.NewField(key, ival, ival)
+		if err != nil {
+			return err
+		}
+		msg.AddField(field)
+	}
+	return err
 }
 
 // Logging workhorse function. Chances are you're not going to call this
@@ -66,7 +121,7 @@ func NewMzLogger(conf *MzConfig) *MzLogger {
 // mtype - Message type, Short class identifier for the message
 // payload - Main error message
 // fields - additional optional key/value data associated with the message.
-func (self *MzLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
+func (self HekaLogger) Log(level int32, mtype, payload string, fields Fields) (err error) {
 
 	var caller Fields
 	// add in go language tracing. (Also CPU intensive, but REALLY helpful
@@ -98,33 +153,67 @@ func (self *MzLogger) Log(level int32, mtype, payload string, fields Fields) (er
 		}
 		log.Printf(dump)
 
+		// Don't send an error if there's nothing to do
+		if self.sender == nil {
+			return nil
+		}
+
+		var stream []byte
+
+		msg := &message.Message{}
+		msg.SetTimestamp(time.Now().UnixNano())
+		msg.SetUuid(uuid.NewRandom())
+		msg.SetLogger(self.logname)
+		msg.SetType(mtype)
+		msg.SetPid(self.pid)
+		msg.SetSeverity(level)
+		msg.SetHostname(self.hostname)
+		if len(payload) > 0 {
+			msg.SetPayload(payload)
+		}
+		err = addFields(msg, fields)
+		if err != nil {
+			return err
+		}
+		err = addFields(msg, caller)
+		if err != nil {
+			return err
+		}
+		err = self.encoder.EncodeMessageStream(msg, &stream)
+		if err != nil {
+			log.Fatal("ERROR: Could not encode log message: " + err.Error())
+			return err
+		}
+		err = self.sender.SendMessage(stream)
+		if err != nil {
+			log.Fatal("ERROR: Could not send message: ", err.Error())
+			return err
+		}
 	}
 	return nil
 }
 
 // record the lowest priority message
-func (self *MzLogger) Info(mtype, msg string, fields Fields) (err error) {
+func (self HekaLogger) Info(mtype, msg string, fields Fields) (err error) {
 	return self.Log(INFO, mtype, msg, fields)
 }
 
-func (self *MzLogger) Debug(mtype, msg string, fields Fields) (err error) {
+func (self HekaLogger) Debug(mtype, msg string, fields Fields) (err error) {
 	return self.Log(DEBUG, mtype, msg, fields)
 }
 
-func (self *MzLogger) Warn(mtype, msg string, fields Fields) (err error) {
+func (self HekaLogger) Warn(mtype, msg string, fields Fields) (err error) {
 	return self.Log(WARNING, mtype, msg, fields)
 }
 
-func (self *MzLogger) Error(mtype, msg string, fields Fields) (err error) {
+func (self HekaLogger) Error(mtype, msg string, fields Fields) (err error) {
 	return self.Log(ERROR, mtype, msg, fields)
 }
 
 // record the Highest priority message, and include a printstack to STDERR
-func (self *MzLogger) Critical(mtype, msg string, fields Fields) (err error) {
-	return self.Log(CRITICAL, mtype, msg, fields)
+func (self HekaLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	debug.PrintStack()
-    log.Fatal("Fatal condition encountered")
-    return errors.New("Critical Error")
+	return self.Log(CRITICAL, mtype, msg, fields)
 }
 
 // o4fs

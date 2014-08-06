@@ -1,8 +1,7 @@
 # following requires libmemcached
 github.com/ianoshen/gomc
+github.com/mozilla-services/heka/client
+github.com/mozilla-services/heka/message
 github.com/BurntSushi/toml
-github.com/cactus/go-statsd-client/statsd
+github.com/cactus/go-statsd-client
 code.google.com/p/goprotobuf
-code.google.com/p/go.net/websocket
-github.com/gorilla/mux
-github.com/coreos/go-etcd/etcd
