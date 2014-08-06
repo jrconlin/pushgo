@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -37,6 +38,7 @@ const (
 
 var (
 	errNextCastle = errors.New("Client not found")
+	mux           sync.Mutex
 )
 
 type Router struct {
@@ -58,6 +60,8 @@ type Router struct {
 
 // Get the servers from the etcd cluster
 func (self *Router) getServers() (reply []string, err error) {
+	mux.Lock()
+	defer mux.Unlock()
 	if time.Now().Sub(self.lastRefresh) < (time.Minute * 5) {
 		return self.serverList, nil
 	}
@@ -70,6 +74,7 @@ func (self *Router) getServers() (reply []string, err error) {
 		reply = append(reply, node.Value)
 	}
 	self.serverList = reply
+	self.lastRefresh = time.Now()
 	return self.serverList, nil
 }
 
@@ -168,7 +173,8 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 			go func(server, url, msg string) {
 				// do not optimize this. Request needs a fresh body per call.
 				body := strings.NewReader(msg)
-				if req, err := http.NewRequest("POST", url, body); err == nil {
+				cli := cli
+				if req, err := http.NewRequest("PUT", url, body); err == nil {
 					self.logger.Debug("router", "Sending request",
 						util.Fields{"server": server,
 							"url":  url,

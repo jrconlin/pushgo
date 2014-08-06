@@ -500,8 +500,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	var err error
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
-	// POST not PUT because PUT ignores body on send.
-	if req.Method != "POST" {
+	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		return
 	}
@@ -511,9 +510,6 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// We know of this one.
-	// Apparently, req.Body isn't populated unless you first call req.ContentLength.
-	// I have no idea why this may be, but am fairly certain that it doesn't help
-	// my lingering anger issues.
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		var chid string
@@ -526,13 +522,13 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 			self.logger.Error("router",
 				"Could not read update body",
 				util.Fields{"error": err.Error()})
-			http.Error(resp, "Invalid or missing body", http.StatusNotAcceptable)
+			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 			return
 		}
 		if v, ok := jdata["chid"]; !ok {
 			self.logger.Error("router",
 				"Missing chid", nil)
-			http.Error(resp, "Invalid or missing body", http.StatusNotAcceptable)
+			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 			return
 		} else {
 			chid = v.(string)
@@ -540,7 +536,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		if v, ok := jdata["time"]; !ok {
 			self.logger.Error("router",
 				"Missing time", nil)
-			http.Error(resp, "Invalid or missing body", http.StatusNotAcceptable)
+			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 			return
 		} else {
 			ts, err = time.Parse(time.RFC3339Nano, v.(string))
@@ -550,7 +546,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 						"uaid": uaid,
 						"chid": chid,
 						"time": v.(string)})
-				http.Error(resp, "Invalid or missing body", http.StatusNotAcceptable)
+				http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 				return
 			}
 		}
@@ -562,7 +558,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 			vers = int64(v.(float64))
 		}
 		pk, _ := storage.GenPK(uaid, chid)
-		err = self.storage.UpdateChannel(pk, vers)
+		// routed data is already in storage.
 		self.metrics.Increment("updates.routed.incoming")
 		err = GetServer().Update(chid,
 			uaid,
@@ -578,6 +574,8 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	} else {
 		self.logger.Warn("router", "Routed update contained no body",
 			util.Fields{"uaid": uaid})
+		http.Error(resp, "Missing body", http.StatusNotAcceptable)
+		return
 	}
 	http.Error(resp, "Ok", http.StatusOK)
 	return
