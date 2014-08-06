@@ -557,7 +557,6 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		} else {
 			vers = int64(v.(float64))
 		}
-		pk, _ := storage.GenPK(uaid, chid)
 		// routed data is already in storage.
 		self.metrics.Increment("updates.routed.incoming")
 		err = GetServer().Update(chid,
