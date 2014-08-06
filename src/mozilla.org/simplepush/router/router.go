@@ -23,7 +23,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
@@ -145,7 +144,7 @@ func (self *Router) send(cli *http.Client, req *http.Request, host string) (err 
 		self.logger.Debug("router", "Update Handled", util.Fields{"host": host})
 		return nil
 	} else {
-		self.logger.Debug("router", "Denied", util.Fields{"host": host, "rep": fmt.Sprintf("%v", resp)})
+		self.logger.Debug("router", "Denied", util.Fields{"host": host})
 		return errNextCastle
 	}
 	return err
@@ -191,11 +190,9 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 			Host:   server,
 			Uaid:   uaid,
 		}); err == nil {
-
 			go func(server, url, msg string) {
 				// do not optimize this. Request needs a fresh body per call.
 				body := strings.NewReader(msg)
-				cli := cli
 				if req, err := http.NewRequest("PUT", url, body); err == nil {
 					self.logger.Debug("router", "Sending request",
 						util.Fields{"server": server,
@@ -228,7 +225,6 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 func (self *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
 	var server string
 	serverList, err := self.getServers()
-	fmt.Printf("### route serverList: %v, %v\n", serverList, err)
 	if err != nil {
 		self.logger.Error("router", "Could not get server list",
 			util.Fields{"error": err.Error()})
@@ -334,11 +330,10 @@ func New(config *util.MzConfig,
 	// auto refresh slightly more often than the TTL
 	go func(self *Router, defaultTTL uint64) {
 		timeout := 0.75 * float64(defaultTTL)
+		tick := time.NewTicker(time.Second * time.Duration(timeout))
 		for {
-			select {
-			case <-time.After(time.Second * time.Duration(timeout)):
-				self.Register()
-			}
+			<-tick.C
+			self.Register()
 		}
 	}(self, defaultTTL)
 	self.Register()
