@@ -18,7 +18,7 @@ import (
 type PropPing struct {
 	connect util.JsMap
 	config  *util.MzConfig
-	logger  *util.HekaLogger
+	logger  *util.MzLogger
 	store   *storage.Storage
 	metrics *util.Metrics
 }
@@ -27,7 +27,7 @@ var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.HekaLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
+func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.MzLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
 
 	var err error
 	var c_js util.JsMap = make(util.JsMap)
@@ -68,7 +68,7 @@ func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *uti
 	}, nil
 }
 
-func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.HekaLogger) error {
+func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.MzLogger) error {
 	ttl, err := strconv.ParseInt(config.Get("gcm.ttl", config.Get("db.timeout_live", "259200")), 10, 0)
 	if err != nil {
 		ttl = 259200

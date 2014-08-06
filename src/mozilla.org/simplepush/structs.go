@@ -43,7 +43,7 @@ type PushWS struct {
 	Uaid    string          // id
 	Socket  *websocket.Conn // Remote connection
 	Storage *storage.Storage
-	Logger  *util.HekaLogger
+	Logger  *util.MzLogger
 	Metrics *util.Metrics
 	Born    time.Time
 }
