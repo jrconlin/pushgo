@@ -27,12 +27,12 @@ type Metrics struct {
 	dict   map[string]int64 // counters
 	timer  timer            // timers
 	prefix string           // prefix for
-	logger *HekaLogger
+	logger *MzLogger
 	statsd *statsd.Client
 	born   time.Time
 }
 
-func NewMetrics(prefix string, logger *HekaLogger, config *MzConfig) (self *Metrics) {
+func NewMetrics(prefix string, logger *MzLogger, config *MzConfig) (self *Metrics) {
 
 	var statsdc *statsd.Client
 	if server := config.Get("statsd.server", ""); server != "" {
