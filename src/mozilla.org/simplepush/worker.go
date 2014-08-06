@@ -27,7 +27,7 @@ var BadUAIDErr = errors.New("Bad UAID")
 //      these write back to the websocket.
 
 type Worker struct {
-	logger      *util.MzLogger
+	logger      *util.HekaLogger
 	state       int
 	filter      *regexp.Regexp
 	config      *util.MzConfig
@@ -53,7 +53,7 @@ const (
 // Allow [0-9a-z_-]/i as valid ChannelID characters.
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
 
-func NewWorker(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics) *Worker {
+func NewWorker(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics) *Worker {
 	var maxChannels int64
 	var pingInterval int64
 

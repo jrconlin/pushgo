@@ -6,7 +6,6 @@ package main
 
 import (
 	"code.google.com/p/go.net/websocket"
-	"github.com/gorilla/mux"
 	"mozilla.org/simplepush"
 	"mozilla.org/simplepush/router"
 	storage "mozilla.org/simplepush/storage/mcstorage"
@@ -23,6 +22,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 var (
@@ -31,22 +31,19 @@ var (
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,
 		"logging level (0=none,1=critical ... 10=verbose")
-	logger  *util.MzLogger
+	logger  *util.HekaLogger
 	metrics *util.Metrics
 	store   *storage.Storage
 	route   *router.Router
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "1.2"
+const VERSION = "1.1"
 
 // -- main
 func main() {
 	var certFile string
 	var keyFile string
-	var key []byte
-	var wsport string
-	var wshost string
 
 	flag.Parse()
 	config, err := util.ReadMzConfig(*configFile)
@@ -96,18 +93,16 @@ func main() {
 		config.Override("logger.enable", "1")
 		config.Override("logger.filter", strconv.FormatInt(int64(*logging), 10))
 	}
-	logger = util.NewMzLogger(config)
+	if config.GetFlag("logger.enable") {
+		logger = util.NewHekaLogger(config)
+		logger.Info("main", "Enabling full logger", nil)
+	}
 
 	metrics := util.NewMetrics(config.Get(
 		"metrics.prefix",
 		"simplepush"),
 		logger,
 		config)
-
-	// Currently, we're opting for a memcache "storage" mechanism, however
-	// and key/value store would suffice. (bonus points if the records are
-	// self expiring.)
-	store = storage.New(config, logger)
 
 	// Routing allows stand-alone instances to send updates between themselves.
 	// Websock does not allow for native redirects in some browsers. Routing
@@ -120,11 +115,23 @@ func main() {
 	// Since this is mostly point-to-point (we know the host location to send
 	// to), there wasn't much justification to add that complexity.
 	// Obviously, this can and will change over time.
-	route = router.New(config, logger, metrics, store, simplepush.ClientCollision)
-	if route == nil {
-		log.Fatal("No router")
+	route = &router.Router{
+		Port:    config.Get("shard.port", "3000"),
+		Logger:  logger,
+		Metrics: metrics,
 	}
+	defer func() {
+		if route != nil {
+			route.CloseAll()
+		}
+	}()
 
+	// Currently, we're opting for a memcache "storage" mechanism, however
+	// and key/value store would suffice. (bonus points if the records are
+	// self expiring.)
+	store = storage.New(config, logger)
+
+	var key []byte
 	token_str := config.Get("token_key", "")
 	if len(token_str) > 0 {
 		key, err = base64.URLEncoding.DecodeString(token_str)
@@ -138,9 +145,10 @@ func main() {
 	handlers := simplepush.NewHandler(config, logger, store, route, metrics, key)
 
 	// Config the server
-	RESTMux := mux.NewRouter()
-	WSMux := RESTMux
-	RouteMux := mux.NewRouter()
+	var wsport string
+	var wshost string
+	var WSMux *http.ServeMux = http.DefaultServeMux
+	var RESTMux *http.ServeMux = http.DefaultServeMux
 	host := config.Get("host", "localhost")
 	port := config.Get("port", "8080")
 
@@ -149,16 +157,14 @@ func main() {
 	if config.Get("wsport", port) != port {
 		wsport = config.Get("wsport", port)
 		wshost = config.Get("wshost", host)
-		WSMux = mux.NewRouter()
+		WSMux = http.NewServeMux()
 	}
 
-	RESTMux.HandleFunc("/update/{key}", handlers.UpdateHandler)
+	RESTMux.HandleFunc("/update/", handlers.UpdateHandler)
 	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
 	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
 	RESTMux.HandleFunc("/metrics/", handlers.MetricsHandler)
 	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
-
-	RouteMux.HandleFunc("/route/{uaid}", handlers.RouteHandler)
 
 	// Hoist the main sail.
 	if logger != nil {
@@ -184,21 +190,11 @@ func main() {
 			if logger != nil {
 				logger.Info("main", "Using TLS", nil)
 			}
-			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, RESTMux)
+			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, nil)
 		} else {
-			errChan <- http.ListenAndServe(addr, RESTMux)
+			errChan <- http.ListenAndServe(addr, nil)
 		}
 	}()
-
-	go func() {
-		addr := ":" + config.Get("shard.port", "3000")
-		if logger != nil {
-			logger.Info("main", "Starting Router", util.Fields{"port": addr})
-			// TODO: Need TLS?
-		}
-		errChan <- http.ListenAndServe(addr, RouteMux)
-	}()
-
 	// Oh, we have a different context for WebSockets. Weigh that anchor too!
 	if WSMux != RESTMux {
 		if logger != nil {
@@ -217,6 +213,7 @@ func main() {
 	}
 
 	// And we're underway!
+	go route.HandleUpdates(updater)
 
 	select {
 	case err := <-errChan:
@@ -226,10 +223,37 @@ func main() {
 	case <-sigChan:
 		if logger != nil {
 			logger.Info("main", "Recieved signal, shutting down.", nil)
-			route.Unregister()
 		}
+		route.CloseAll()
 		route = nil
 	}
+}
+
+// Handle a routed update.
+func updater(update *router.Update,
+	logger *util.HekaLogger,
+	metrics *util.Metrics) (err error) {
+	//log.Printf("UPDATE::: %s", update)
+	metrics.Increment("updates.routed.incoming")
+	pk, _ := storage.GenPK(update.Uaid, update.Chid)
+	err = store.UpdateChannel(pk, update.Vers)
+	if client, ok := simplepush.Clients[update.Uaid]; ok {
+		simplepush.Flush(client, update.Chid, int64(update.Vers))
+		duration := time.Now().Sub(update.Time).Nanoseconds()
+		if logger != nil {
+			logger.Info("timer", "Routed flush to client completed",
+				util.Fields{
+					"uaid":     update.Uaid,
+					"chid":     update.Chid,
+					"duration": strconv.FormatInt(duration, 10)})
+		} else {
+			log.Printf("Routed flush complete: %s", strconv.FormatInt(duration, 10))
+		}
+		if metrics != nil {
+			metrics.Timer("router.flush", duration)
+		}
+	}
+	return nil
 }
 
 // 04fs

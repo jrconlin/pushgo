@@ -1,319 +1,187 @@
-// HTTP version of the cross machine router
-// Fetch the servers from etcd, divvy them up into buckets,
-// proxy the update to the servers, stopping once you've gotten
-// a successful return.
-// PROS:
-//  Very simple to implement
-//  hosts can autoannounce
-//  no AWS dependencies
-// CONS:
-//  fair bit of cross traffic (try to minimize)
-
-// Obviously a PubSub would be better, but might require more server
-// state management (because of duplicate messages)
 package router
 
 import (
-	"github.com/coreos/go-etcd/etcd"
-	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
-
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"math/rand"
-	"net/http"
-	"strconv"
-	"strings"
+	"io"
+	"log"
+	"mozilla.org/util"
+	"net"
 	"sync"
-	"text/template"
 	"time"
 )
 
-const (
-	ETCD_DIR = "push_hosts/"
-)
-
 var (
-	errNextCastle = errors.New("Client not found")
-	mux           sync.Mutex
+	NL     []byte = []byte("\n")
+	EOL    []byte = []byte("\x04\n")
+	routes map[string]*Route
 )
 
 type Router struct {
-	config      *util.MzConfig
-	logger      *util.MzLogger
-	metrics     *util.Metrics
-	bucketSize  int64
-	template    *template.Template
-	timeout     time.Duration
-	defaultTTL  uint64
-	client      *etcd.Client
-	lastRefresh time.Time
-	serverList  []string
-	storage     *storage.Storage
-	collider    func(string) bool
-	host        string
-	scheme      string
+	Port   string
+	Logger *util.HekaLogger
+    Metrics *util.Metrics
 }
 
-// Get the servers from the etcd cluster
-func (self *Router) getServers() (reply []string, err error) {
-	mux.Lock()
-	defer mux.Unlock()
-	if time.Now().Sub(self.lastRefresh) < (time.Minute * 5) {
-		return self.serverList, nil
-	}
-	nodeList, err := self.client.Get(ETCD_DIR, false, false)
+type Route struct {
+	socket net.Conn
+}
+
+var MuRoutes sync.Mutex
+
+type Update struct {
+	Uaid string    `json:"uaid"`
+	Chid string    `json:"chid"`
+	Vers int64     `json:"vers"`
+	Time time.Time `json:"time"`
+}
+
+type Updater func(*Update, *util.HekaLogger, *util.Metrics) error
+
+func (self *Router) HandleUpdates(updater Updater) {
+	/* There appears to be a difference in how the connection is specified.
+	   "0.0.0.0:3000" creates a binding port that blocks any additional
+	   connections. ":3000", however, creates a multiplexing port that allows
+	   multiple connections. There are, however, complications. The remote
+	   port appears not to be able to see the remote connection terminate.
+	   Any future connection will succeed, but will not pass data.
+	   This is why I have the explicit "close command" in place while I sort
+	   out where the hell the bug is in the TCP handler layer.
+	*/
+	listener, err := net.Listen("tcp", ":"+self.Port)
 	if err != nil {
-		return self.serverList, err
-	}
-	reply = []string{}
-	for _, node := range nodeList.Node.Nodes {
-		reply = append(reply, node.Value)
-	}
-	self.serverList = reply
-	self.lastRefresh = time.Now()
-	return self.serverList, nil
-}
-
-func (self *Router) getBuckets(servers []string) (buckets [][]string) {
-	bucket := 0
-	counter := 0
-	buckets = make([][]string, (len(servers)/int(self.bucketSize))+1)
-	buckets[0] = make([]string, self.bucketSize)
-	for _, i := range rand.Perm(len(servers)) {
-		if counter >= int(self.bucketSize) {
-			bucket = bucket + 1
-			counter = 0
-			buckets[bucket] = make([]string, self.bucketSize)
-		}
-		buckets[bucket][counter] = servers[i]
-		counter++
-	}
-	return buckets
-}
-
-// register the server to the etcd cluster.
-func (self *Router) Register() (err error) {
-	if self.config.GetFlag("shard.use_aws_host") {
-		if self.host, err = util.GetAWSPublicHostname(); err != nil {
-			self.logger.Error("router", "Could not get AWS hostname. Using host",
-				util.Fields{"error": err.Error()})
-		}
-	}
-	if self.host == "" {
-		self.host = self.config.Get("host", "localhost")
-	}
-	port := self.config.Get("shard.port", "3000")
-	if port != "80" {
-		self.host = self.host + ":" + port
-	}
-	self.logger.Debug("router", "Registering host", util.Fields{"host": self.host})
-	// remember, paths are absolute.
-	_, err = self.client.Set(ETCD_DIR+self.host,
-		self.host,
-		self.defaultTTL)
-	if err != nil {
-		self.logger.Error("router",
-			"Failed to register",
-			util.Fields{"error": err.Error(),
-				"host": self.host})
-	}
-	return err
-}
-
-func (self *Router) Unregister() (err error) {
-	if self.host != "" {
-		_, err = self.client.Delete(self.host, false)
-	}
-	return err
-}
-
-func (self *Router) send(cli *http.Client, req *http.Request, host string) (err error) {
-	resp, err := cli.Do(req)
-	if err != nil {
-		self.logger.Error("router", "Router send failed", util.Fields{"error": err.Error()})
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 200 {
-		self.logger.Debug("router", "Update Handled", util.Fields{"host": host})
-		return nil
-	} else {
-		self.logger.Debug("router", "Denied", util.Fields{"host": host, "rep": fmt.Sprintf("%v", resp)})
-		return errNextCastle
-	}
-	return err
-}
-
-func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
-	self.logger.Debug("router", "Sending push...", util.Fields{"msg": string(msg),
-		"servers": strings.Join(serverList, ", ")})
-	cli := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{}}}
-	test := make(chan bool)
-	count := 0
-	// blast it out to all servers in the already randomized list.
-	for _, server := range serverList {
-		if server == self.host || server == "" {
-			continue
-		}
-		url := new(bytes.Buffer)
-		if err = self.template.Execute(url, struct {
-			Scheme string
-			Host   string
-			Uaid   string
-		}{
-			Scheme: self.scheme,
-			Host:   server,
-			Uaid:   uaid,
-		}); err == nil {
-
-			go func(server, url, msg string) {
-				// do not optimize this. Request needs a fresh body per call.
-				body := strings.NewReader(msg)
-				cli := cli
-				if req, err := http.NewRequest("PUT", url, body); err == nil {
-					self.logger.Debug("router", "Sending request",
-						util.Fields{"server": server,
-							"url":  url,
-							"body": msg})
-					req.Header.Add("Content-Type", "application/json")
-					if err = self.send(cli, req, server); err == nil {
-						self.logger.Debug("router", "Server accepted", util.Fields{"server": server})
-						test <- true
-						return
-					}
-				}
-				test <- false
-			}(server, url.String(), string(msg))
-			count = count + 1
+		if self.Logger != nil {
+			self.Logger.Critical("router",
+				"Could not open listener:"+err.Error(), nil)
 		} else {
-			self.logger.Error("router", "Could not build routing URL", util.Fields{"error": err.Error()})
-			return success, err
+			log.Printf("error listening %s", err.Error())
 		}
-	}
-	for i := 0; i < count; i++ {
-		if <-test {
-			self.logger.Info("router", "record found", nil)
-			success = true
-		}
-	}
-	return success, nil
-}
-
-func (self *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
-	var server string
-	serverList, err := self.getServers()
-	fmt.Printf("### route serverList: %v, %v\n", serverList, err)
-	if err != nil {
-		self.logger.Error("router", "Could not get server list",
-			util.Fields{"error": err.Error()})
-		return err
-	}
-	buckets := self.getBuckets(serverList)
-	msg, err := json.Marshal(util.JsMap{
-		"uaid":    uaid,
-		"chid":    chid,
-		"version": version,
-		"time":    timer.Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		self.logger.Error("router", "Could not compose routing message",
-			util.Fields{"error": err.Error()})
-		return err
-	}
-	for _, bucket := range buckets {
-		if success, err := self.bucketSend(uaid, msg, bucket); err != nil || success {
-			break
-		}
-	}
-	if err != nil {
-		self.logger.Error("router",
-			"Could not post to server",
-			util.Fields{"host": server, "error": err.Error()})
-	}
-	return err
-}
-
-func New(config *util.MzConfig,
-	logger *util.MzLogger,
-	metrics *util.Metrics,
-	storage *storage.Storage,
-	collider func(string) bool) (self *Router) {
-	template, err := template.New("Route").Parse(config.Get("shard.url_template",
-		"{{.Scheme}}://{{.Host}}/route/{{.Uaid}}"))
-	if err != nil {
-		logger.Critical("router", "Could not parse router template",
-			util.Fields{"error": err.Error()})
 		return
 	}
-	timeout, err := time.ParseDuration(config.Get("shard.timeout", "3s"))
-	if err != nil {
-		timeout, _ = time.ParseDuration("3s")
-	}
-	scheme := config.Get("shard.scheme", "http")
-	// default time for the server to be "live"
-	defaultTTLs := config.Get("shard.defaultTTL", "24h")
-	defaultTTLd, err := time.ParseDuration(defaultTTLs)
-	if err != nil {
-		logger.Critical("router",
-			"Could not parse router default TTL",
-			util.Fields{"value": defaultTTLs, "error": err.Error()})
-	}
-	defaultTTL := uint64(defaultTTLd.Seconds())
-	if defaultTTL < 2 {
-		logger.Critical("router",
-			"default TTL too short",
-			util.Fields{"value": defaultTTLs})
-	}
-	serverList := strings.Split(config.Get("shard.etcd_servers", "http://localhost:4001"), ",")
-	bucketSize, err := strconv.ParseInt(config.Get("shard.bucket_size", "10"), 10, 64)
-	if err != nil {
-		logger.Critical("router",
-			"invalid value specified for shard.etcd_servers",
-			util.Fields{"error": err.Error()})
-	}
-	logger.Debug("router",
-		"connecting to etcd servers",
-		util.Fields{"list": strings.Join(serverList, ";")})
-	client := etcd.NewClient(serverList)
-	// create the push hosts directory (if not already there)
-	_, err = client.CreateDir(ETCD_DIR, 0)
-	if err != nil {
-		if err.Error()[:3] != "105" {
-			logger.Error("router", "etcd createDir error", util.Fields{
-				"error": err.Error()})
-		}
-	}
+	log.Printf("Listening for updates on *:" + self.Port)
 
-	self = &Router{config: config,
-		logger:     logger,
-		metrics:    metrics,
-		template:   template,
-		client:     client,
-		defaultTTL: defaultTTL,
-		collider:   collider,
-		timeout:    timeout,
-		scheme:     scheme,
-		bucketSize: bucketSize,
-	}
-	if _, err = self.getServers(); err != nil {
-		logger.Critical("router", "Could not initialize server list",
-			util.Fields{"error": err.Error()})
-		return nil
-	}
-	// auto refresh slightly more often than the TTL
-	go func(self *Router, defaultTTL uint64) {
-		timeout := 0.75 * float64(defaultTTL)
-		for {
-			select {
-			case <-time.After(time.Second * time.Duration(timeout)):
-				self.Register()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if self.Logger != nil {
+				self.Logger.Critical("router",
+					"Could not accept connection:"+err.Error(), nil)
+			} else {
+				log.Printf("Could not accept listener:%s", err.Error())
 			}
 		}
-	}(self, defaultTTL)
-	self.Register()
-	return self
+		go self.doupdate(updater, conn)
+	}
+}
+
+// Perform the actual update
+func (self *Router) doupdate(updater Updater, conn net.Conn) (err error) {
+	buf := make([]byte, 1024)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF && n == 0 {
+				if self.Logger != nil {
+					self.Logger.Debug("router",
+						"Closing listener socket."+err.Error(), nil)
+				}
+				err = nil
+				break
+			}
+			break
+		}
+		//log.Printf("Updates::: " + string(buf[:n]))
+		update := Update{}
+		items := bytes.Split(buf[:n], NL)
+		for _, item := range items {
+			if bytes.Equal(item, EOL) {
+				conn.Close()
+				continue
+			}
+			//log.Printf("item ::: %s", item)
+			if len(item) == 0 {
+				continue
+			}
+			json.Unmarshal(item, &update)
+			if self.Logger != nil {
+				self.Logger.Debug("router",
+					fmt.Sprintf("Handling update %s", item), nil)
+			}
+			if len(update.Uaid) == 0 {
+				continue
+			}
+			// TODO group updates by UAID and send in batch
+			updater(&update, self.Logger, self.Metrics)
+		}
+	}
+	if err != nil {
+		if self.Logger != nil {
+			self.Logger.Error("updater", "Error: update: "+err.Error(), nil)
+		}
+	}
+	conn.Close()
+	return err
+}
+
+func (self *Router) SendUpdate(host, uaid, chid string, version int64, timer time.Time) (err error) {
+
+	var route *Route
+	var ok bool
+
+	if route, ok = routes[host]; !ok {
+		// create a new route
+		if self.Logger != nil {
+			self.Logger.Info("router", "Creating new route to "+host, nil)
+		}
+		conn, err := net.Dial("tcp", host+":"+self.Port)
+		if err != nil {
+			return err
+		}
+		if self.Logger != nil {
+			self.Logger.Info("router", "Creating new route to "+host, nil)
+		}
+		route = &Route{
+			socket: conn,
+		}
+		routes[host] = route
+	}
+
+	data, err := json.Marshal(Update{
+		Uaid: uaid,
+		Chid: chid,
+		Vers: version,
+		Time: timer})
+	if err != nil {
+		return err
+	}
+	if self.Logger != nil {
+		self.Logger.Debug("router", "Writing to host "+host, nil)
+	}
+	buf := bytes.NewBuffer(data)
+	buf.Write(NL)
+	_, err = route.socket.Write(buf.Bytes())
+	if err != nil {
+		if self.Logger != nil {
+			self.Logger.Error("router", "Closing socket to "+host, nil)
+			log.Printf("ERROR: %s", err.Error())
+		}
+		route.socket.Close()
+		delete(routes, host)
+	}
+	return err
+}
+
+// Shut down all connections by passing the End Of Line command
+// REALLY don't like this
+func (self *Router) CloseAll() {
+	for host, route := range routes {
+		log.Printf("TERMINATING connection to %s", host)
+		route.socket.Write(EOL)
+		route.socket.Close()
+	}
+}
+
+func init() {
+	routes = make(map[string]*Route)
 }

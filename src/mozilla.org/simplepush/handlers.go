@@ -6,7 +6,6 @@ package simplepush
 
 import (
 	"code.google.com/p/go.net/websocket"
-	"github.com/gorilla/mux"
 	"mozilla.org/simplepush/router"
 	"mozilla.org/simplepush/sperrors"
 	storage "mozilla.org/simplepush/storage/mcstorage"
@@ -91,7 +90,7 @@ func IStr(i interface{}) (reply string) {
 
 type Handler struct {
 	config          *util.MzConfig
-	logger          *util.MzLogger
+	logger          *util.HekaLogger
 	storage         *storage.Storage
 	router          *router.Router
 	metrics         *util.Metrics
@@ -100,7 +99,7 @@ type Handler struct {
 }
 
 func NewHandler(config *util.MzConfig,
-	logger *util.MzLogger,
+	logger *util.HekaLogger,
 	storage *storage.Storage,
 	router *router.Router,
 	metrics *util.Metrics,
@@ -220,7 +219,8 @@ func proxyNotification(proto, host, path string, vers int64) (err error) {
 func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	var err error
-	var version int64
+	var port string
+	var vers int64
 	var pping *PropPing
 
 	if ClientCount() > int(self.max_connections) {
@@ -259,25 +259,23 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	svers := req.FormValue("version")
 	if svers != "" {
-		version, err = strconv.ParseInt(svers, 10, 64)
-		if err != nil || version < 0 {
+		vers, err = strconv.ParseInt(svers, 10, 64)
+		if err != nil || vers < 0 {
 			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
 			self.metrics.Increment("updates.appserver.invalid")
 			return
 		}
 	} else {
-		version = time.Now().UTC().Unix()
+		vers = time.Now().UTC().Unix()
 	}
 
-	// elements := strings.Split(req.URL.Path, "/")
-	// pk := elements[len(elements)-1]
-	var pk string
-	pk, ok := mux.Vars(req)["key"]
+	elements := strings.Split(req.URL.Path, "/")
+	pk := elements[len(elements)-1]
 	// TODO:
 	// is there a magic flag for proxyable endpoints?
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
-	if !ok || len(pk) == 0 {
+	if len(pk) == 0 {
 		if self.logger != nil {
 			self.logger.Error("update", "No token, rejecting request",
 				util.Fields{"remoteAddr": req.RemoteAddr,
@@ -337,36 +335,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if chid == "" {
-		if self.logger != nil {
-			self.logger.Error("update",
-				"Incomplete primary key",
-				util.Fields{"uaid": uaid,
-					"channelID":  chid,
-					"remoteAddr": req.RemoteAddr})
-		}
-		self.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	// Is this ours or should we punt to a different server?
-	if !ClientCollision(uaid) {
-		// TODO: Move PropPing here? otherwise it's connected?
-		self.metrics.Increment("updates.routed.outgoing")
-		resp.Header().Set("Content-Type", "application/json")
-		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
-			resp.Write([]byte("{}"))
-		} else {
-			resp.Write([]byte("false"))
-		}
-		return
-	}
-
 	// is there a Proprietary Ping for this?
 	connect, err := self.storage.GetPropConnect(uaid)
+	fmt.Printf("### PropConnect: %+v\n", connect)
 	if err == nil && len(connect) > 0 {
 		fmt.Printf("### Connect %s\n", connect)
-		// TODO: store the prop ping?
 		pping, err = NewPropPing(connect,
 			uaid,
 			self.config,
@@ -381,13 +354,58 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	}
 
+	if chid == "" {
+		if self.logger != nil {
+			self.logger.Error("update",
+				"Incomplete primary key",
+				util.Fields{"uaid": uaid,
+					"channelID":  chid,
+					"remoteAddr": req.RemoteAddr})
+		}
+		self.metrics.Increment("updates.appserver.invalid")
+		return
+	}
+
 	// At this point we should have a valid endpoint in the URL
 	self.metrics.Increment("updates.appserver.incoming")
+
+	//log.Printf("<< %s.%s = %d", uaid, chid, vers)
+
+	port = self.config.Get("port", "80")
+	if port == "80" {
+		port = ""
+	}
+	if port != "" {
+		port = ":" + port
+	}
+	currentHost := self.config.Get("shard.current_host", "localhost")
+	host, err := self.storage.GetUAIDHost(uaid)
+	if err != nil {
+		if err == storage.UnknownUAIDError {
+			// try the proprietary ping
+			if pping != nil {
+				err = pping.Send(vers)
+				if err != nil {
+					resp.Header().Set("Content-Type", "application/json")
+					resp.Write([]byte("{}"))
+					self.metrics.Increment("updates.clients.proprietary")
+					return
+				}
+			}
+			if self.logger != nil {
+				self.logger.Error("update",
+					"Could not discover host for UAID",
+					util.Fields{"uaid": uaid,
+						"error": err.Error()})
+			}
+			host = self.config.Get("shard.defaultHost", "localhost")
+		}
+	}
 
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
 	if pping != nil && pping.CanBypassWebsocket() {
-		err = pping.Send(version)
+		err = pping.Send(vers)
 		if err != nil {
 			self.logger.Error("update",
 				"Could not force to proprietary ping",
@@ -399,6 +417,47 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			return
 		}
 	}
+
+	if self.config.GetFlag("shard.do_proxy") {
+		if host != currentHost && host != "localhost" {
+			if self.logger != nil {
+				self.logger.Info("update",
+					"Proxying request for UAID",
+					util.Fields{"uaid": uaid,
+						"destination": host + port})
+			}
+			// Use tcp routing.
+			if self.config.GetFlag("shard.router") {
+				// If there was an error routing the update, don't
+				// tell the AppServer. Chances are it's temporary, and
+				// the client will get the update on next refresh/reconnect
+				self.router.SendUpdate(host, uaid, chid, vers, timer)
+			} else {
+				proto := "http"
+				if len(self.config.Get("ssl.certfile", "")) > 0 {
+					proto = "https"
+				}
+
+				err = proxyNotification(proto, host+port, req.URL.Path, vers)
+				if err != nil && self.logger != nil {
+					self.logger.Error("update",
+						"Proxy failed", util.Fields{
+							"uaid":        uaid,
+							"destination": host + port,
+							"error":       err.Error()})
+				}
+			}
+			self.metrics.Increment("updates.routed.outgoing")
+			if err != nil {
+				http.Error(resp, err.Error(), 500)
+			} else {
+				resp.Header().Set("Content-Type", "application/json")
+				resp.Write([]byte("{}"))
+			}
+			return
+		}
+	}
+
 	if self.logger != nil {
 		defer func(uaid, chid, path string, timer time.Time, err error) {
 			self.logger.Info("dash", "Client Update complete",
@@ -413,16 +472,16 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			util.Fields{"uaid": uaid, "channelID": chid,
-				"version": strconv.FormatInt(version, 10)})
+				"version": strconv.FormatInt(vers, 10)})
 	}
-	err = self.storage.UpdateChannel(pk, version)
+	err = self.storage.UpdateChannel(pk, vers)
 
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update", "Cound not update channel",
 				util.Fields{"UAID": uaid,
 					"channelID": chid,
-					"version":   strconv.FormatInt(version, 10),
+					"version":   strconv.FormatInt(vers, 10),
 					"error":     err.Error()})
 		}
 		status, _ := sperrors.ErrToStatus(err)
@@ -436,7 +495,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	defer MuClient.Unlock()
 	MuClient.Lock()
 	if client, ok := Clients[uaid]; ok {
-		Flush(client, chid, int64(version))
+		Flush(client, chid, int64(vers))
 	}
 	return
 }
@@ -473,7 +532,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			"RemoteAddr": ws.Request().RemoteAddr,
 		})
 	}
-	defer func(logger *util.MzLogger) {
+	defer func(logger *util.HekaLogger) {
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			if logger != nil {
@@ -492,92 +551,6 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	if self.logger != nil {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}
-}
-
-// Boy Golly, sure would be nice to put this in router.go, huh?
-// well, thanks to go being picky about circular references, you can't.
-func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
-	var err error
-	// get the uaid from the url
-	uaid, ok := mux.Vars(req)["uaid"]
-	if req.Method != "PUT" {
-		http.Error(resp, "", http.StatusMethodNotAllowed)
-		return
-	}
-	// if uid is not present, or doesn't exist in the known clients...
-	if !ok || !ClientCollision(uaid) {
-		http.Error(resp, "UID Not Found", http.StatusNotFound)
-		return
-	}
-	// We know of this one.
-	if req.ContentLength > 0 {
-		defer req.Body.Close()
-		var chid string
-		var ts time.Time
-		var vers int64
-		decoder := json.NewDecoder(req.Body)
-		jdata := make(util.JsMap)
-		err = decoder.Decode(&jdata)
-		if err != nil {
-			self.logger.Error("router",
-				"Could not read update body",
-				util.Fields{"error": err.Error()})
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		}
-		if v, ok := jdata["chid"]; !ok {
-			self.logger.Error("router",
-				"Missing chid", nil)
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		} else {
-			chid = v.(string)
-		}
-		if v, ok := jdata["time"]; !ok {
-			self.logger.Error("router",
-				"Missing time", nil)
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		} else {
-			ts, err = time.Parse(time.RFC3339Nano, v.(string))
-			if err != nil {
-				self.logger.Error("router", "Could not parse time",
-					util.Fields{"error": err.Error(),
-						"uaid": uaid,
-						"chid": chid,
-						"time": v.(string)})
-				http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-				return
-			}
-		}
-		if v, ok := jdata["version"]; !ok {
-			self.logger.Warn("router",
-				"Missing version", nil)
-			vers = int64(time.Now().UTC().Unix())
-		} else {
-			vers = int64(v.(float64))
-		}
-		// routed data is already in storage.
-		self.metrics.Increment("updates.routed.incoming")
-		err = GetServer().Update(chid,
-			uaid,
-			vers,
-			ts)
-		if err != nil {
-			self.logger.Error("router",
-				"Could not update local user",
-				util.Fields{"error": err.Error()})
-			http.Error(resp, "Server Error", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		self.logger.Warn("router", "Routed update contained no body",
-			util.Fields{"uaid": uaid})
-		http.Error(resp, "Missing body", http.StatusNotAcceptable)
-		return
-	}
-	http.Error(resp, "Ok", http.StatusOK)
-	return
 }
 
 // o4fs

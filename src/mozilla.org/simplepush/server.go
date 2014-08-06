@@ -9,7 +9,6 @@ import (
 	"mozilla.org/util"
 
 	"encoding/json"
-	"errors"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -42,13 +41,13 @@ var serverSingleton *Serv
 
 type Serv struct {
 	config  *util.MzConfig
-	logger  *util.MzLogger
+	logger  *util.HekaLogger
 	metrics *util.Metrics
 	storage *storage.Storage
 	key     []byte
 }
 
-func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
+func NewServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
 	return &Serv{config: config,
 		key:     key,
 		logger:  logger,
@@ -57,7 +56,7 @@ func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metri
 	}
 }
 
-func InitServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
+func InitServer(config *util.MzConfig, logger *util.HekaLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
 	serverSingleton = NewServer(config, logger, metrics, storage, key)
 	return nil
 }
@@ -306,35 +305,6 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	return
 }
 
-func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
-    updateErr := errors.New("Update Error")
-    reason := "Unknown UID"
-    MuClient.Lock()
-    defer MuClient.Unlock()
-    if client, ok := Clients[uid]; ok {
-        reason = "Failed to generate PK"
-        if pk, err := storage.GenPK(uid, chid); err == nil {
-            reason = "Failed to update channel"
-            if err = self.storage.UpdateChannel(pk, vers); err == nil {
-                reason = "Failed to flush"
-                if err = Flush(client, chid, vers); err == nil {
-                    reason = ""
-                    return nil
-                }
-            }
-        }
-    }
-    if err == nil {
-        err = updateErr
-    }
-    self.logger.Error("server", reason ,
-        util.Fields{"error":err.Error(),
-            "UID": uid,
-            "CHID": chid,
-            })
-    return err
-}
-
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
 	var ret util.JsMap
 	if cmd.Arguments != nil {
@@ -379,10 +349,6 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
 	return serverSingleton.HandleCommand(cmd, sock)
-}
-
-func GetServer() *Serv {
-	return serverSingleton
 }
 
 func init() {
