@@ -2,7 +2,7 @@
 github.com/ianoshen/gomc
 github.com/BurntSushi/toml
 github.com/cactus/go-statsd-client/statsd
-code.google.com/p/goprotobuf
+code.google.com/p/goprotobuf/proto
 code.google.com/p/go.net/websocket
 github.com/gorilla/mux
 github.com/coreos/go-etcd/etcd
