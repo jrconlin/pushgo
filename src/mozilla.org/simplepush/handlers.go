@@ -498,6 +498,9 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 // well, thanks to go being picky about circular references, you can't.
 func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	var err error
+	var chid string
+	var ts time.Time
+	var vers int64
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
@@ -511,69 +514,65 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// We know of this one.
 	if req.ContentLength > 0 {
-		defer req.Body.Close()
-		var chid string
-		var ts time.Time
-		var vers int64
-		decoder := json.NewDecoder(req.Body)
-		jdata := make(util.JsMap)
-		err = decoder.Decode(&jdata)
-		if err != nil {
-			self.logger.Error("router",
-				"Could not read update body",
-				util.Fields{"error": err.Error()})
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		}
-		if v, ok := jdata["chid"]; !ok {
-			self.logger.Error("router",
-				"Missing chid", nil)
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		} else {
-			chid = v.(string)
-		}
-		if v, ok := jdata["time"]; !ok {
-			self.logger.Error("router",
-				"Missing time", nil)
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			return
-		} else {
-			ts, err = time.Parse(time.RFC3339Nano, v.(string))
-			if err != nil {
-				self.logger.Error("router", "Could not parse time",
-					util.Fields{"error": err.Error(),
-						"uaid": uaid,
-						"chid": chid,
-						"time": v.(string)})
-				http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-				return
-			}
-		}
-		if v, ok := jdata["version"]; !ok {
-			self.logger.Warn("router",
-				"Missing version", nil)
-			vers = int64(time.Now().UTC().Unix())
-		} else {
-			vers = int64(v.(float64))
-		}
-		// routed data is already in storage.
-		self.metrics.Increment("updates.routed.incoming")
-		err = GetServer().Update(chid,
-			uaid,
-			vers,
-			ts)
-		if err != nil {
-			self.logger.Error("router",
-				"Could not update local user",
-				util.Fields{"error": err.Error()})
-			http.Error(resp, "Server Error", http.StatusInternalServerError)
-			return
-		}
-	} else {
 		self.logger.Warn("router", "Routed update contained no body",
 			util.Fields{"uaid": uaid})
 		http.Error(resp, "Missing body", http.StatusNotAcceptable)
+		return
+	}
+	defer req.Body.Close()
+	decoder := json.NewDecoder(req.Body)
+	jdata := make(util.JsMap)
+	err = decoder.Decode(&jdata)
+	if err != nil {
+		self.logger.Error("router",
+			"Could not read update body",
+			util.Fields{"error": err.Error()})
+		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		return
+	}
+	if v, ok := jdata["chid"]; !ok {
+		self.logger.Error("router",
+			"Missing chid", nil)
+		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		return
+	} else {
+		chid = v.(string)
+	}
+	if v, ok := jdata["time"]; !ok {
+		self.logger.Error("router",
+			"Missing time", nil)
+		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		return
+	} else {
+		ts, err = time.Parse(time.RFC3339Nano, v.(string))
+		if err != nil {
+			self.logger.Error("router", "Could not parse time",
+				util.Fields{"error": err.Error(),
+					"uaid": uaid,
+					"chid": chid,
+					"time": v.(string)})
+			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+			return
+		}
+	}
+	if v, ok := jdata["version"]; !ok {
+		self.logger.Warn("router",
+			"Missing version", nil)
+		vers = int64(time.Now().UTC().Unix())
+	} else {
+		vers = int64(v.(float64))
+	}
+	// routed data is already in storage.
+	self.metrics.Increment("updates.routed.incoming")
+	err = GetServer().Update(chid,
+		uaid,
+		vers,
+		ts)
+	if err != nil {
+		self.logger.Error("router",
+			"Could not update local user",
+			util.Fields{"error": err.Error()})
+		http.Error(resp, "Server Error", http.StatusInternalServerError)
 		return
 	}
 	http.Error(resp, "Ok", http.StatusOK)
