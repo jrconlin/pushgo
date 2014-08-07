@@ -15,7 +15,6 @@ package router
 
 import (
 	"github.com/coreos/go-etcd/etcd"
-	//"github.com/gorilla/http"
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
@@ -167,7 +166,7 @@ func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c 
 func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
 	self.logger.Debug("router", "Sending push...", util.Fields{"msg": string(msg),
 		"servers": strings.Join(serverList, ", ")})
-	test := make(chan bool)
+	test := make(chan bool, 1)
 	// blast it out to all servers in the already randomized list.
 	for _, server := range serverList {
 		if server == self.host || server == "" {
@@ -208,7 +207,7 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 	case <-test:
 		success = true
 		break
-	case <-time.After(self.ctimeout + self.rwtimeout):
+	case <-time.After(self.ctimeout + self.rwtimeout + (1 * time.Second)):
 		success = false
 		break
 	}
