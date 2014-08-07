@@ -513,7 +513,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// We know of this one.
-	if req.ContentLength > 0 {
+	if req.ContentLength < 1 {
 		self.logger.Warn("router", "Routed update contained no body",
 			util.Fields{"uaid": uaid})
 		http.Error(resp, "Missing body", http.StatusNotAcceptable)

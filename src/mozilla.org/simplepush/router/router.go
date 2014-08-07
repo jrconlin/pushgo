@@ -22,8 +22,8 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,7 +47,8 @@ type Router struct {
 	metrics     *util.Metrics
 	bucketSize  int64
 	template    *template.Template
-	timeout     time.Duration
+	ctimeout    time.Duration
+	rwtimeout   time.Duration
 	defaultTTL  uint64
 	client      *etcd.Client
 	lastRefresh time.Time
@@ -56,6 +57,7 @@ type Router struct {
 	collider    func(string) bool
 	host        string
 	scheme      string
+	rclient     *http.Client
 }
 
 // Get the servers from the etcd cluster
@@ -142,18 +144,29 @@ func (self *Router) send(cli *http.Client, req *http.Request, host string) (err 
 		self.logger.Debug("router", "Update Handled", util.Fields{"host": host})
 		return nil
 	} else {
-		self.logger.Debug("router", "Denied", util.Fields{"host": host, "rep": fmt.Sprintf("%v", resp)})
+		self.logger.Debug("router", "Denied", util.Fields{"host": host})
 		return errNextCastle
 	}
 	return err
 }
 
+func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
+
+	return func(netw, addr string) (c net.Conn, err error) {
+		c, err = net.DialTimeout(netw, addr, cTimeout)
+		if err != nil {
+			return nil, err
+		}
+		// do we need this if ResponseHeaderTimeout is set?
+		c.SetDeadline(time.Now().Add(rwTimeout))
+		return c, nil
+	}
+}
+
 func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
 	self.logger.Debug("router", "Sending push...", util.Fields{"msg": string(msg),
 		"servers": strings.Join(serverList, ", ")})
-	cli := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{}}}
-	test := make(chan bool)
-	count := 0
+	test := make(chan bool, 1)
 	// blast it out to all servers in the already randomized list.
 	for _, server := range serverList {
 		if server == self.host || server == "" {
@@ -169,36 +182,34 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 			Host:   server,
 			Uaid:   uaid,
 		}); err == nil {
-
 			go func(server, url, msg string) {
 				// do not optimize this. Request needs a fresh body per call.
 				body := strings.NewReader(msg)
-				cli := cli
 				if req, err := http.NewRequest("PUT", url, body); err == nil {
 					self.logger.Debug("router", "Sending request",
 						util.Fields{"server": server,
 							"url":  url,
 							"body": msg})
 					req.Header.Add("Content-Type", "application/json")
-					if err = self.send(cli, req, server); err == nil {
+					if err = self.send(self.rclient, req, server); err == nil {
 						self.logger.Debug("router", "Server accepted", util.Fields{"server": server})
 						test <- true
 						return
 					}
 				}
-				test <- false
 			}(server, url.String(), string(msg))
-			count = count + 1
 		} else {
 			self.logger.Error("router", "Could not build routing URL", util.Fields{"error": err.Error()})
 			return success, err
 		}
 	}
-	for i := 0; i < count; i++ {
-		if <-test {
-			self.logger.Info("router", "record found", nil)
-			success = true
-		}
+	select {
+	case <-test:
+		success = true
+		break
+	case <-time.After(self.ctimeout + self.rwtimeout + (1 * time.Second)):
+		success = false
+		break
 	}
 	return success, nil
 }
@@ -206,7 +217,6 @@ func (self *Router) bucketSend(uaid string, msg []byte, serverList []string) (su
 func (self *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
 	var server string
 	serverList, err := self.getServers()
-	fmt.Printf("### route serverList: %v, %v\n", serverList, err)
 	if err != nil {
 		self.logger.Error("router", "Could not get server list",
 			util.Fields{"error": err.Error()})
@@ -249,9 +259,13 @@ func New(config *util.MzConfig,
 			util.Fields{"error": err.Error()})
 		return
 	}
-	timeout, err := time.ParseDuration(config.Get("shard.timeout", "3s"))
+	ctimeout, err := time.ParseDuration(config.Get("shard.ctimeout", "3s"))
 	if err != nil {
-		timeout, _ = time.ParseDuration("3s")
+		ctimeout, _ = time.ParseDuration("3s")
+	}
+	rwtimeout, err := time.ParseDuration(config.Get("shard.rwtimeout", "3s"))
+	if err != nil {
+		rwtimeout, _ = time.ParseDuration("3s")
 	}
 	scheme := config.Get("shard.scheme", "http")
 	// default time for the server to be "live"
@@ -287,6 +301,13 @@ func New(config *util.MzConfig,
 				"error": err.Error()})
 		}
 	}
+	rclient := &http.Client{
+		Transport: &http.Transport{
+			Dial: TimeoutDialer(ctimeout, rwtimeout),
+			ResponseHeaderTimeout: rwtimeout,
+			TLSClientConfig:       &tls.Config{},
+		},
+	}
 
 	self = &Router{config: config,
 		logger:     logger,
@@ -295,9 +316,11 @@ func New(config *util.MzConfig,
 		client:     client,
 		defaultTTL: defaultTTL,
 		collider:   collider,
-		timeout:    timeout,
+		ctimeout:   ctimeout,
+		rwtimeout:  rwtimeout,
 		scheme:     scheme,
 		bucketSize: bucketSize,
+		rclient:    rclient,
 	}
 	if _, err = self.getServers(); err != nil {
 		logger.Critical("router", "Could not initialize server list",
@@ -307,11 +330,10 @@ func New(config *util.MzConfig,
 	// auto refresh slightly more often than the TTL
 	go func(self *Router, defaultTTL uint64) {
 		timeout := 0.75 * float64(defaultTTL)
+		tick := time.NewTicker(time.Second * time.Duration(timeout))
 		for {
-			select {
-			case <-time.After(time.Second * time.Duration(timeout)):
-				self.Register()
-			}
+			<-tick.C
+			self.Register()
 		}
 	}(self, defaultTTL)
 	self.Register()
