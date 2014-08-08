@@ -32,28 +32,6 @@ var (
 	toomany int32 = 0
 )
 
-func awsGetPublicHostname() (hostname string, err error) {
-	req := &http.Request{Method: "GET",
-		URL: &url.URL{
-			Scheme: "http",
-			Host:   "169.254.169.254",
-			Path:   "/latest/meta-data/public-hostname"}}
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		var hostBytes []byte
-		hostBytes, err = ioutil.ReadAll(resp.Body)
-		if err == nil {
-			hostname = string(hostBytes)
-		}
-		return
-	}
-	return
-}
-
 func FixConfig(config *util.MzConfig) *util.MzConfig {
 	currentHost := "localhost"
 	if config.GetFlag("shard.use_aws_host") {
