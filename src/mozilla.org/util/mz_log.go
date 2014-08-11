@@ -5,7 +5,7 @@
 package util
 
 import (
-    "errors"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -52,7 +52,8 @@ func NewMzLogger(conf *MzConfig) *MzLogger {
 	conf.SetDefaultFlag("heka.show_caller", false)
 	conf.SetDefault("logger.filter", "10")
 	filter, _ = strconv.ParseInt(conf.Get("logger.filter", "10"), 0, 0)
-	return &MzLogger{logname: logname,
+	return &MzLogger{
+		logname:  logname,
 		pid:      pid,
 		hostname: conf.Get("heka.current_host", dhost),
 		conf:     conf,
@@ -123,8 +124,8 @@ func (self *MzLogger) Error(mtype, msg string, fields Fields) (err error) {
 func (self *MzLogger) Critical(mtype, msg string, fields Fields) (err error) {
 	return self.Log(CRITICAL, mtype, msg, fields)
 	debug.PrintStack()
-    log.Fatal("Fatal condition encountered")
-    return errors.New("Critical Error")
+	log.Fatal("Fatal condition encountered")
+	return errors.New("Critical Error")
 }
 
 // o4fs
