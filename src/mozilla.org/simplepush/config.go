@@ -56,11 +56,13 @@ func LoadConfigStruct(config toml.Primitive, configable interface{}) (
 
 // Basic global server options
 type ServerConfig struct {
-	host           string
-	port           int
-	maxConnections int
-	sslCertFile    string `toml:"ssl_cert_file"`
-	sslKeyFile     string `toml:"ssl_key_file"`
-	pushEndpoint   string `toml:"push_endpoint"`
-	pushLongPongs  int    `toml:"push_long_ponts"`
+	host               string
+	port               int
+	maxConnections     int    `toml:"max_connections"`
+	sslCertFile        string `toml:"ssl_cert_file"`
+	sslKeyFile         string `toml:"ssl_key_file"`
+	pushEndpoint       string `toml:"push_endpoint"`
+	pushLongPongs      int    `toml:"push_long_ponts"`
+	clientMinPing      string `toml:"client_min_ping"`
+	clientHelloTimeout string `toml:"client_hello_timeout"`
 }
