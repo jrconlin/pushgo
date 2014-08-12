@@ -369,9 +369,6 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// blocking call back to the boss.
 	raw_result, args := HandleServerCommand(cmd, sock)
 	result := PushCommand{raw_result, args}
-	if err = sock.Storage.SetUAIDHost(sock.Uaid, ""); err != nil {
-		return err
-	}
 
 	if self.logger != nil {
 		self.logger.Debug("worker", "sending response",

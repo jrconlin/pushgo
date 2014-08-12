@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package mcstorage
+package simplepush
 
 // thin memcache wrapper
 
@@ -47,16 +47,6 @@ var (
 		"\x0c", "",
 		"\x0d", "")
 )
-
-type Storage struct {
-	config     *util.MzConfig
-	mcs        chan gomc.Client
-	logger     *util.MzLogger
-	mc_timeout time.Duration
-	poolSize   int64
-	timeouts   map[string]int64
-	servers    []string
-}
 
 var mcsPoolSize int32
 
@@ -254,99 +244,125 @@ func keydecode(key string) []byte {
 	return ret
 }
 
-func New(config *util.MzConfig, logger *util.MzLogger) *Storage {
-	var err error
+type MemcacheConf struct {
+	recvTimeout  string `toml:"recv_timeout"`
+	sendTimeout  string `toml:"send_timeout"`
+	pollTimeout  string `toml:"poll_timeout"`
+	retryTimeout string `toml:"retry_timeout"`
+	poolSize     int    `toml:"pool_size"`
+	server       []string
+}
 
-	if configEndpoint := config.Get("elasticache.config_endpoint", ""); len(configEndpoint) > 0 {
-		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(configEndpoint, 2)
-		if err == nil {
-			config.SetDefault("memcache.server", memcacheEndpoint)
-		} else {
-			fmt.Println(err)
-			if logger != nil {
-				logger.Error("storage", "Elastisearch error.",
-					LogFields{"error": err.Error()})
-			}
-		}
-	} else {
-		config.SetDefault("memcache.server", "127.0.0.1:11211")
-	}
+type DbConf struct {
+	timeoutLive   int64  `toml:"timeout_live"`
+	timeoutReg    int64  `toml:"timeout_reg"`
+	timeoutDel    int64  `toml:"timeout_del"`
+	handleTimeout string `toml:"handle_time"`
+	propPrefix    string `toml:"prop_prefix"`
+}
 
-	timeout, err := time.ParseDuration(config.Get("db.handle_timeout", "5s"))
-	if err != nil {
-		if logger != nil {
-			logger.Error("storage", "Could not parse db.handle_timeout",
-				LogFields{"err": err.Error()})
-		}
-		timeout = 10 * time.Second
-	}
-	poolSize, err := strconv.ParseInt(config.Get("memcache.pool_size", "100"), 10, 64)
-	if err != nil {
-		if logger != nil {
-			logger.Warn("storage", "Could not parse memcache.pools_size, using 100",
-				LogFields{"error": err.Error()})
-		}
-		poolSize = 100
-	}
-	timeouts := make(map[string]int64)
-	if timeouts["live"], err = strconv.ParseInt(config.SetDefault("db.timeout_live", "259200"), 10, 64); err != nil {
-		timeouts["live"] = 259200
-	}
-	if timeouts["reg"], err = strconv.ParseInt(config.SetDefault("db.timeout_reg", "10800"), 10, 64); err != nil {
-		timeouts["reg"] = 10800
-	}
-	if timeouts["del"], err = strconv.ParseInt(config.SetDefault("db.timeout_del", "86400"), 10, 64); err != nil {
-		timeouts["del"] = 86400
-	}
-	config.SetDefault("shard.default_host", "localhost")
-	config.SetDefault("shard.current_host", config.Get("shard.default_host", "localhost"))
-	config.SetDefault("shard.prefix", "_h-")
-	config.SetDefault("db.prop_prefix", "_pc-")
-	/*
-		i, err := strconv.ParseInt(config.Get("memcache.max_pool_size", "400"), 0, 10)
-		if err != nil {
-			if logger != nil {
-				logger.Error("storage", "Could not parse memcache.max_pool_size",
-					LogFields{"error": err.Error()})
-			}
-			mcsMaxPoolSize = 400
-		}
-		mcsMaxPoolSize = int32(i)
-	*/
+type StorageConf struct {
+	elasticacheConfigEndpoint string `toml:"elasticache_config_endpoint"`
+	memcache                  MemcacheConf
+	db                        DbConf
+}
 
-	if logger != nil {
-		logger.Info("storage", "Creating new gomc handler", nil)
-	}
-	// do NOT include any spaces
-	servers := strings.Split(
-		no_whitespace.Replace(config.Get("memcache.server", "")),
-		",")
+type Storage struct {
+	mcs        chan gomc.Client
+	logger     *SimpleLogger
+	mc_timeout time.Duration
+	poolSize   int64
+	timeouts   map[string]int64
+	servers    []string
+	propPrefix string
+}
 
-	mcs := make(chan gomc.Client, poolSize)
-	for i := int64(0); i < poolSize; i++ {
-		mcs <- newMC(servers, config, logger)
-	}
-
-	return &Storage{
-		mcs:        mcs,
-		config:     config,
-		logger:     logger,
-		mc_timeout: timeout,
-		poolSize:   poolSize,
-		servers:    servers,
-		timeouts:   timeouts,
+func (self *Storage) ConfigStruct() interface{} {
+	return &StorageConf{
+		memcache: &MemcacheConf{
+			recvTimeout:  "1s",
+			sendTimeout:  "1s",
+			pollTimeout:  "1s",
+			retryTimeout: "1s",
+			poolSize:     100,
+			server:       []string{"127.0.0.1:11211"},
+		},
+		db: &DbConf{
+			timeoutLive:   259200,
+			timeoutReg:    10800,
+			timeoutDel:    86400,
+			handleTimeout: "5s",
+			propPrefix:    "_pc-",
+		},
 	}
 }
 
+func parseDuration(val, fieldName string, logger *SimpleLogger) (t time.Duration) {
+	t, err = time.ParseDuration(val)
+	if err != nil {
+		logger.Error("storage", fmt.Sprintf("Could not parse %s", fieldName),
+			LogFields{"error": err.Error()})
+	}
+}
+
+func (self *Storage) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*StorageConf)
+	self.logger = app.Logger()
+
+	if conf.elasticacheConfigEndpoint != "" {
+		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.elasticacheConfigEndpoint, 2)
+		if err == nil {
+			// do NOT include any spaces
+			self.servers = strings.Split(
+				no_whitespace.Replace(config.Get("memcache.server", "")),
+				",")
+		} else {
+			self.logger.Error("storage", "Elastisearch error.",
+				LogFields{"error": err.Error()})
+		}
+	} else {
+		self.servers = conf.memcache.server
+	}
+
+	self.mc_timeout = parseDuration(conf.db.handleTimeout, "storage.db.handle_timeout", self.logger)
+	if self.mc_timeout == nil {
+		self.mc_timeout = 10 * time.Second
+	}
+	self.poolSize = conf.memcache.poolSize
+	self.propPrefix = conf.db.propPrefix
+
+	timeouts := make(map[string]int64)
+	timeouts["live"] = conf.db.timeoutLive
+	timeouts["reg"] = conf.db.timeoutReg
+	timeouts["del"] = conf.db.timeoutDel
+	timeouts["mc_recv_timeout"] = parseDuration(conf.memcache.recvTimeout,
+		"storage.memcache.recv_timeout", self.logger).Nanoseconds() * 1000
+	timeouts["mc_send_timeout"] = parseDuration(conf.memcache.sendTimeout,
+		"storage.memcache.send_timeout", self.logger).Nanoseconds() * 1000
+	timeouts["mc_poll_timeout"] = parseDuration(conf.memcache.pollTimeout,
+		"storage.memcache.poll_timeout", self.logger).Nanoseconds() * 1000
+	timeouts["mc_retry_timeout"] = parseDuration(conf.memcache.retryTimeout,
+		"storage.memcache.retry_timeout", self.logger).Nanoseconds() * 1000
+	self.timeouts = timeouts
+
+	logger.Info("storage", "Creating new gomc handler", nil)
+
+	mcs := make(chan gomc.Client, poolSize)
+	for i := int64(0); i < poolSize; i++ {
+		mcs <- self.newMC()
+	}
+
+	return
+}
+
 // Generate a new Memcache Client
-func newMC(servers []string, config *util.MzConfig, logger *util.MzLogger) (mc gomc.Client) {
+func (self *Storage) newMC() (mc gomc.Client) {
 	var err error
 	/*	if mcsPoolSize >= mcsMaxPoolSize {
 			return nil
 		}
 	*/
-	mc, err = gomc.NewClient(servers, 1, gomc.ENCODING_GOB)
-	if err != nil {
+	if mc, err = gomc.NewClient(self.servers, 1, gomc.ENCODING_GOB); err != nil {
 		logger.Critical("storage", "CRITICAL HIT!",
 			LogFields{"error": err.Error()})
 	}
@@ -358,34 +374,13 @@ func newMC(servers []string, config *util.MzConfig, logger *util.MzLogger) (mc g
 	//mc.SetBehavior(gomc.BEHAVIOR_NO_BLOCK, 1)
 	// NOTE! do NOT set BEHAVIOR_NOREPLY + Binary. This will cause
 	// libmemcache to drop into an infinite loop.
-	if v := config.Get("memcache.recv_timeout", ""); len(v) > 0 {
-		d, err := time.ParseDuration(v)
-		if err == nil {
-			mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT,
-				uint64(d.Nanoseconds()*1000))
-		}
+	mc_timeout := func(s string) uint64 {
+		return uint64(self.timeouts["mc_"+s+"_timeout"])
 	}
-	if v := config.Get("memcache.send_timeout", ""); len(v) > 0 {
-		d, err := time.ParseDuration(v)
-		if err == nil {
-			mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT,
-				uint64(d.Nanoseconds()*1000))
-		}
-	}
-	if v := config.Get("memcache.poll_timeout", ""); len(v) > 0 {
-		d, err := time.ParseDuration(v)
-		if err == nil {
-			mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT,
-				uint64(d.Nanoseconds()*1000))
-		}
-	}
-	if v := config.Get("memcache.retry_timeout", ""); len(v) > 0 {
-		d, err := time.ParseDuration(v)
-		if err == nil {
-			mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT,
-				uint64(d.Nanoseconds()*1000))
-		}
-	}
+	mc.SetBehavior(gomc.BEHAVIOR_SND_TIMEOUT, mc_timeout("send"))
+	mc.SetBehavior(gomc.BEHAVIOR_RCV_TIMEOUT, mc_timeout("recv"))
+	mc.SetBehavior(gomc.BEHAVIOR_POLL_TIMEOUT, mc_timeout("poll"))
+	mc.SetBehavior(gomc.BEHAVIOR_RETRY_TIMEOUT, mc_timeout("retry"))
 	atomic.AddInt32(&mcsPoolSize, 1)
 	return mc
 }
@@ -407,10 +402,8 @@ func (self *Storage) isFatal(err error) bool {
 	case nil:
 		return false
 	default:
-		if self.logger != nil {
-			self.logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
-				LogFields{"error": err.Error()})
-		}
+		self.logger.Critical("storage", "CRITICAL HIT! RESTARTING!",
+			LogFields{"error": err.Error()})
 		return true
 	}
 }
@@ -426,12 +419,10 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 	defer func() {
 		if err := recover(); err != nil {
 			self.isFatal(err.(error))
-			if self.logger != nil {
-				self.logger.Error("storage",
-					fmt.Sprintf("could not fetch record for %s", pk),
-					LogFields{"primarykey": keycode(pk),
-						"error": err.(error).Error()})
-			}
+			self.logger.Error("storage",
+				fmt.Sprintf("could not fetch record for %s", pk),
+				LogFields{"primarykey": keycode(pk),
+					"error": err.(error).Error()})
 		}
 	}()
 
@@ -447,16 +438,14 @@ func (self *Storage) fetchRec(pk []byte) (result *cr, err error) {
 	}
 	if err != nil {
 		self.isFatal(err)
-		if self.logger != nil {
-			self.logger.Error("storage",
-				"Get Failed",
-				LogFields{"primarykey": hex.EncodeToString(pk),
-					"error": err.Error()})
-		}
+		self.logger.Error("storage",
+			"Get Failed",
+			LogFields{"primarykey": hex.EncodeToString(pk),
+				"error": err.Error()})
 		return nil, err
 	}
 
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("storage",
 			"Fetched",
 			LogFields{"primarykey": hex.EncodeToString(pk),
@@ -541,12 +530,10 @@ func (self *Storage) storeRec(pk []byte, rec *cr) (err error) {
 	err = mc.Set(keycode(pk), rec, time.Duration(ttl)*time.Second)
 	if err != nil {
 		self.isFatal(err)
-		if self.logger != nil {
-			self.logger.Error("storage",
-				"Failure to set item",
-				LogFields{"primarykey": keycode(pk),
-					"error": err.Error()})
-		}
+		self.logger.Error("storage",
+			"Failure to set item",
+			LogFields{"primarykey": keycode(pk),
+				"error": err.Error()})
 	}
 	return err
 }
@@ -581,17 +568,15 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 	cRec, err = self.fetchRec(pk)
 
 	if err != nil && err.Error() != "NOT FOUND" {
-		if self.logger != nil {
-			self.logger.Error("storage",
-				"fetchRec error",
-				LogFields{"primarykey": pks,
-					"error": err.Error()})
-		}
+		self.logger.Error("storage",
+			"fetchRec error",
+			LogFields{"primarykey": pks,
+				"error": err.Error()})
 		return err
 	}
 
 	if cRec != nil {
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("storage",
 				"Replacing record",
 				LogFields{"primarykey": pks})
@@ -609,7 +594,7 @@ func (self *Storage) binUpdateChannel(pk []byte, vers int64) (err error) {
 		}
 	}
 	// No record found or the record setting was DELETED
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("storage",
 			"Registering channel",
 			LogFields{"uaid": suaid,
@@ -696,12 +681,10 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 				err = self.storeRec(pk, rec)
 				break
 			} else {
-				if self.logger != nil {
-					self.logger.Error("storage",
-						"Could not delete Channel",
-						LogFields{"primarykey": hex.EncodeToString(pk),
-							"error": err.Error()})
-				}
+				self.logger.Error("storage",
+					"Could not delete Channel",
+					LogFields{"primarykey": hex.EncodeToString(pk),
+						"error": err.Error()})
 			}
 		}
 	} else {
@@ -711,7 +694,7 @@ func (self *Storage) DeleteAppID(suaid, schid string, clearOnly bool) (err error
 }
 
 func (self *Storage) IsKnownUaid(suaid string) bool {
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("storage", "IsKnownUaid", LogFields{"uaid": suaid})
 	}
 	_, err := self.fetchAppIDArray(cleanID(suaid))
@@ -734,7 +717,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		pk, _ := binGenPK(uaid, chid)
 		items = append(items, keycode(pk))
 	}
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("storage",
 			"Fetching items",
 			LogFields{"uaid": keycode(uaid),
@@ -795,7 +778,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		uaid, chid, err := binResolvePK(keydecode(key))
 		suaid := hex.EncodeToString(uaid)
 		schid := hex.EncodeToString(chid)
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("storage",
 				"GetUpdates Fetched record ",
 				LogFields{"uaid": suaid,
@@ -806,7 +789,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			return nil, err
 		}
 		if val.L < lastAccessed {
-			if self.logger != nil {
+			if self.logger.ShouldLog(DEBUG) {
 				self.logger.Debug("storage", "Skipping record...",
 					LogFields{"uaid": suaid, "chid": schid})
 			}
@@ -829,20 +812,16 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 			newRec["version"] = vers
 			updates = append(updates, newRec)
 		case DELETED:
-			if self.logger != nil {
-				self.logger.Info("storage",
-					"GetUpdates Deleting record",
-					LogFields{"uaid": suaid, "chid": schid})
-			}
+			self.logger.Info("storage",
+				"GetUpdates Deleting record",
+				LogFields{"uaid": suaid, "chid": schid})
 			expired = append(expired, schid)
 		case REGISTERED:
 			// Item registered, but not yet active. Ignore it.
 		default:
-			if self.logger != nil {
-				self.logger.Warn("storage",
-					"Unknown state",
-					LogFields{"uaid": suaid, "chid": schid})
-			}
+			self.logger.Warn("storage",
+				"Unknown state",
+				LogFields{"uaid": suaid, "chid": schid})
 		}
 
 	}
@@ -909,88 +888,6 @@ func (self *Storage) ReloadData(uaid string, updates []string) (err error) {
 	return nil
 }
 
-func (self *Storage) SetUAIDHost(uaid, host string) (err error) {
-	if host == "" {
-		host = self.config.Get("shard.current_host", "")
-	}
-	prefix := self.config.Get("shard.prefix", "")
-
-	if uaid == "" {
-		return sperrors.MissingDataError
-	}
-
-	if self.logger != nil {
-		self.logger.Debug("storage",
-			"SetUAIDHost",
-			LogFields{"uaid": uaid, "host": host})
-	}
-	ttl := self.timeouts["live"]
-	mc, err := self.getMC()
-	defer self.returnMC(mc)
-	if err != nil {
-		return err
-	}
-	err = mc.Set(prefix+uaid, host, time.Duration(ttl)*time.Second)
-	if err != nil {
-		if strings.Contains("NOT FOUND", err.Error()) {
-			err = nil
-		}
-	}
-	self.isFatal(err)
-	return err
-}
-
-func (self *Storage) GetUAIDHost(uaid string) (host string, err error) {
-	defaultHost := self.config.Get("shard.default_host", "")
-	prefix := self.config.Get("shard.prefix", "")
-
-	defer func(defaultHost string) {
-		if err := recover(); err != nil {
-			if self.logger != nil {
-				self.logger.Error("storage",
-					"GetUAIDHost no host",
-					LogFields{"uaid": uaid,
-						"error": err.(error).Error()})
-			}
-		}
-	}(defaultHost)
-
-	mc, err := self.getMC()
-	defer self.returnMC(mc)
-	if err != nil {
-		return defaultHost, err
-	}
-	var val string
-	err = mc.Get(prefix+uaid, &val)
-	if err != nil {
-		if err != errors.New("NOT FOUND") {
-			self.isFatal(err)
-			if self.logger != nil {
-				self.logger.Error("storage",
-					"GetUAIDHost Fetch error",
-					LogFields{"uaid": uaid,
-						"item":  val,
-						"error": err.Error()})
-			}
-			return defaultHost, err
-		} else {
-			return defaultHost, UnknownUAIDError
-		}
-	}
-	if val == "" {
-		val = defaultHost
-	}
-	if self.logger != nil {
-		self.logger.Debug("storage",
-			"GetUAIDHost",
-			LogFields{"uaid": uaid,
-				"host": val})
-	}
-	// reinforce the link.
-	self.SetUAIDHost(uaid, val)
-	return string(val), nil
-}
-
 func (self *Storage) PurgeUAID(suaid string) (err error) {
 	uaid := cleanID(suaid)
 	appIDArray, err := self.fetchAppIDArray(uaid)
@@ -1006,24 +903,7 @@ func (self *Storage) PurgeUAID(suaid string) (err error) {
 		}
 	}
 	err = mc.Delete(keycode(uaid), time.Duration(0))
-	self.DelUAIDHost(suaid)
 	return nil
-}
-
-func (self *Storage) DelUAIDHost(uaid string) (err error) {
-	prefix := self.config.Get("shard.prefix", "")
-	mc, err := self.getMC()
-	defer self.returnMC(mc)
-	if err != nil {
-		return err
-	}
-	//mc.Timeout = time.Second * 10
-	err = mc.Delete(prefix+uaid, time.Duration(0))
-	if err != nil && strings.Contains("NOT FOUND", err.Error()) {
-		err = nil
-	}
-	self.isFatal(err)
-	return err
 }
 
 func (self *Storage) Status() (success bool, err error) {
@@ -1098,7 +978,7 @@ func (self *Storage) getMC() (gomc.Client, error) {
 }
 
 func (self *Storage) GetPropConnect(uaid string) (connect string, err error) {
-	prefix := self.config.Get("db.prop_prefix", "")
+	prefix := self.propPrefix
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -1109,7 +989,7 @@ func (self *Storage) GetPropConnect(uaid string) (connect string, err error) {
 }
 
 func (self *Storage) SetPropConnect(uaid, connect string) (err error) {
-	prefix := self.config.Get("db.prop_prefix", "")
+	prefix := self.propPrefix
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	if err != nil {
@@ -1119,7 +999,7 @@ func (self *Storage) SetPropConnect(uaid, connect string) (err error) {
 }
 
 func (self *Storage) clearPropConnect(uaid string) (err error) {
-	prefix := self.config.Get("db.prop_prefix", "")
+	prefix := self.propPrefix
 	mc, err := self.getMC()
 	defer self.returnMC(mc)
 	return mc.Delete(prefix+uaid, time.Duration(0))
