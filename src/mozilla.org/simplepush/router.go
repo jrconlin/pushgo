@@ -58,13 +58,13 @@ type Router struct {
 }
 
 type RouterConfig struct {
-    urlTemplate string `toml:"url_template"`
-    ctimeout string
-    rwtimeout string
-    scheme string
-    defaultTTL string
-    etcd_servers []string
-    bucket_size int
+	urlTemplate  string `toml:"url_template"`
+	ctimeout     string
+	rwtimeout    string
+	scheme       string
+	defaultTTL   string
+	etcd_servers []string
+	bucket_size  int
 }
 
 func (r *Router) ConfigStruct() interface{} {
@@ -72,95 +72,94 @@ func (r *Router) ConfigStruct() interface{} {
 }
 
 func (r *Router) Init(app *Application, config interface{}) (err errors) {
-    collider func(string) bool) (r *Router) {
-    template, err := template.New("Route").Parse(config.Get("shard.url_template",
-        "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}"))
-    if err != nil {
-        logger.Critical("router", "Could not parse router template",
-            LogFields{"error": err.Error()})
-        return
-    }
-    ctimeout, err := time.ParseDuration(config.Get("shard.ctimeout", "3s"))
-    if err != nil {
-        ctimeout, _ = time.ParseDuration("3s")
-    }
-    rwtimeout, err := time.ParseDuration(config.Get("shard.rwtimeout", "3s"))
-    if err != nil {
-        rwtimeout, _ = time.ParseDuration("3s")
-    }
-    scheme := config.Get("shard.scheme", "http")
-    // default time for the server to be "live"
-    defaultTTLs := config.Get("shard.defaultTTL", "24h")
-    defaultTTLd, err := time.ParseDuration(defaultTTLs)
-    if err != nil {
-        logger.Critical("router",
-            "Could not parse router default TTL",
-            LogFields{"value": defaultTTLs, "error": err.Error()})
-    }
-    defaultTTL := uint64(defaultTTLd.Seconds())
-    if defaultTTL < 2 {
-        logger.Critical("router",
-            "default TTL too short",
-            LogFields{"value": defaultTTLs})
-    }
-    serverList := strings.Split(config.Get("shard.etcd_servers", "http://localhost:4001"), ",")
-    bucketSize, err := strconv.ParseInt(config.Get("shard.bucket_size", "10"), 10, 64)
-    if err != nil {
-        logger.Critical("router",
-            "invalid value specified for shard.etcd_servers",
-            LogFields{"error": err.Error()})
-    }
-    logger.Debug("router",
-        "connecting to etcd servers",
-        LogFields{"list": strings.Join(serverList, ";")})
-    client := etcd.NewClient(serverList)
-    // create the push hosts directory (if not already there)
-    _, err = client.CreateDir(ETCD_DIR, 0)
-    if err != nil {
-        if err.Error()[:3] != "105" {
-            logger.Error("router", "etcd createDir error", LogFields{
-                "error": err.Error()})
-        }
-    }
-    rclient := &http.Client{
-        Transport: &http.Transport{
-            Dial: TimeoutDialer(ctimeout, rwtimeout),
-            ResponseHeaderTimeout: rwtimeout,
-            TLSClientConfig:       &tls.Config{},
-        },
-    }
+	// collider func(string) bool) (r *Router) {
+	template, err := template.New("Route").Parse(config.Get("shard.url_template",
+		"{{.Scheme}}://{{.Host}}/route/{{.Uaid}}"))
+	if err != nil {
+		logger.Critical("router", "Could not parse router template",
+			LogFields{"error": err.Error()})
+		return
+	}
+	ctimeout, err := time.ParseDuration(config.Get("shard.ctimeout", "3s"))
+	if err != nil {
+		ctimeout, _ = time.ParseDuration("3s")
+	}
+	rwtimeout, err := time.ParseDuration(config.Get("shard.rwtimeout", "3s"))
+	if err != nil {
+		rwtimeout, _ = time.ParseDuration("3s")
+	}
+	scheme := config.Get("shard.scheme", "http")
+	// default time for the server to be "live"
+	defaultTTLs := config.Get("shard.defaultTTL", "24h")
+	defaultTTLd, err := time.ParseDuration(defaultTTLs)
+	if err != nil {
+		logger.Critical("router",
+			"Could not parse router default TTL",
+			LogFields{"value": defaultTTLs, "error": err.Error()})
+	}
+	defaultTTL := uint64(defaultTTLd.Seconds())
+	if defaultTTL < 2 {
+		logger.Critical("router",
+			"default TTL too short",
+			LogFields{"value": defaultTTLs})
+	}
+	serverList := strings.Split(config.Get("shard.etcd_servers", "http://localhost:4001"), ",")
+	bucketSize, err := strconv.ParseInt(config.Get("shard.bucket_size", "10"), 10, 64)
+	if err != nil {
+		logger.Critical("router",
+			"invalid value specified for shard.etcd_servers",
+			LogFields{"error": err.Error()})
+	}
+	logger.Debug("router",
+		"connecting to etcd servers",
+		LogFields{"list": strings.Join(serverList, ";")})
+	client := etcd.NewClient(serverList)
+	// create the push hosts directory (if not already there)
+	_, err = client.CreateDir(ETCD_DIR, 0)
+	if err != nil {
+		if err.Error()[:3] != "105" {
+			logger.Error("router", "etcd createDir error", LogFields{
+				"error": err.Error()})
+		}
+	}
+	rclient := &http.Client{
+		Transport: &http.Transport{
+			Dial: TimeoutDialer(ctimeout, rwtimeout),
+			ResponseHeaderTimeout: rwtimeout,
+			TLSClientConfig:       &tls.Config{},
+		},
+	}
 
-    r = &Router{config: config,
-        logger:     logger,
-        metrics:    metrics,
-        template:   template,
-        client:     client,
-        defaultTTL: defaultTTL,
-        collider:   collider,
-        ctimeout:   ctimeout,
-        rwtimeout:  rwtimeout,
-        scheme:     scheme,
-        bucketSize: bucketSize,
-        rclient:    rclient,
-    }
-    if _, err = r.getServers(); err != nil {
-        logger.Critical("router", "Could not initialize server list",
-            LogFields{"error": err.Error()})
-        return nil
-    }
-    // auto refresh slightly more often than the TTL
-    go func(r *Router, defaultTTL uint64) {
-        timeout := 0.75 * float64(defaultTTL)
-        tick := time.NewTicker(time.Second * time.Duration(timeout))
-        for {
-            <-tick.C
-            r.Register()
-        }
-    }(r, defaultTTL)
-    r.Register()
-    return r
+	r = &Router{config: config,
+		logger:     logger,
+		metrics:    metrics,
+		template:   template,
+		client:     client,
+		defaultTTL: defaultTTL,
+		collider:   collider,
+		ctimeout:   ctimeout,
+		rwtimeout:  rwtimeout,
+		scheme:     scheme,
+		bucketSize: bucketSize,
+		rclient:    rclient,
+	}
+	if _, err = r.getServers(); err != nil {
+		logger.Critical("router", "Could not initialize server list",
+			LogFields{"error": err.Error()})
+		return nil
+	}
+	// auto refresh slightly more often than the TTL
+	go func(r *Router, defaultTTL uint64) {
+		timeout := 0.75 * float64(defaultTTL)
+		tick := time.NewTicker(time.Second * time.Duration(timeout))
+		for {
+			<-tick.C
+			r.Register()
+		}
+	}(r, defaultTTL)
+	r.Register()
+	return r
 }
-
 
 // Get the servers from the etcd cluster
 func (r *Router) getServers() (reply []string, err error) {

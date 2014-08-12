@@ -14,17 +14,16 @@ import (
 
 type PropPing struct {
 	connect util.JsMap
-	config  *util.MzConfig
-	logger  *util.MzLogger
-	store   *storage.Storage
-	metrics *util.Metrics
+	logger  *SimpleLogger
+	store   *Storage
+	metrics *Metrics
 }
 
 var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.MzLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
+func NewPropPing(connect string, uaid string, logger *SimpleLogger, store *Storage, metrics *Metrics) (*PropPing, error) {
 
 	var err error
 	var c_js util.JsMap = make(util.JsMap)
