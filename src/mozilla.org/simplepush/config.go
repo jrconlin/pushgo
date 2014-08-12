@@ -166,6 +166,13 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	}
 
 	// Next, setup the router, Deps: Logger, Metrics
+	if obj, err = LoadConfigForSection(app, "router", new(Router), configFile); err != nil {
+		return
+	}
+	router, _ := obj.(*Router)
+	if err = app.SetRouter(router); err != nil {
+		return
+	}
 
 	// Finally, setup the handlers, Deps: Logger, Metrics
 

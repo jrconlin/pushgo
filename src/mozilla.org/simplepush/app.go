@@ -30,6 +30,7 @@ type Application struct {
 	clientMux       *sync.RWMutex
 	server          *Serv
 	storage         *Storage
+	router          *Router
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -82,6 +83,11 @@ func (a *Application) SetStorage(storage *Storage) error {
 	return nil
 }
 
+func (a *Application) SetRouter(router *Router) error {
+	a.router = router
+	return nil
+}
+
 // Start the application
 func (a *Application) Run() error {}
 
@@ -109,6 +115,11 @@ func (a *Application) ClientCount() (count int) {
 	a.clientMux.RLock()
 	count = len(a.clients)
 	a.clientMux.RUnlock()
+	return
+}
+
+func (a *Application) ClientExists(uaid string) (collision bool) {
+	_, collision = a.GetClient(uaid)
 	return
 }
 

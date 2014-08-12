@@ -80,28 +80,6 @@ func main() {
 		}()
 	}
 
-	// Currently, we're opting for a memcache "storage" mechanism, however
-	// and key/value store would suffice. (bonus points if the records are
-	// self expiring.)
-	store = storage.New(config, logger)
-
-	// Routing allows stand-alone instances to send updates between themselves.
-	// Websock does not allow for native redirects in some browsers. Routing
-	// allows websocket connections and updates to be handled by any server,
-	// with the approriate notification sent.
-	//
-	// Note: While this is fairly primative, it works. There are more efficient
-	// models and systems that could be used for this (e.g. 0mq, rabbit, etc.)
-	// however those also add additional complexity to the server system.
-	// Since this is mostly point-to-point (we know the host location to send
-	// to), there wasn't much justification to add that complexity.
-	// Obviously, this can and will change over time.
-	route = router.New(config, logger, metrics, store, simplepush.ClientCollision)
-	if route == nil {
-		log.Fatal("No router")
-	}
-	config.SetDefault("shard.prefix", "_h-")
-
 	token_str := config.Get("token_key", "")
 	if len(token_str) > 0 {
 		key, err = base64.URLEncoding.DecodeString(token_str)

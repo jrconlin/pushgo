@@ -65,14 +65,6 @@ func ClientCount() int {
 	return int(cClients)
 }
 
-// report if there's a collision with the UAIDs
-func ClientCollision(uaid string) (collision bool) {
-	defer MuClient.Unlock()
-	MuClient.Lock()
-	_, collision = Clients[uaid]
-	return collision
-}
-
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
 	var uaid string
