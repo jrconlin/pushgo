@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package util
+package simplepush
 
 import (
 	"strconv"
@@ -21,18 +21,20 @@ type trec struct {
 	Avg   float64
 }
 
+type JsMap map[string]interface{}
+
 type timer map[string]trec
 
 type Metrics struct {
 	dict   map[string]int64 // counters
 	timer  timer            // timers
 	prefix string           // prefix for
-	logger *MzLogger
+	logger *SimpleLogger
 	statsd *statsd.Client
 	born   time.Time
 }
 
-func NewMetrics(prefix string, logger *MzLogger, config *MzConfig) (self *Metrics) {
+func NewMetrics(prefix string, logger *SimpleLogger, config *MzConfig) (self *Metrics) {
 
 	var statsdc *statsd.Client
 	if server := config.Get("statsd.server", ""); server != "" {

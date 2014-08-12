@@ -7,10 +7,8 @@ package simplepush
 import (
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
-	"mozilla.org/simplepush/router"
 	"mozilla.org/simplepush/sperrors"
 	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
 
 	"encoding/json"
 	"errors"
@@ -35,36 +33,12 @@ var (
 func FixConfig(config *util.MzConfig) *util.MzConfig {
 	currentHost := "localhost"
 	if config.GetFlag("shard.use_aws_host") {
-		currentHost, _ = util.GetAWSPublicHostname()
+		currentHost, _ = GetAWSPublicHostname()
 	}
 	config.SetDefault("shard.current_host", currentHost)
 	config.SetDefault("heak.current_host", currentHost)
 
 	return config
-
-}
-
-func ErrStr(err error) string {
-	if err == nil {
-		return ""
-	} else {
-		return err.Error()
-	}
-}
-
-func IStr(i interface{}) (reply string) {
-	defer func() {
-		if r := recover(); r != nil {
-			reply = "Undefined"
-		}
-	}()
-
-	if i != nil {
-		reply = i.(string)
-	} else {
-		reply = ""
-	}
-	return reply
 }
 
 type Handler struct {
@@ -86,7 +60,7 @@ func NewHandler(config *util.MzConfig,
 	max_connections, err := strconv.ParseInt(config.Get("max_connections", "1000"), 10, 64)
 	if err != nil || max_connections == 0 {
 		logger.Error("handler", "Invalid value for max_connections, using 1000",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		max_connections = 1000
 	}
 	return &Handler{config: config,
@@ -105,7 +79,7 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 	reply, err := json.Marshal(snapshot)
 	if err != nil {
 		self.logger.Error("handler", "Could not generate metrics report",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		resp.Write([]byte("{}"))
 		return
 	}
@@ -221,7 +195,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger != nil {
 		self.logger.Debug("update", "Handling Update",
-			util.Fields{"path": req.URL.Path})
+			LogFields{"path": req.URL.Path})
 	}
 
 	defer func() {
@@ -258,7 +232,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if !ok || len(pk) == 0 {
 		if self.logger != nil {
 			self.logger.Error("update", "No token, rejecting request",
-				util.Fields{"remoteAddr": req.RemoteAddr,
+				LogFields{"remoteAddr": req.RemoteAddr,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
@@ -277,7 +251,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			if self.logger != nil {
 				self.logger.Error("update",
 					"Could not decode token",
-					util.Fields{"primarykey": pk,
+					LogFields{"primarykey": pk,
 						"remoteAddr": req.RemoteAddr,
 						"path":       req.URL.Path,
 						"error":      ErrStr(err)})
@@ -294,7 +268,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Invalid token for update",
-				util.Fields{"token": pk,
+				LogFields{"token": pk,
 					"path": req.URL.Path})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
@@ -307,7 +281,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Could not resolve PK",
-				util.Fields{"primaryKey": pk,
+				LogFields{"primaryKey": pk,
 					"path":  req.URL.Path,
 					"error": ErrStr(err)})
 		}
@@ -319,7 +293,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if self.logger != nil {
 			self.logger.Error("update",
 				"Incomplete primary key",
-				util.Fields{"uaid": uaid,
+				LogFields{"uaid": uaid,
 					"channelID":  chid,
 					"remoteAddr": req.RemoteAddr})
 		}
@@ -354,7 +328,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if err != nil {
 			self.logger.Warn("update",
 				"Could not generate Proprietary Ping",
-				util.Fields{"error": err.Error(),
+				LogFields{"error": err.Error(),
 					"connect": connect})
 		}
 	}
@@ -369,7 +343,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if err != nil {
 			self.logger.Error("update",
 				"Could not force to proprietary ping",
-				util.Fields{"error": err.Error()})
+				LogFields{"error": err.Error()})
 		} else {
 			// Neat! Might as well return.
 			resp.Header().Set("Content-Type", "application/json")
@@ -380,7 +354,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if self.logger != nil {
 		defer func(uaid, chid, path string, timer time.Time, err error) {
 			self.logger.Info("dash", "Client Update complete",
-				util.Fields{
+				LogFields{
 					"uaid":       uaid,
 					"path":       req.URL.Path,
 					"channelID":  chid,
@@ -390,7 +364,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 		self.logger.Info("update",
 			"setting version for ChannelID",
-			util.Fields{"uaid": uaid, "channelID": chid,
+			LogFields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(version, 10)})
 	}
 	err = self.storage.UpdateChannel(pk, version)
@@ -398,7 +372,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update", "Cound not update channel",
-				util.Fields{"UAID": uaid,
+				LogFields{"UAID": uaid,
 					"channelID": chid,
 					"version":   strconv.FormatInt(version, 10),
 					"error":     err.Error()})
@@ -445,7 +419,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	atomic.AddInt32(&cClients, 1)
 
 	if sock.Logger != nil {
-		sock.Logger.Info("handler", "websocket connection", util.Fields{
+		sock.Logger.Info("handler", "websocket connection", LogFields{
 			"UserAgent":  strings.Join(ws.Request().Header["User-Agent"], ","),
 			"URI":        ws.Request().RequestURI,
 			"RemoteAddr": ws.Request().RemoteAddr,
@@ -456,7 +430,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			debug.PrintStack()
 			if logger != nil {
 				logger.Error("main", "Unknown error",
-					util.Fields{"error": r.(error).Error()})
+					LogFields{"error": r.(error).Error()})
 			} else {
 				log.Printf("Socket Unknown Error: %s", r.(error).Error())
 			}
@@ -493,7 +467,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	// We know of this one.
 	if req.ContentLength < 1 {
 		self.logger.Warn("router", "Routed update contained no body",
-			util.Fields{"uaid": uaid})
+			LogFields{"uaid": uaid})
 		http.Error(resp, "Missing body", http.StatusNotAcceptable)
 		return
 	}
@@ -504,7 +478,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		self.logger.Error("router",
 			"Could not read update body",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 		return
 	}
@@ -525,7 +499,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		ts, err = time.Parse(time.RFC3339Nano, v.(string))
 		if err != nil {
 			self.logger.Error("router", "Could not parse time",
-				util.Fields{"error": err.Error(),
+				LogFields{"error": err.Error(),
 					"uaid": uaid,
 					"chid": chid,
 					"time": v.(string)})
@@ -549,7 +523,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		self.logger.Error("router",
 			"Could not update local user",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		http.Error(resp, "Server Error", http.StatusInternalServerError)
 		return
 	}

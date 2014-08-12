@@ -25,6 +25,13 @@ type HasConfigStruct interface {
 	ConfigStruct() interface{}
 }
 
+// Interface for a plugin that needs to be initialized, probably with config values
+type NeedsInit interface {
+	// The configuration loaded after ConfigStruct will be passed in
+	// Throwing an error here will cause the application to stop loading
+	Init(app Application, config interface{}) error
+}
+
 // If `configable` supports the `HasConfigStruct` interface this will use said
 // interface to fetch a config struct object and populate it w/ the values in
 // provided `config`. If not, simply returns `config` unchanged.

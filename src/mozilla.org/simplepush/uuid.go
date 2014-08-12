@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package util
+package simplepush
 
 // very light weight, unformatted UUID4 generator/parser. Because sometimes
 // you just need a reasonably unique hash

@@ -6,7 +6,6 @@ package simplepush
 
 import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
 
 	"bytes"
 	"encoding/json"
@@ -56,7 +55,7 @@ func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *uti
 
 	if err = store.SetPropConnect(uaid, connect); err != nil {
 		logger.Error("propping", "Could not store connect",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 	}
 
 	return &PropPing{
@@ -74,7 +73,7 @@ func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.MzLogger)
 		ttl = 259200
 		logger.Warn("propping",
 			"Could not parse config option time, using 259200",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 	}
 	collapse_key := config.Get("gcm.collapse_key", "simplepush")
 	project_id := config.Get("gcm.project_id", "simplepush-gcm")
@@ -121,7 +120,7 @@ func (self *PropPing) send_gcm(vers int64) error {
 	if err != nil {
 		self.logger.Error("propping",
 			"Could not marshal request for GCM post",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
 	req, err := http.NewRequest("POST",
@@ -130,7 +129,7 @@ func (self *PropPing) send_gcm(vers int64) error {
 	if err != nil {
 		self.logger.Error("propping",
 			"Could not create request for GCM Post",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
 	req.Header.Add("Authorization", "key="+self.connect["api_key"].(string))
@@ -141,13 +140,13 @@ func (self *PropPing) send_gcm(vers int64) error {
 	if err != nil {
 		self.logger.Error("propping",
 			"Failed to send GCM message",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		self.logger.Error("propping",
 			"GCM returned non success message",
-			util.Fields{"error": resp.Status})
+			LogFields{"error": resp.Status})
 		return ProtocolErr
 	}
 	return nil

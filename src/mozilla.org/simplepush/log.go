@@ -37,6 +37,31 @@ type SimpleLogger struct {
 	Logger
 }
 
+// Error string helper that ignores nil errors
+func ErrStr(err error) string {
+	if err == nil {
+		return ""
+	} else {
+		return err.Error()
+	}
+}
+
+// Attempt to convert an interface to a string, ignore failures
+func IStr(i interface{}) (reply string) {
+	defer func() {
+		if r := recover(); r != nil {
+			reply = "Undefined"
+		}
+	}()
+
+	if i != nil {
+		reply = i.(string)
+	} else {
+		reply = ""
+	}
+	return reply
+}
+
 // SimplePush Logger implementation, utilizes the passed in Logger
 func NewLogger(log Logger) (*SimpleLogger, error) {
 	return &SimpleLogger{log}, nil
@@ -85,10 +110,10 @@ func (ml *StdOutLogger) ConfigStruct() interface{} {
 	}
 }
 
-func (ml *StdOutLogger) Init(appConfig *ApplicationConfig, config interface{}) (err error) {
+func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*StdOutLoggerConfig)
 	ml.pid = int32(os.Getpid())
-	ml.hostname = appConfig.hostname
+	ml.hostname = app.Hostname()
 	ml.tracer = conf.trace
 	ml.filter = LogLevel(conf.filter)
 	return

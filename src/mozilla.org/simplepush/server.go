@@ -5,18 +5,16 @@
 package simplepush
 
 import (
-	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
-
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"fmt"
+	storage "mozilla.org/simplepush/storage/mcstorage"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -38,8 +36,6 @@ var Clients map[string]*Client
 var cClients int32
 var MuClient sync.Mutex
 
-var serverSingleton *Serv
-
 type Serv struct {
 	config  *util.MzConfig
 	logger  *util.MzLogger
@@ -55,11 +51,6 @@ func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metri
 		metrics: metrics,
 		storage: storage,
 	}
-}
-
-func InitServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
-	serverSingleton = NewServer(config, logger, metrics, storage, key)
-	return nil
 }
 
 func ClientCount() int {
@@ -91,7 +82,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
 		}
 		self.logger.Info("server", "handling 'hello'",
-			util.Fields{"uaid": args["uaid"].(string),
+			LogFields{"uaid": args["uaid"].(string),
 				"channelIDs": chidss})
 	}
 
@@ -107,14 +98,14 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		if self.logger != nil {
 			self.logger.Debug("server",
 				"Generating new UAID",
-				util.Fields{"uaid": uaid})
+				LogFields{"uaid": uaid})
 		}
 	} else {
 		uaid = args["uaid"].(string)
 		if self.logger != nil {
 			self.logger.Debug("server",
 				"Using existing UAID",
-				util.Fields{"uaid": uaid})
+				LogFields{"uaid": uaid})
 		}
 		delete(args, "uaid")
 	}
@@ -145,11 +136,11 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 
 		if err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
-				util.Fields{"error": err.Error(),
+				LogFields{"error": err.Error(),
 					"connect": string(cs)})
 		} else {
 			self.logger.Debug("server", "Proprietary Info",
-				util.Fields{"connect": string(cs)})
+				LogFields{"connect": string(cs)})
 		}
 	}
 
@@ -192,9 +183,9 @@ func (self *Serv) Bye(sock *PushWS) {
 	uaid := sock.Uaid
 	if self.logger != nil {
 		self.logger.Debug("server", "Cleaning up socket",
-			util.Fields{"uaid": uaid})
+			LogFields{"uaid": uaid})
 		self.logger.Info("dash", "Socket connection terminated",
-			util.Fields{
+			LogFields{
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
 	}
@@ -239,7 +230,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 			if self.logger != nil {
 				self.logger.Error("server",
 					"Token Encoding error",
-					util.Fields{"uaid": sock.Uaid,
+					LogFields{"uaid": sock.Uaid,
 						"channelID": args["channelID"].(string)})
 			}
 			return 500, nil
@@ -255,7 +246,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	if self.logger != nil {
 		self.logger.Info("server",
 			"Generated Endpoint",
-			util.Fields{"uaid": sock.Uaid,
+			LogFields{"uaid": sock.Uaid,
 				"channelID": args["channelID"].(string),
 				"token":     token,
 				"endpoint":  endPoint})
@@ -270,7 +261,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 			if self.logger != nil {
 				self.logger.Error("server",
 					"requestFlush failed",
-					util.Fields{"error": r.(error).Error(),
+					LogFields{"error": r.(error).Error(),
 						"uaid": client.UAID})
 				debug.PrintStack()
 			}
@@ -285,7 +276,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 		if self.logger != nil {
 			self.logger.Info("server",
 				"Requesting flush",
-				util.Fields{"uaid": client.UAID,
+				LogFields{"uaid": client.UAID,
 					"channel": channel,
 					"version": strconv.FormatInt(version, 10)})
 		}
@@ -307,32 +298,32 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments ut
 }
 
 func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
-    updateErr := errors.New("Update Error")
-    reason := "Unknown UID"
-    MuClient.Lock()
-    defer MuClient.Unlock()
-    if client, ok := Clients[uid]; ok {
-        reason = "Failed to generate PK"
-        if pk, err := storage.GenPK(uid, chid); err == nil {
-            reason = "Failed to update channel"
-            if err = self.storage.UpdateChannel(pk, vers); err == nil {
-                reason = "Failed to flush"
-                if err = Flush(client, chid, vers); err == nil {
-                    reason = ""
-                    return nil
-                }
-            }
-        }
-    }
-    if err == nil {
-        err = updateErr
-    }
-    self.logger.Error("server", reason ,
-        util.Fields{"error":err.Error(),
-            "UID": uid,
-            "CHID": chid,
-            })
-    return err
+	updateErr := errors.New("Update Error")
+	reason := "Unknown UID"
+	MuClient.Lock()
+	defer MuClient.Unlock()
+	if client, ok := Clients[uid]; ok {
+		reason = "Failed to generate PK"
+		if pk, err := storage.GenPK(uid, chid); err == nil {
+			reason = "Failed to update channel"
+			if err = self.storage.UpdateChannel(pk, vers); err == nil {
+				reason = "Failed to flush"
+				if err = Flush(client, chid, vers); err == nil {
+					reason = ""
+					return nil
+				}
+			}
+		}
+	}
+	if err == nil {
+		err = updateErr
+	}
+	self.logger.Error("server", reason,
+		LogFields{"error": err.Error(),
+			"UID":  uid,
+			"CHID": chid,
+		})
+	return err
 }
 
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
