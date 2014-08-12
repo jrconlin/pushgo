@@ -14,8 +14,6 @@ import (
 	"github.com/cactus/go-statsd-client/statsd"
 )
 
-var metrex sync.Mutex
-
 type trec struct {
 	Count uint64
 	Avg   float64
@@ -25,6 +23,12 @@ type JsMap map[string]interface{}
 
 type timer map[string]trec
 
+type MetricsConfig struct {
+	prefix       string
+	statsdServer string `toml:"statsd_server"`
+	statsdName   string `toml:"statsd_name"`
+}
+
 type Metrics struct {
 	dict   map[string]int64 // counters
 	timer  timer            // timers
@@ -32,96 +36,101 @@ type Metrics struct {
 	logger *SimpleLogger
 	statsd *statsd.Client
 	born   time.Time
+	metrex *sync.Mutex
 }
 
-func NewMetrics(prefix string, logger *SimpleLogger, config *MzConfig) (self *Metrics) {
+func (m *Metrics) ConfigStruct() interface{} {
+	return &MetricsConfig{
+		prefix:     "simplepush",
+		statsdName: "undef",
+	}
+}
 
-	var statsdc *statsd.Client
-	if server := config.Get("statsd.server", ""); server != "" {
-		name := strings.ToLower(config.Get("statsd.name", "undef"))
-		client, err := statsd.New(server, name)
+func (m *Metrics) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*MetricsConfig)
+
+	m.logger = app.Logger()
+
+	if conf.statsdServer != "" {
+		name := strings.ToLower(conf.statsdName)
+		client, err := statsd.New(conf.statsdServer, name)
 		if err != nil {
-			logger.Error("metrics", "Could not init statsd connection",
-				Fields{"error": err.Error()})
+			m.logger.Error("metrics", "Could not init statsd connection",
+				LogFields{"error": err.Error()})
 		} else {
-			statsdc = client
+			m.statsd = client
 		}
 	}
 
-	self = &Metrics{
-		dict:   make(map[string]int64),
-		timer:  make(timer),
-		prefix: prefix,
-		logger: logger,
-		statsd: statsdc,
-		born:   time.Now(),
-	}
-	return self
+	m.dict = make(map[string]int64)
+	m.timer = make(timer)
+	m.prefix = conf.prefix
+	m.born = time.Now()
+	m.metrex = new(sync.Mutex)
+	return
 }
 
-func (self *Metrics) Prefix(newPrefix string) {
-	self.prefix = strings.TrimRight(newPrefix, ".")
-	if self.statsd != nil {
-		self.statsd.SetPrefix(newPrefix)
+func (m *Metrics) Prefix(newPrefix string) {
+	m.prefix = strings.TrimRight(newPrefix, ".")
+	if m.statsd != nil {
+		m.statsd.SetPrefix(newPrefix)
 	}
 }
 
-func (self *Metrics) Snapshot() map[string]interface{} {
-	defer metrex.Unlock()
-	metrex.Lock()
+func (m *Metrics) Snapshot() map[string]interface{} {
+	defer m.metrex.Unlock()
+	m.metrex.Lock()
 	var pfx string
-	if len(self.prefix) > 0 {
-		pfx = self.prefix + "."
+	if len(m.prefix) > 0 {
+		pfx = m.prefix + "."
 	}
 	oldMetrics := make(map[string]interface{})
 	// copy the old metrics
-	for k, v := range self.dict {
+	for k, v := range m.dict {
 		oldMetrics[pfx+"counter."+k] = v
 	}
-	for k, v := range self.timer {
+	for k, v := range m.timer {
 		oldMetrics[pfx+"avg."+k] = v.Avg
 	}
-	oldMetrics[pfx+"server.age"] = time.Now().Unix() - self.born.Unix()
+	oldMetrics[pfx+"server.age"] = time.Now().Unix() - m.born.Unix()
 	return oldMetrics
 }
 
-func (self *Metrics) IncrementBy(metric string, count int) {
-	defer metrex.Unlock()
-	metrex.Lock()
-	m, ok := self.dict[metric]
+func (m *Metrics) IncrementBy(metric string, count int) {
+	defer m.metrex.Unlock()
+	m.metrex.Lock()
+	m, ok := m.dict[metric]
 	if !ok {
-		self.dict[metric] = int64(0)
-		m = self.dict[metric]
+		m.dict[metric] = int64(0)
+		m = m.dict[metric]
 	}
 	atomic.AddInt64(&m, int64(count))
-	self.dict[metric] = m
-	if self.logger != nil {
-		self.logger.Info("metrics", "counter."+metric,
-			Fields{"value": strconv.FormatInt(m, 10),
-				"type": "counter"})
-	}
-	if self.statsd != nil {
+	m.dict[metric] = m
+	m.logger.Info("metrics", "counter."+metric,
+		Fields{"value": strconv.FormatInt(m, 10),
+			"type": "counter"})
+	if m.statsd != nil {
 		if count >= 0 {
-			self.statsd.Inc(metric, int64(count), 1.0)
+			m.statsd.Inc(metric, int64(count), 1.0)
 		} else {
-			self.statsd.Dec(metric, int64(count), 1.0)
+			m.statsd.Dec(metric, int64(count), 1.0)
 		}
 	}
 }
 
-func (self *Metrics) Increment(metric string) {
-	self.IncrementBy(metric, 1)
+func (m *Metrics) Increment(metric string) {
+	m.IncrementBy(metric, 1)
 }
 
-func (self *Metrics) Decrement(metric string) {
-	self.IncrementBy(metric, -1)
+func (m *Metrics) Decrement(metric string) {
+	m.IncrementBy(metric, -1)
 }
 
-func (self *Metrics) Timer(metric string, value int64) {
-	defer metrex.Unlock()
-	metrex.Lock()
-	if t, ok := self.timer[metric]; !ok {
-		self.timer[metric] = trec{
+func (m *Metrics) Timer(metric string, value int64) {
+	defer m.metrex.Unlock()
+	m.metrex.Lock()
+	if t, ok := m.timer[metric]; !ok {
+		m.timer[metric] = trec{
 			Count: uint64(1),
 			Avg:   float64(value),
 		}
@@ -129,15 +138,13 @@ func (self *Metrics) Timer(metric string, value int64) {
 		// calculate running average
 		t.Count = t.Count + 1
 		t.Avg = t.Avg + (float64(value)-t.Avg)/float64(t.Count)
-		self.timer[metric] = t
+		m.timer[metric] = t
 	}
 
-	if self.logger != nil {
-		self.logger.Info("metrics", "timer."+metric,
-			Fields{"value": strconv.FormatInt(value, 10),
-				"type": "timer"})
-	}
-	if self.statsd != nil {
-		self.statsd.Timing(metric, value, 1.0)
+	m.logger.Info("metrics", "timer."+metric,
+		Fields{"value": strconv.FormatInt(value, 10),
+			"type": "timer"})
+	if m.statsd != nil {
+		m.statsd.Timing(metric, value, 1.0)
 	}
 }

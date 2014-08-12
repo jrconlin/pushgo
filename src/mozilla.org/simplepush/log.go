@@ -29,9 +29,10 @@ type LogFields map[string]string
 type Logger interface {
 	HasConfigStruct
 	Log(level LogLevel, messageType, payload string, fields LogFields)
+	ShouldLog(level LogLevel) bool
 }
 
-var AvailableLoggers = make(map[string]func() Logger)
+var AvailableLoggers = make(AvailableExtensions)
 
 type SimpleLogger struct {
 	Logger
@@ -117,6 +118,10 @@ func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	ml.tracer = conf.trace
 	ml.filter = LogLevel(conf.filter)
 	return
+}
+
+func (ml *StdOutLogger) ShouldLog(level LogLevel) bool {
+	return level < ml.filter
 }
 
 func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields LogFields) {

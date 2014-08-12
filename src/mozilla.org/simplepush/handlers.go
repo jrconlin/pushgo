@@ -8,7 +8,6 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
 	"mozilla.org/simplepush/sperrors"
-	storage "mozilla.org/simplepush/storage/mcstorage"
 
 	"encoding/json"
 	"errors"
@@ -30,45 +29,28 @@ var (
 	toomany int32 = 0
 )
 
-func FixConfig(config *util.MzConfig) *util.MzConfig {
-	currentHost := "localhost"
-	if config.GetFlag("shard.use_aws_host") {
-		currentHost, _ = GetAWSPublicHostname()
-	}
-	config.SetDefault("shard.current_host", currentHost)
-	config.SetDefault("heak.current_host", currentHost)
-
-	return config
-}
-
 type Handler struct {
-	config          *util.MzConfig
-	logger          *util.MzLogger
-	storage         *storage.Storage
-	router          *router.Router
-	metrics         *util.Metrics
+	app             *Application
+	logger          *SimpleLogger
+	storage         *Storage
+	metrics         *Metrics
 	max_connections int64
 	token_key       []byte
 }
 
-func NewHandler(config *util.MzConfig,
-	logger *util.MzLogger,
-	storage *storage.Storage,
-	router *router.Router,
-	metrics *util.Metrics,
-	token_key []byte) *Handler {
+func NewHandler(app *Application, token_key []byte) *Handler {
 	max_connections, err := strconv.ParseInt(config.Get("max_connections", "1000"), 10, 64)
 	if err != nil || max_connections == 0 {
 		logger.Error("handler", "Invalid value for max_connections, using 1000",
 			LogFields{"error": err.Error()})
 		max_connections = 1000
 	}
-	return &Handler{config: config,
-		logger:          logger,
-		storage:         storage,
-		router:          router,
+	return &Handler{
+		app:             *Application,
+		logger:          app.Logger(),
+		storage:         app.Storage(),
 		metrics:         metrics,
-		max_connections: max_connections,
+		max_connections: app.MaxConnections(),
 		token_key:       token_key,
 	}
 }

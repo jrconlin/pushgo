@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"mozilla.org/simplepush/sperrors"
-	util "mozilla.org/util"
 	"regexp"
 	"runtime/debug"
 	"strconv"

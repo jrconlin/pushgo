@@ -5,8 +5,6 @@
 package simplepush
 
 import (
-	storage "mozilla.org/simplepush/storage/mcstorage"
-
 	"bytes"
 	"encoding/json"
 	"errors"

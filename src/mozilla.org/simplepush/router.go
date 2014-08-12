@@ -15,7 +15,6 @@ package simplepush
 
 import (
 	"github.com/coreos/go-etcd/etcd"
-	storage "mozilla.org/simplepush/storage/mcstorage"
 
 	"bytes"
 	"crypto/tls"

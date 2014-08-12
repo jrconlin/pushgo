@@ -25,21 +25,29 @@ type Application struct {
 	port            int
 	maxConnnections int
 	log             *SimpleLogger
+	metrics         *Metrics
 	clients         map[string]*Client
 	clientMux       *sync.RWMutex
 	server          *Serv
+	storage         *Storage
 }
 
 func (a *Application) ConfigStruct() interface{} {
 	defaultHost := os.Hostname()
 	return &ApplicationConfig{
-		hostname: defaultHost,
-		host:     "0.0.0.0",
-		port:     8080,
+		hostname:       defaultHost,
+		host:           "0.0.0.0",
+		port:           8080,
+		maxConnections: 1000,
+		useAwsHost:     false,
 	}
 }
 
-func (a *Application) Init(config interface{}, logger Logger) (err error) {
+// Fully initialize the application, this initializes all the other components
+// as well.
+// Note: We implement the Init method to comply with the interface, so the app
+// passed here will be nil.
+func (a *Application) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
 	if conf.useAwsHost {
@@ -55,16 +63,46 @@ func (a *Application) Init(config interface{}, logger Logger) (err error) {
 	a.maxConnnections = conf.maxConnections
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
+	return
+}
+
+// Set a logger
+func (a *Application) SetLogger(logger Logger) (err error) {
 	a.log, err = NewLogger(logger)
 	return
 }
+
+func (a *Application) SetMetrics(metrics *Metrics) error {
+	a.metrics = metrics
+	return nil
+}
+
+func (a *Application) SetStorage(storage *Storage) error {
+	a.storage = storage
+	return nil
+}
+
+// Start the application
+func (a *Application) Run() error {}
 
 func (a *Application) Hostname() string {
 	return a.hostname
 }
 
+func (a *Application) MaxConnections() int {
+	return a.maxConnnections
+}
+
 func (a *Application) Logger() *SimpleLogger {
 	return a.log
+}
+
+func (a *Application) Storage() *Storage {
+	return a.storage
+}
+
+func (a *Application) Metrics() *Metrics {
+	return a.metrics
 }
 
 func (a *Application) ClientCount() (count int) {
@@ -74,21 +112,21 @@ func (a *Application) ClientCount() (count int) {
 	return
 }
 
-func (a *Application) GetClient(uaid string) (client, *Client, ok bool) {
-    a.clientMux.RLock()
-    client, ok = a.clients[uaid]
-    a.clientMux.RUnlock()
-    return
+func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
+	a.clientMux.RLock()
+	client, ok = a.clients[uaid]
+	a.clientMux.RUnlock()
+	return
 }
 
 func (a *Application) AddClient(uaid string, client *Client) {
-    a.clientMux.Lock()
-    a.clients[uaid] = client
-    a.clientMux.Unlock()
+	a.clientMux.Lock()
+	a.clients[uaid] = client
+	a.clientMux.Unlock()
 }
 
 func (a *Application) RemoveClient(uaid string) {
-    a.clientMux.Lock()
-    delete(a.clients, uaid)
-    a.clientMux.Unlock()
+	a.clientMux.Lock()
+	delete(a.clients, uaid)
+	a.clientMux.Unlock()
 }

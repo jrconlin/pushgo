@@ -6,27 +6,27 @@
 package simplepush
 
 import (
+	"errors"
+	"fmt"
 	"github.com/bbangert/toml"
 	"reflect"
 )
 
+// Extensible sections
+type AvailableExtensions map[string]func() HasConfigStruct
+
+type ExtensibleGlobals struct {
+	Typ string `toml:"type"`
+}
+
 // Generic config section with any set of options
 type ConfigFile map[string]toml.Primitive
-
-type ConfigSection struct {
-	typ         string `toml:"type"`
-	tomlSection toml.Primitive
-}
 
 // Interface for something that needs a set of config options
 type HasConfigStruct interface {
 	// Returns a default-value-populated configuration structure into which
 	// the plugin's TOML configuration will be deserialized.
 	ConfigStruct() interface{}
-}
-
-// Interface for a plugin that needs to be initialized, probably with config values
-type NeedsInit interface {
 	// The configuration loaded after ConfigStruct will be passed in
 	// Throwing an error here will cause the application to stop loading
 	Init(app Application, config interface{}) error
@@ -35,22 +35,29 @@ type NeedsInit interface {
 // If `configable` supports the `HasConfigStruct` interface this will use said
 // interface to fetch a config struct object and populate it w/ the values in
 // provided `config`. If not, simply returns `config` unchanged.
-func LoadConfigStruct(config toml.Primitive, configable interface{}) (
+func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
-	var md toml.MetaData
 
-	// On two lines for scoping reasons.
-	hasConfigStruct, ok := configable.(HasConfigStruct)
-	if !ok {
-		return
-	}
-
-	configStruct = hasConfigStruct.ConfigStruct()
+	configStruct = configable.ConfigStruct()
 
 	// Global section options
-	sg_params := make(map[string]interface{})
+	// SimplePush defines some common parameters
+	// that are defined in the ExtensibleGlobals struct.
+	// Use reflection to extract the ExtensibleGlobals fields or TOML tag
+	// name if available
+	sp_params := make(map[string]interface{})
+	pg := ExtensibleGlobals{}
+	rt := reflect.ValueOf(pg).Type()
+	for i := 0; i < rt.NumField(); i++ {
+		sft := rt.Field(i)
+		kname := sft.Tag.Get("toml")
+		if len(kname) == 0 {
+			kname = sft.Name
+		}
+		sp_params[kname] = true
+	}
 
-	if err = toml.PrimitiveDecodeStrict(config, configStruct, sg_params); err != nil {
+	if err = toml.PrimitiveDecodeStrict(config, configStruct, sp_params); err != nil {
 		configStruct = nil
 		matches := unknownOptionRegex.FindStringSubmatch(err.Error())
 		if len(matches) == 2 {
@@ -61,15 +68,105 @@ func LoadConfigStruct(config toml.Primitive, configable interface{}) (
 	return
 }
 
-// Basic global server options
-type ServerConfig struct {
-	host               string
-	port               int
-	maxConnections     int    `toml:"max_connections"`
-	sslCertFile        string `toml:"ssl_cert_file"`
-	sslKeyFile         string `toml:"ssl_key_file"`
-	pushEndpoint       string `toml:"push_endpoint"`
-	pushLongPongs      int    `toml:"push_long_ponts"`
-	clientMinPing      string `toml:"client_min_ping"`
-	clientHelloTimeout string `toml:"client_hello_timeout"`
+// Loads the config for a section supplied, configures the supplied object, and initializes
+func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
+	configFile ConfigFile) (loadedObject interface{}, err error) {
+
+	conf, ok := configFile[sectionName]
+	if !ok {
+		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
+	}
+	confStruct := obj.ConfigStruct()
+	if err = toml.PrimitiveDecode(conf, confStruct); err != nil {
+		err = fmt.Errorf("Unable to decode config for section '%s': %s",
+			sectionName, err)
+		return
+	}
+	err = obj.Init(app, confStruct)
+	loadedObject = obj
+	return
+}
+
+// Load an extensible section that has a type keyword
+func LoadExtensibleSection(app *Application, sectionName string,
+	extensions AvailableExtensions, configFile ConfigFile) (obj interface{}, err error) {
+
+	confSection := new(ExtensibleGlobals)
+
+	conf, ok := configFile
+	if !ok {
+		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
+	}
+
+	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
+		return
+	}
+	ext, ok := extensions[confSection.typ]
+	if !ok {
+		return nil, errors.New("No type '%s' available to load for section '%s'",
+			confSection.typ, sectionName)
+	}
+
+	obj = ext()
+	loadedConfig, err := LoadConfigStruct(configFile, obj)
+	if err != nil {
+		return
+	}
+
+	err = obj.Init(app, loadedConfig)
+}
+
+// Handles reading a TOML based configuration file, and loading an
+// initialized Application, ready to Run
+func LoadApplicationFromFileName(filename string) (app *Application, err error) {
+	var (
+		obj        interface{}
+		configFile ConfigFile
+	)
+
+	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
+		return nil, fmt.Errorf("Error decoding config file: %s", err)
+	}
+
+	// We have a somewhat convoluted setup process to ensure prerequisites are
+	// available on the Application at each stage of application setup
+
+	// Setup the base application first
+	obj, err = LoadConfigForSection(nil, "default", new(Application), configFile)
+	if err != nil {
+		return
+	}
+	app, _ = obj.(*Application)
+
+	// Next, many things require the logger, and logger has no other deps
+	if obj, err = LoadExtensibleSection(app, "logger", AvailableLoggers, configFile); err != nil {
+		return
+	}
+	logger, _ := obj.(Logger)
+	if err = app.SetLogger(logger); err != nil {
+		return
+	}
+
+	// Next, metrics, Deps: Logger
+	if obj, err = LoadConfigForSection(app, "metrics", new(Metrics), configFile); err != nil {
+		return
+	}
+	metrics, _ := obj.(*Metrics)
+	if err = app.SetMetrics(metrics); err != nil {
+		return
+	}
+
+	// Next, storage, Deps: Logger, Metrics
+	if obj, err = LoadConfigForSection(app, "storage", new(Storage), configFile); err != nil {
+		return
+	}
+	storage, _ := obj.(*Storage)
+	if err = app.SetStorage(storage); err != nil {
+		return
+	}
+
+	// Next, setup the router, Deps: Logger, Metrics
+
+	// Finally, setup the handlers, Deps: Logger, Metrics
+
 }
