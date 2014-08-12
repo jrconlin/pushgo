@@ -8,9 +8,6 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
 	"mozilla.org/simplepush"
-	"mozilla.org/simplepush/router"
-	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
 
 	"encoding/base64"
 	"flag"
@@ -45,22 +42,18 @@ func main() {
 	var certFile string
 	var keyFile string
 	var key []byte
-	var wsport string
-	var wshost string
 
 	flag.Parse()
-	config, err := util.ReadMzConfig(*configFile)
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	app, err := simplepush.LoadApplicationFromFileName(*configFile)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	// The config file requires some customization and normalization
-	config = simplepush.FixConfig(config)
-	config.Override("VERSION", VERSION)
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Report what the app believes the current host to be, and what version.
-	log.Printf("CurrentHost: %s, Version: %s",
-		config.Get("shard.current_host", "localhost"), VERSION)
+	log.Printf("CurrentHost: %s, Version: %s", app.Hostname(), VERSION)
 
 	// Only create profiles if requested. To view the application profiles,
 	// see http://blog.golang.org/profiling-go-programs
@@ -87,23 +80,6 @@ func main() {
 		}()
 	}
 
-	// Logging can be CPU intensive (note: variable reflection is VERY
-	// CPU intensive. Avoid things like log.Printf("%v", someStruct) )
-	// If logging is specified as a command line flag, it overrides the
-	// value specified in the config file. This allows short term logging
-	// for operations.
-	if *logging > 0 {
-		config.Override("logger.enable", "1")
-		config.Override("logger.filter", strconv.FormatInt(int64(*logging), 10))
-	}
-	logger = util.NewMzLogger(config)
-
-	metrics := util.NewMetrics(config.Get(
-		"metrics.prefix",
-		"simplepush"),
-		logger,
-		config)
-
 	// Currently, we're opting for a memcache "storage" mechanism, however
 	// and key/value store would suffice. (bonus points if the records are
 	// self expiring.)
@@ -124,6 +100,7 @@ func main() {
 	if route == nil {
 		log.Fatal("No router")
 	}
+	config.SetDefault("shard.prefix", "_h-")
 
 	token_str := config.Get("token_key", "")
 	if len(token_str) > 0 {
@@ -165,12 +142,6 @@ func main() {
 		logger.Info("main",
 			fmt.Sprintf("listening on %s:%s", host, port), nil)
 	}
-
-	// Get the (optional) SSL certs
-	certFile = config.Get("ssl.certfile", "")
-	keyFile = config.Get("ssl.keyfile", "")
-	wscertFile := config.Get("ssl.ws.certfile", certFile)
-	wskeyFile := config.Get("ssl.ws.keyfile", keyFile)
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
