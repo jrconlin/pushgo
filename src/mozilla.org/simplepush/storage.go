@@ -704,7 +704,7 @@ func (self *Storage) IsKnownUaid(suaid string) bool {
 	return false
 }
 
-func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.JsMap, err error) {
+func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results JsMap, err error) {
 	uaid := cleanID(suaid)
 	appIDArray, err := self.fetchAppIDArray(uaid)
 
@@ -800,7 +800,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 		switch val.S {
 		case LIVE:
 			var vers uint64
-			newRec := make(util.JsMap)
+			newRec := make(JsMap)
 			newRec["channelID"] = hex.EncodeToString(chid)
 			vers = val.V
 			if vers == 0 {
@@ -828,7 +828,7 @@ func (self *Storage) GetUpdates(suaid string, lastAccessed int64) (results util.
 	if len(expired) == 0 && len(updates) == 0 {
 		return nil, nil
 	}
-	results = make(util.JsMap)
+	results = make(JsMap)
 	results["expired"] = expired
 	results["updates"] = updates
 	return results, err
@@ -915,7 +915,7 @@ func (self *Storage) Status() (success bool, err error) {
 		}
 	}()
 
-	fake_id, _ := util.GenUUID4()
+	fake_id, _ := GenUUID4()
 	key := "status_" + fake_id
 	mc, err := self.getMC()
 	defer self.returnMC(mc)

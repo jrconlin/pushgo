@@ -13,7 +13,7 @@ import (
 )
 
 type PropPing struct {
-	connect util.JsMap
+	connect JsMap
 	logger  *SimpleLogger
 	store   *Storage
 	metrics *Metrics
@@ -26,7 +26,7 @@ var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 func NewPropPing(connect string, uaid string, logger *SimpleLogger, store *Storage, metrics *Metrics) (*PropPing, error) {
 
 	var err error
-	var c_js util.JsMap = make(util.JsMap)
+	var c_js JsMap = make(JsMap)
 	var kind string
 
 	if len(connect) == 0 {
@@ -64,7 +64,7 @@ func NewPropPing(connect string, uaid string, logger *SimpleLogger, store *Stora
 	}, nil
 }
 
-func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.MzLogger) error {
+func init_gcm(connect *JsMap, logger *SimpleLogger) error {
 	ttl, err := strconv.ParseInt(config.Get("gcm.ttl", config.Get("db.timeout_live", "259200")), 10, 0)
 	if err != nil {
 		ttl = 259200
@@ -108,7 +108,7 @@ func (self *PropPing) Send(vers int64) error {
 func (self *PropPing) send_gcm(vers int64) error {
 	// google docs lie. You MUST send the regid as an array, even if it's one.
 	regs := [1]string{self.connect["regid"].(string)}
-	data, err := json.Marshal(util.JsMap{
+	data, err := json.Marshal(JsMap{
 		"registration_ids": regs,
 		"collapse_key":     self.connect["collapse_key"],
 		"time_to_live":     self.connect["ttl"],
