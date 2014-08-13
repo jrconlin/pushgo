@@ -99,9 +99,8 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 		a.hostname = conf.Hostname
 	}
 
-	token_str := conf.TokenKey
-	if len(token_str) > 0 {
-		if a.tokenKey, err = base64.URLEncoding.DecodeString(token_str); err != nil {
+	if len(conf.TokenKey) > 0 {
+		if a.tokenKey, err = base64.URLEncoding.DecodeString(conf.TokenKey); err != nil {
 			return
 		}
 	}
