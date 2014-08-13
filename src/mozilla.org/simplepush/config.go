@@ -6,10 +6,10 @@
 package simplepush
 
 import (
-	"errors"
 	"fmt"
 	"github.com/bbangert/toml"
 	"reflect"
+	"regexp"
 )
 
 // Extensible sections
@@ -29,8 +29,10 @@ type HasConfigStruct interface {
 	ConfigStruct() interface{}
 	// The configuration loaded after ConfigStruct will be passed in
 	// Throwing an error here will cause the application to stop loading
-	Init(app Application, config interface{}) error
+	Init(app *Application, config interface{}) error
 }
+
+var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
 // If `configable` supports the `HasConfigStruct` interface this will use said
 // interface to fetch a config struct object and populate it w/ the values in
@@ -89,31 +91,33 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 
 // Load an extensible section that has a type keyword
 func LoadExtensibleSection(app *Application, sectionName string,
-	extensions AvailableExtensions, configFile ConfigFile) (obj interface{}, err error) {
+	extensions AvailableExtensions, configFile ConfigFile) (interface{}, error) {
+	var err error
 
 	confSection := new(ExtensibleGlobals)
 
-	conf, ok := configFile
+	conf, ok := configFile[sectionName]
 	if !ok {
 		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
 	}
 
 	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
-		return
+		return nil, err
 	}
-	ext, ok := extensions[confSection.typ]
+	ext, ok := extensions[confSection.Typ]
 	if !ok {
-		return nil, errors.New("No type '%s' available to load for section '%s'",
-			confSection.typ, sectionName)
+		return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
+			confSection.Typ, sectionName)
 	}
 
-	obj = ext()
+	obj := ext()
 	loadedConfig, err := LoadConfigStruct(configFile, obj)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	err = obj.Init(app, loadedConfig)
+	return obj, err
 }
 
 // Handles reading a TOML based configuration file, and loading an
@@ -175,5 +179,16 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	}
 
 	// Finally, setup the handlers, Deps: Logger, Metrics
+	serv := new(Serv)
+	configStruct := serv.ConfigStruct()
+	if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
+		return
+	}
+	serv.Init(app, configStruct)
+	app.SetServer(serv)
 
+	handlers := new(Handler)
+	handlers.Init(app, nil)
+	app.SetHandlers(handlers)
+	return
 }

@@ -259,6 +259,7 @@ type DbConf struct {
 	timeoutDel    int64  `toml:"timeout_del"`
 	handleTimeout string `toml:"handle_time"`
 	propPrefix    string `toml:"prop_prefix"`
+	maxChannels   int    `toml:"max_channels"`
 }
 
 type StorageConf struct {
@@ -268,18 +269,19 @@ type StorageConf struct {
 }
 
 type Storage struct {
-	mcs        chan gomc.Client
-	logger     *SimpleLogger
-	mc_timeout time.Duration
-	poolSize   int64
-	timeouts   map[string]int64
-	servers    []string
-	propPrefix string
+	mcs         chan gomc.Client
+	logger      *SimpleLogger
+	mc_timeout  time.Duration
+	poolSize    int
+	timeouts    map[string]int64
+	servers     []string
+	propPrefix  string
+	maxChannels int
 }
 
 func (self *Storage) ConfigStruct() interface{} {
 	return &StorageConf{
-		memcache: &MemcacheConf{
+		memcache: MemcacheConf{
 			recvTimeout:  "1s",
 			sendTimeout:  "1s",
 			pollTimeout:  "1s",
@@ -287,7 +289,7 @@ func (self *Storage) ConfigStruct() interface{} {
 			poolSize:     100,
 			server:       []string{"127.0.0.1:11211"},
 		},
-		db: &DbConf{
+		db: DbConf{
 			timeoutLive:   259200,
 			timeoutReg:    10800,
 			timeoutDel:    86400,
@@ -298,11 +300,12 @@ func (self *Storage) ConfigStruct() interface{} {
 }
 
 func parseDuration(val, fieldName string, logger *SimpleLogger) (t time.Duration) {
-	t, err = time.ParseDuration(val)
+	t, err := time.ParseDuration(val)
 	if err != nil {
 		logger.Error("storage", fmt.Sprintf("Could not parse %s", fieldName),
 			LogFields{"error": err.Error()})
 	}
+	return
 }
 
 func (self *Storage) Init(app *Application, config interface{}) (err error) {
@@ -313,9 +316,7 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.elasticacheConfigEndpoint, 2)
 		if err == nil {
 			// do NOT include any spaces
-			self.servers = strings.Split(
-				no_whitespace.Replace(config.Get("memcache.server", "")),
-				",")
+			self.servers = strings.Split(no_whitespace.Replace(memcacheEndpoint), ",")
 		} else {
 			self.logger.Error("storage", "Elastisearch error.",
 				LogFields{"error": err.Error()})
@@ -325,11 +326,9 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 	}
 
 	self.mc_timeout = parseDuration(conf.db.handleTimeout, "storage.db.handle_timeout", self.logger)
-	if self.mc_timeout == nil {
-		self.mc_timeout = 10 * time.Second
-	}
 	self.poolSize = conf.memcache.poolSize
 	self.propPrefix = conf.db.propPrefix
+	self.maxChannels = conf.db.maxChannels
 
 	timeouts := make(map[string]int64)
 	timeouts["live"] = conf.db.timeoutLive
@@ -345,10 +344,10 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 		"storage.memcache.retry_timeout", self.logger).Nanoseconds() * 1000
 	self.timeouts = timeouts
 
-	logger.Info("storage", "Creating new gomc handler", nil)
+	self.logger.Info("storage", "Creating new gomc handler", nil)
 
-	mcs := make(chan gomc.Client, poolSize)
-	for i := int64(0); i < poolSize; i++ {
+	mcs := make(chan gomc.Client, self.poolSize)
+	for i := 0; i < self.poolSize; i++ {
 		mcs <- self.newMC()
 	}
 
@@ -363,7 +362,7 @@ func (self *Storage) newMC() (mc gomc.Client) {
 		}
 	*/
 	if mc, err = gomc.NewClient(self.servers, 1, gomc.ENCODING_GOB); err != nil {
-		logger.Critical("storage", "CRITICAL HIT!",
+		self.logger.Critical("storage", "CRITICAL HIT!",
 			LogFields{"error": err.Error()})
 	}
 	// internally hash key using MD5 (for key distribution)
@@ -966,11 +965,7 @@ func (self *Storage) getMC() (gomc.Client, error) {
 						self.logger), nil
 				} else {
 		*/
-		if self.logger != nil {
-			self.logger.Error("storage", "Connection Pool Saturated!", nil)
-		} else {
-			log.Printf("Connection Pool Saturated!")
-		}
+		self.logger.Error("storage", "Connection Pool Saturated!", nil)
 		// mc := self.NewMC(self.servers, self.config)
 		return nil, StorageError{"Connection Pool Saturated"}
 		//		}

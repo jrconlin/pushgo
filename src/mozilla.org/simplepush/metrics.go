@@ -99,15 +99,15 @@ func (m *Metrics) Snapshot() map[string]interface{} {
 func (m *Metrics) IncrementBy(metric string, count int) {
 	defer m.metrex.Unlock()
 	m.metrex.Lock()
-	m, ok := m.dict[metric]
+	met, ok := m.dict[metric]
 	if !ok {
 		m.dict[metric] = int64(0)
-		m = m.dict[metric]
+		met = m.dict[metric]
 	}
-	atomic.AddInt64(&m, int64(count))
-	m.dict[metric] = m
+	atomic.AddInt64(&met, int64(count))
+	m.dict[metric] = met
 	m.logger.Info("metrics", "counter."+metric,
-		Fields{"value": strconv.FormatInt(m, 10),
+		LogFields{"value": strconv.FormatInt(met, 10),
 			"type": "counter"})
 	if m.statsd != nil {
 		if count >= 0 {
@@ -142,7 +142,7 @@ func (m *Metrics) Timer(metric string, value int64) {
 	}
 
 	m.logger.Info("metrics", "timer."+metric,
-		Fields{"value": strconv.FormatInt(value, 10),
+		LogFields{"value": strconv.FormatInt(value, 10),
 			"type": "timer"})
 	if m.statsd != nil {
 		m.statsd.Timing(metric, value, 1.0)

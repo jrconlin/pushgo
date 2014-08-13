@@ -11,7 +11,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -29,11 +28,6 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	host               string
-	port               int
-	maxConnections     int    `toml:"max_connections"`
-	sslCertFile        string `toml:"ssl_cert_file"`
-	sslKeyFile         string `toml:"ssl_key_file"`
 	pushEndpoint       string `toml:"push_endpoint"`
 	pushLongPongs      int    `toml:"push_long_ponts"`
 	clientMinPing      string `toml:"client_min_ping"`
@@ -41,38 +35,39 @@ type ServerConfig struct {
 }
 
 type Serv struct {
-	config  *util.MzConfig
-	logger  *util.MzLogger
-	metrics *util.Metrics
-	storage *storage.Storage
-	key     []byte
+	app          *Application
+	logger       *SimpleLogger
+	metrics      *Metrics
+	storage      *Storage
+	key          []byte
+	pushEndpoint string
 }
 
-func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
-	return &Serv{config: config,
-		key:     key,
-		logger:  logger,
-		metrics: metrics,
-		storage: storage,
+func (self *Serv) ConfigStruct() interface{} {
+	return &ServerConfig{
+		pushEndpoint: "http://localhost/update/<token>",
 	}
 }
 
-func ClientCount() int {
-	/*	defer MuClient.Unlock()
-		MuClient.Lock()
-		return len(Clients)
-	*/
-	return int(cClients)
+func (self *Serv) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*ServerConfig)
+	self.app = app
+	self.logger = app.Logger()
+	self.metrics = app.Metrics()
+	self.storage = app.Storage()
+	self.key = app.TokenKey()
+	self.pushEndpoint = conf.pushEndpoint
+	return
 }
 
 // A client connects!
-func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
 	var prop *PropPing
 	var err error
 
-	args := cmd.Arguments.(util.JsMap)
-	if self.logger != nil {
+	args := cmd.Arguments.(JsMap)
+	if self.logger.ShouldLog(INFO) {
 		chidss := ""
 		if chids, ok := args["channelIDs"]; ok {
 			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
@@ -90,15 +85,15 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	// New connects overwrite previous connections.
 	// Raw client
 	if args["uaid"] == "" {
-		uaid, _ = util.GenUUID4()
-		if self.logger != nil {
+		uaid, _ = GenUUID4()
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server",
 				"Generating new UAID",
 				LogFields{"uaid": uaid})
 		}
 	} else {
 		uaid = args["uaid"].(string)
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server",
 				"Using existing UAID",
 				LogFields{"uaid": uaid})
@@ -111,7 +106,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		ip, iok := args["ip"]
 		port, pok := args["port"]
 		if iok && pok {
-			args["connect"] = util.JsMap{
+			args["connect"] = JsMap{
 				"type": "udp",
 				"port": port,
 				"ip":   ip,
@@ -123,18 +118,13 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		// Currently marshalling to deal with the interface{} issues.
 		cs, _ := json.Marshal(connect)
 		fmt.Printf("Prop Ping %s\n\n", connect)
-		prop, err = NewPropPing(string(cs),
-			uaid,
-			self.config,
-			self.logger,
-			self.storage,
-			self.metrics)
+		prop, err = NewPropPing(string(cs), uaid, self.app)
 
 		if err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
 				LogFields{"error": err.Error(),
 					"connect": string(cs)})
-		} else {
+		} else if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Proprietary Info",
 				LogFields{"connect": string(cs)})
 		}
@@ -149,15 +139,9 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		UAID:   uaid,
 		Prop:   prop,
 	}
-	MuClient.Lock()
-	Clients[uaid] = client
-	MuClient.Unlock()
-	if self.logger != nil {
-		self.logger.Info("dash", "Client registered", nil)
-	}
-	if self.metrics != nil {
-		self.metrics.Increment("updates.client.connect")
-	}
+	self.app.AddClient(uaid, client)
+	self.logger.Info("dash", "Client registered", nil)
+	self.metrics.Increment("updates.client.connect")
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -177,69 +161,59 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	uaid := sock.Uaid
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
 			LogFields{"uaid": uaid})
+	}
+	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("dash", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
 	}
-	if self.metrics != nil {
-		self.metrics.Timer("socket.lifespan",
-			time.Now().Unix()-sock.Born.Unix())
-	}
-	defer MuClient.Unlock()
-	MuClient.Lock()
-	delete(Clients, uaid)
-	if self.metrics != nil {
-		self.metrics.Increment("updates.client.disconnect")
-	}
+	self.metrics.Timer("socket.lifespan",
+		time.Now().Unix()-sock.Born.Unix())
+	self.app.RemoveClient(uaid)
+	self.metrics.Increment("updates.client.disconnect")
 }
 
-func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	// This is effectively a no-op, since we don't hold client session info
-	args := cmd.Arguments.(util.JsMap)
+	args := cmd.Arguments.(JsMap)
 	args["status"] = 200
 	return 200, args
 }
 
-func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
 	var err error
-	args := cmd.Arguments.(util.JsMap)
+	args := cmd.Arguments.(JsMap)
 	args["status"] = 200
 	var endPoint string
-	endPoint = self.config.Get("push.endpoint", self.config.Get("pushEndpoint", "http://localhost/update/<token>"))
+	endPoint = self.pushEndpoint
 	// Generate the call back URL
-	token, err := storage.GenPK(sock.Uaid,
-		args["channelID"].(string))
+	token, err := GenPK(sock.Uaid, args["channelID"].(string))
 	if err != nil {
 		return 500, nil
 	}
 	// if there is a key, encrypt the token
-	if self.key != nil {
+	if len(self.key) != 0 {
 		btoken := []byte(token)
 		token, err = Encode(self.key, btoken)
 		if err != nil {
-			if self.logger != nil {
-				self.logger.Error("server",
-					"Token Encoding error",
-					LogFields{"uaid": sock.Uaid,
-						"channelID": args["channelID"].(string)})
-			}
+			self.logger.Error("server", "Token Encoding error",
+				LogFields{"uaid": sock.Uaid,
+					"channelID": args["channelID"].(string)})
 			return 500, nil
 		}
 
 	}
 	// cheezy variable replacement.
 	endPoint = strings.Replace(endPoint, "<token>", token, -1)
-	host := self.config.Get("shard.current_host", "localhost") + ":" +
-		self.config.Get("port", "80")
-	endPoint = strings.Replace(endPoint, "<current_host>", host, -1)
+	endPoint = strings.Replace(endPoint, "<current_host>", self.app.FullHostname(), -1)
 	args["push.endpoint"] = endPoint
-	if self.logger != nil {
+	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("server",
 			"Generated Endpoint",
 			LogFields{"uaid": sock.Uaid,
@@ -254,13 +228,11 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 	defer func(client *Client, version int64) {
 		r := recover()
 		if r != nil {
-			if self.logger != nil {
-				self.logger.Error("server",
-					"requestFlush failed",
-					LogFields{"error": r.(error).Error(),
-						"uaid": client.UAID})
-				debug.PrintStack()
-			}
+			self.logger.Error("server",
+				"requestFlush failed",
+				LogFields{"error": r.(error).Error(),
+					"uaid": client.UAID})
+			debug.PrintStack()
 			if client != nil {
 				client.Prop.Send(version)
 			}
@@ -269,7 +241,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 	}(client, version)
 
 	if client != nil {
-		if self.logger != nil {
+		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("server",
 				"Requesting flush",
 				LogFields{"uaid": client.UAID,
@@ -283,12 +255,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 	return nil
 }
 
-func Flush(client *Client, channel string, version int64) (err error) {
-	// Ask the central service to flush for a given client.
-	return serverSingleton.RequestFlush(client, channel, version)
-}
-
-func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments util.JsMap) {
+func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	result = 200
 	return
 }
@@ -296,15 +263,13 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments ut
 func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
 	updateErr := errors.New("Update Error")
 	reason := "Unknown UID"
-	MuClient.Lock()
-	defer MuClient.Unlock()
-	if client, ok := Clients[uid]; ok {
+	if client, ok := self.app.GetClient(uid); ok {
 		reason = "Failed to generate PK"
-		if pk, err := storage.GenPK(uid, chid); err == nil {
+		if pk, err := GenPK(uid, chid); err == nil {
 			reason = "Failed to update channel"
 			if err = self.storage.UpdateChannel(pk, vers); err == nil {
 				reason = "Failed to flush"
-				if err = Flush(client, chid, vers); err == nil {
+				if err = self.RequestFlush(client, chid, vers); err == nil {
 					reason = ""
 					return nil
 				}
@@ -322,39 +287,39 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 	return err
 }
 
-func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
-	var ret util.JsMap
+func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args JsMap) {
+	var ret JsMap
 	if cmd.Arguments != nil {
-		args = cmd.Arguments.(util.JsMap)
+		args = cmd.Arguments.(JsMap)
 	} else {
-		args = make(util.JsMap)
+		args = make(JsMap)
 	}
 
 	switch int(cmd.Command) {
 	case HELLO:
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling HELLO event", nil)
 		}
 		worker := args["worker"].(*Worker)
 		result, ret = self.Hello(worker, cmd, sock)
 	case UNREG:
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling UNREG event", nil)
 		}
 		result, ret = self.Unreg(cmd, sock)
 	case REGIS:
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling REGIS event", nil)
 		}
 		result, ret = self.Regis(cmd, sock)
 	case DIE:
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Cleanup", nil)
 		}
 		self.Bye(sock)
 		return 0, nil
 	case PURGE:
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("Server", "Purge", nil)
 		}
 		self.Purge(cmd, sock)
@@ -362,19 +327,6 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	args["uaid"] = ret["uaid"]
 	return result, args
-}
-
-func HandleServerCommand(cmd PushCommand, sock *PushWS) (result int, args util.JsMap) {
-	return serverSingleton.HandleCommand(cmd, sock)
-}
-
-func GetServer() *Serv {
-	return serverSingleton
-}
-
-func init() {
-	Clients = make(map[string]*Client)
-	cClients = 0
 }
 
 // o4fs

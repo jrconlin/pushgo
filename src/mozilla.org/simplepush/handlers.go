@@ -13,9 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"net/url"
 	"regexp"
 	"runtime"
 	"runtime/debug"
@@ -29,30 +27,31 @@ var (
 	toomany int32 = 0
 )
 
+type HandlerConfig struct{}
+
 type Handler struct {
 	app             *Application
 	logger          *SimpleLogger
 	storage         *Storage
+	router          *Router
 	metrics         *Metrics
-	max_connections int64
+	max_connections int
 	token_key       []byte
 }
 
-func NewHandler(app *Application, token_key []byte) *Handler {
-	max_connections, err := strconv.ParseInt(config.Get("max_connections", "1000"), 10, 64)
-	if err != nil || max_connections == 0 {
-		logger.Error("handler", "Invalid value for max_connections, using 1000",
-			LogFields{"error": err.Error()})
-		max_connections = 1000
-	}
-	return &Handler{
-		app:             *Application,
-		logger:          app.Logger(),
-		storage:         app.Storage(),
-		metrics:         metrics,
-		max_connections: app.MaxConnections(),
-		token_key:       token_key,
-	}
+func (self *Handler) ConfigStruct() interface{} {
+	return &HandlerConfig{}
+}
+
+func (self *Handler) Init(app *Application, config interface{}) error {
+	self.app = app
+	self.logger = app.Logger()
+	self.storage = app.Storage()
+	self.metrics = app.Metrics()
+	self.router = app.Router()
+	self.max_connections = app.MaxConnections()
+	self.token_key = app.TokenKey()
+	return nil
 }
 
 func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request) {
@@ -76,7 +75,7 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
-	clientCount := ClientCount()
+	clientCount := self.app.ClientCount()
 	OK := "OK"
 	if clientCount >= int(self.max_connections) {
 		OK = "NOPE"
@@ -95,7 +94,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	var okClients bool
 	var msg string
 
-	clientCount := ClientCount()
+	clientCount := self.app.ClientCount()
 	if okClients = clientCount > int(self.max_connections); !okClients {
 		msg += "Exceeding max_connections, "
 	}
@@ -105,12 +104,11 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	}
 	ok := okClients && mcStatus
 	gcount := runtime.NumGoroutine()
-	repMap := util.JsMap{"ok": ok,
+	repMap := JsMap{"ok": ok,
 		"clientCount": clientCount,
 		"maxClients":  self.max_connections,
 		"mcstatus":    mcStatus,
 		"goroutines":  gcount,
-		"version":     self.config.Get("VERSION", "Unknown"),
 	}
 	if err != nil {
 		repMap["error"] = err.Error()
@@ -157,12 +155,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	var version int64
 	var pping *PropPing
 
-	if ClientCount() > int(self.max_connections) {
-		if self.logger != nil {
-			if toomany == 0 {
-				atomic.StoreInt32(&toomany, 1)
-				self.logger.Error("handler", "Socket Count Exceeded", nil)
-			}
+	if self.app.ClientCount() > int(self.max_connections) {
+		if toomany == 0 {
+			atomic.StoreInt32(&toomany, 1)
+			self.logger.Error("handler", "Socket Count Exceeded", nil)
 		}
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
@@ -175,13 +171,13 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	timer := time.Now()
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
-	if self.logger != nil {
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
 			LogFields{"path": req.URL.Path})
 	}
 
 	defer func() {
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
 		}
 	}()
@@ -212,32 +208,28 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
 	if !ok || len(pk) == 0 {
-		if self.logger != nil {
-			self.logger.Error("update", "No token, rejecting request",
-				LogFields{"remoteAddr": req.RemoteAddr,
-					"path": req.URL.Path})
-		}
+		self.logger.Error("update", "No token, rejecting request",
+			LogFields{"remoteAddr": req.RemoteAddr,
+				"path": req.URL.Path})
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	if token := self.token_key; len(token) > 0 {
-		if self.logger != nil {
+		if self.logger.ShouldLog(DEBUG) {
 			// Note: dumping the []uint8 keys can produce terminal glitches
 			self.logger.Debug("main", "Decoding...", nil)
 		}
 		var err error
 		bpk, err := Decode(token, pk)
 		if err != nil {
-			if self.logger != nil {
-				self.logger.Error("update",
-					"Could not decode token",
-					LogFields{"primarykey": pk,
-						"remoteAddr": req.RemoteAddr,
-						"path":       req.URL.Path,
-						"error":      ErrStr(err)})
-			}
+			self.logger.Error("update",
+				"Could not decode token",
+				LogFields{"primarykey": pk,
+					"remoteAddr": req.RemoteAddr,
+					"path":       req.URL.Path,
+					"error":      ErrStr(err)})
 			http.Error(resp, "", http.StatusNotFound)
 			self.metrics.Increment("updates.appserver.invalid")
 			return
@@ -247,44 +239,38 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if filter.Find([]byte(pk)) != nil {
-		if self.logger != nil {
-			self.logger.Error("update",
-				"Invalid token for update",
-				LogFields{"token": pk,
-					"path": req.URL.Path})
-		}
+		self.logger.Error("update",
+			"Invalid token for update",
+			LogFields{"token": pk,
+				"path": req.URL.Path})
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
-	uaid, chid, err := storage.ResolvePK(pk)
+	uaid, chid, err := ResolvePK(pk)
 	if err != nil {
-		if self.logger != nil {
-			self.logger.Error("update",
-				"Could not resolve PK",
-				LogFields{"primaryKey": pk,
-					"path":  req.URL.Path,
-					"error": ErrStr(err)})
-		}
+		self.logger.Error("update",
+			"Could not resolve PK",
+			LogFields{"primaryKey": pk,
+				"path":  req.URL.Path,
+				"error": ErrStr(err)})
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	if chid == "" {
-		if self.logger != nil {
-			self.logger.Error("update",
-				"Incomplete primary key",
-				LogFields{"uaid": uaid,
-					"channelID":  chid,
-					"remoteAddr": req.RemoteAddr})
-		}
+		self.logger.Error("update",
+			"Incomplete primary key",
+			LogFields{"uaid": uaid,
+				"channelID":  chid,
+				"remoteAddr": req.RemoteAddr})
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	// Is this ours or should we punt to a different server?
-	if !ClientCollision(uaid) {
+	if !self.app.ClientExists(uaid) {
 		// TODO: Move PropPing here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
 		resp.Header().Set("Content-Type", "application/json")
@@ -301,12 +287,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if err == nil && len(connect) > 0 {
 		fmt.Printf("### Connect %s\n", connect)
 		// TODO: store the prop ping?
-		pping, err = NewPropPing(connect,
-			uaid,
-			self.config,
-			self.logger,
-			self.storage,
-			self.metrics)
+		pping, err = NewPropPing(connect, uaid, self.app)
 		if err != nil {
 			self.logger.Warn("update",
 				"Could not generate Proprietary Ping",
@@ -333,7 +314,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			return
 		}
 	}
-	if self.logger != nil {
+	if self.logger.ShouldLog(INFO) {
 		defer func(uaid, chid, path string, timer time.Time, err error) {
 			self.logger.Info("dash", "Client Update complete",
 				LogFields{
@@ -352,7 +333,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	err = self.storage.UpdateChannel(pk, version)
 
 	if err != nil {
-		if self.logger != nil {
+		if self.logger.ShouldLog(ERROR) {
 			self.logger.Error("update", "Cound not update channel",
 				LogFields{"UAID": uaid,
 					"channelID": chid,
@@ -367,24 +348,20 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	resp.Write([]byte("{}"))
 	self.metrics.Increment("updates.received")
 	// Ping the appropriate server
-	defer MuClient.Unlock()
-	MuClient.Lock()
-	if client, ok := Clients[uaid]; ok {
-		Flush(client, chid, int64(version))
+	if client, ok := self.app.GetClient(uaid); ok {
+		self.app.Server().RequestFlush(client, chid, int64(version))
 	}
 	return
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if ClientCount() > int(self.max_connections) {
-		if self.logger != nil {
-			if toomany == 0 {
-				// Don't flood the error log.
-				atomic.StoreInt32(&toomany, 1)
-				self.logger.Error("dash", "Socket Count Exceeded", nil)
-			}
+	if self.app.ClientCount() > int(self.max_connections) {
+		if toomany == 0 {
+			// Don't flood the error log.
+			atomic.StoreInt32(&toomany, 1)
+			self.logger.Error("dash", "Socket Count Exceeded", nil)
 		}
-		websocket.JSON.Send(ws, util.JsMap{
+		websocket.JSON.Send(ws, JsMap{
 			"status": http.StatusServiceUnavailable,
 			"error":  "Server Unavailable"})
 		return
@@ -398,32 +375,26 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Storage: self.storage,
 		Logger:  self.logger,
 		Born:    timer}
-	atomic.AddInt32(&cClients, 1)
 
-	if sock.Logger != nil {
-		sock.Logger.Info("handler", "websocket connection", LogFields{
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("handler", "websocket connection", LogFields{
 			"UserAgent":  strings.Join(ws.Request().Header["User-Agent"], ","),
 			"URI":        ws.Request().RequestURI,
 			"RemoteAddr": ws.Request().RemoteAddr,
 		})
 	}
-	defer func(logger *util.MzLogger) {
+	defer func() {
 		if r := recover(); r != nil {
 			debug.PrintStack()
-			if logger != nil {
-				logger.Error("main", "Unknown error",
-					LogFields{"error": r.(error).Error()})
-			} else {
-				log.Printf("Socket Unknown Error: %s", r.(error).Error())
-			}
+			self.logger.Error("main", "Unknown error",
+				LogFields{"error": r.(error).Error()})
 		}
 		// Clean-up the resources
-		HandleServerCommand(PushCommand{DIE, nil}, &sock)
-		atomic.AddInt32(&cClients, -1)
-	}(sock.Logger)
+		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
+	}()
 
-	NewWorker(self.config, self.logger, self.metrics).Run(&sock)
-	if self.logger != nil {
+	NewWorker(self.app).Run(&sock)
+	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}
 }
@@ -442,7 +413,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// if uid is not present, or doesn't exist in the known clients...
-	if !ok || !ClientCollision(uaid) {
+	if !ok || !self.app.ClientExists(uaid) {
 		http.Error(resp, "UID Not Found", http.StatusNotFound)
 		return
 	}
@@ -455,7 +426,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
-	jdata := make(util.JsMap)
+	jdata := make(JsMap)
 	err = decoder.Decode(&jdata)
 	if err != nil {
 		self.logger.Error("router",
@@ -498,10 +469,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	err = GetServer().Update(chid,
-		uaid,
-		vers,
-		ts)
+	err = self.app.Server().Update(chid, uaid, vers, ts)
 	if err != nil {
 		self.logger.Error("router",
 			"Could not update local user",

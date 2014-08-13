@@ -5,20 +5,13 @@
 package main
 
 import (
-	"code.google.com/p/go.net/websocket"
-	"github.com/gorilla/mux"
-	"mozilla.org/simplepush"
-
-	"encoding/base64"
 	"flag"
-	"fmt"
 	"log"
-	"net/http"
+	"mozilla.org/simplepush"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
-	"strconv"
 	"syscall"
 )
 
@@ -28,10 +21,6 @@ var (
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,
 		"logging level (0=none,1=critical ... 10=verbose")
-	logger  *util.MzLogger
-	metrics *util.Metrics
-	store   *storage.Storage
-	route   *router.Router
 )
 
 const SIGUSR1 = syscall.SIGUSR1
@@ -39,22 +28,9 @@ const VERSION = "1.2"
 
 // -- main
 func main() {
-	var certFile string
-	var keyFile string
-	var key []byte
-
 	flag.Parse()
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	app, err := simplepush.LoadApplicationFromFileName(*configFile)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-
-	// Report what the app believes the current host to be, and what version.
-	log.Printf("CurrentHost: %s, Version: %s", app.Hostname(), VERSION)
-
 	// Only create profiles if requested. To view the application profiles,
 	// see http://blog.golang.org/profiling-go-programs
 	if *profile != "" {
@@ -80,92 +56,21 @@ func main() {
 		}()
 	}
 
-	token_str := config.Get("token_key", "")
-	if len(token_str) > 0 {
-		key, err = base64.URLEncoding.DecodeString(token_str)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	// Load the app from the config file
+	app, err := simplepush.LoadApplicationFromFileName(*configFile)
+	if err != nil {
+		log.Fatal(err.Error())
 	}
 
-	// Initialize the common server.
-	simplepush.InitServer(config, logger, metrics, store, key)
-	handlers := simplepush.NewHandler(config, logger, store, route, metrics, key)
-
-	// Config the server
-	RESTMux := mux.NewRouter()
-	WSMux := RESTMux
-	RouteMux := mux.NewRouter()
-	host := config.Get("host", "localhost")
-	port := config.Get("port", "8080")
-
-	// Register the handlers
-	// each websocket gets it's own handler.
-	if config.Get("wsport", port) != port {
-		wsport = config.Get("wsport", port)
-		wshost = config.Get("wshost", host)
-		WSMux = mux.NewRouter()
-	}
-
-	RESTMux.HandleFunc("/update/{key}", handlers.UpdateHandler)
-	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
-	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
-	RESTMux.HandleFunc("/metrics/", handlers.MetricsHandler)
-	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
-
-	RouteMux.HandleFunc("/route/{uaid}", handlers.RouteHandler)
-
-	// Hoist the main sail.
-	if logger != nil {
-		logger.Info("main",
-			fmt.Sprintf("listening on %s:%s", host, port), nil)
-	}
+	// Report what the app believes the current host to be, and what version.
+	log.Printf("CurrentHost: %s, Version: %s", app.Hostname(), VERSION)
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGHUP, SIGUSR1)
-	errChan := make(chan error)
-
-	// Weigh the anchor!
-	go func() {
-		addr := host + ":" + port
-		if len(certFile) > 0 && len(keyFile) > 0 {
-			if logger != nil {
-				logger.Info("main", "Using TLS", nil)
-			}
-			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, RESTMux)
-		} else {
-			errChan <- http.ListenAndServe(addr, RESTMux)
-		}
-	}()
-
-	go func() {
-		addr := ":" + config.Get("shard.port", "3000")
-		if logger != nil {
-			logger.Info("main", "Starting Router", util.Fields{"port": addr})
-			// TODO: Need TLS?
-		}
-		errChan <- http.ListenAndServe(addr, RouteMux)
-	}()
-
-	// Oh, we have a different context for WebSockets. Weigh that anchor too!
-	if WSMux != RESTMux {
-		if logger != nil {
-			logger.Info("main", "Starting separate context for WS", nil)
-			logger.Info("main",
-				fmt.Sprintf("ws listen on %s:%s", wshost, wsport), nil)
-		}
-		go func() {
-			wsaddr := wshost + ":" + wsport
-			if len(wscertFile) > 0 && len(wskeyFile) > 0 {
-				errChan <- http.ListenAndServeTLS(wsaddr, wscertFile, wskeyFile, WSMux)
-			} else {
-				errChan <- http.ListenAndServe(wsaddr, WSMux)
-			}
-		}()
-	}
 
 	// And we're underway!
+	errChan := app.Run()
 
 	select {
 	case err := <-errChan:
@@ -173,11 +78,8 @@ func main() {
 			panic("ListenAndServe: " + err.Error())
 		}
 	case <-sigChan:
-		if logger != nil {
-			logger.Info("main", "Recieved signal, shutting down.", nil)
-			route.Unregister()
-		}
-		route = nil
+		app.Logger().Info("main", "Recieved signal, shutting down.", nil)
+		app.Router().Unregister()
 	}
 }
 

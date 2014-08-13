@@ -35,7 +35,6 @@ const (
 
 var (
 	errNextCastle = errors.New("Client not found")
-	mux           sync.Mutex
 )
 
 type Router struct {
@@ -51,7 +50,9 @@ type Router struct {
 	serverList  []string
 	host        string
 	scheme      string
+	port        int
 	rclient     *http.Client
+	mux         sync.Mutex
 }
 
 type RouterConfig struct {
@@ -60,6 +61,8 @@ type RouterConfig struct {
 	ctimeout    string
 	rwtimeout   string
 	scheme      string
+	defaultHost string `toml:"default_host"`
+	port        int
 	defaultTTL  string
 	etcdServers []string `toml:"etcd_servers"`
 }
@@ -71,6 +74,7 @@ func (r *Router) ConfigStruct() interface{} {
 		rwtimeout:   "3s",
 		scheme:      "http",
 		defaultTTL:  "24h",
+		port:        3000,
 		bucketSize:  int64(10),
 		etcdServers: []string{"http://localhost:4001"},
 	}
@@ -83,7 +87,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 
 	r.template, err = template.New("Route").Parse(conf.urlTemplate)
 	if err != nil {
-		logger.Critical("router", "Could not parse router template",
+		r.logger.Critical("router", "Could not parse router template",
 			LogFields{"error": err.Error()})
 		return
 	}
@@ -96,8 +100,15 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		r.rwtimeout, _ = time.ParseDuration("3s")
 	}
 	r.scheme = conf.scheme
+	r.port = conf.port
 	r.bucketSize = conf.bucketSize
 	r.serverList = conf.etcdServers
+
+	if conf.defaultHost == "" {
+		r.host = app.Hostname()
+	} else {
+		r.host = conf.defaultHost
+	}
 
 	// default time for the server to be "live"
 	defaultTTLs := conf.defaultTTL
@@ -108,7 +119,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 			LogFields{"value": defaultTTLs, "error": err.Error()})
 	}
 	r.defaultTTL = uint64(defaultTTLd.Seconds())
-	if defaultTTL < 2 {
+	if r.defaultTTL < 2 {
 		r.logger.Critical("router",
 			"default TTL too short",
 			LogFields{"value": defaultTTLs})
@@ -122,7 +133,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	_, err = r.client.CreateDir(ETCD_DIR, 0)
 	if err != nil {
 		if err.Error()[:3] != "105" {
-			logger.Error("router", "etcd createDir error", LogFields{
+			r.logger.Error("router", "etcd createDir error", LogFields{
 				"error": err.Error()})
 		}
 	}
@@ -141,20 +152,20 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 
 	// auto refresh slightly more often than the TTL
 	go func(r *Router, defaultTTL uint64) {
-		timeout := 0.75 * float64(defaultTTL)
+		timeout := 0.75 * float64(r.defaultTTL)
 		tick := time.Tick(time.Second * time.Duration(timeout))
 		for _ = range tick {
 			r.Register()
 		}
-	}(r, defaultTTL)
+	}(r, r.defaultTTL)
 	r.Register()
 	return nil
 }
 
 // Get the servers from the etcd cluster
 func (r *Router) getServers() (reply []string, err error) {
-	mux.Lock()
-	defer mux.Unlock()
+	r.mux.Lock()
+	defer r.mux.Unlock()
 	if time.Now().Sub(r.lastRefresh) < (time.Minute * 5) {
 		return r.serverList, nil
 	}
@@ -190,24 +201,17 @@ func (r *Router) getBuckets(servers []string) (buckets [][]string) {
 
 // register the server to the etcd cluster.
 func (r *Router) Register() (err error) {
-	if r.config.GetFlag("shard.use_aws_host") {
-		if r.host, err = GetAWSPublicHostname(); err != nil {
-			r.logger.Error("router", "Could not get AWS hostname. Using host",
-				LogFields{"error": err.Error()})
-		}
+	var hostname string
+	if r.port != 80 {
+		hostname = r.host + ":" + string(r.port)
+	} else {
+		hostname = r.host
 	}
-	if r.host == "" {
-		r.host = r.config.Get("host", "localhost")
+	if r.logger.ShouldLog(DEBUG) {
+		r.logger.Debug("router", "Registering host", LogFields{"host": r.host})
 	}
-	port := r.config.Get("shard.port", "3000")
-	if port != "80" {
-		r.host = r.host + ":" + port
-	}
-	r.logger.Debug("router", "Registering host", LogFields{"host": r.host})
 	// remember, paths are absolute.
-	_, err = r.client.Set(ETCD_DIR+r.host,
-		r.host,
-		r.defaultTTL)
+	_, err = r.client.Set(ETCD_DIR+hostname, hostname, r.defaultTTL)
 	if err != nil {
 		r.logger.Error("router",
 			"Failed to register",

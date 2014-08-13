@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 )
 
 type PropPing struct {
@@ -23,8 +22,7 @@ var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, logger *SimpleLogger, store *Storage, metrics *Metrics) (*PropPing, error) {
-
+func NewPropPing(connect string, uaid string, app *Application) (*PropPing, error) {
 	var err error
 	var c_js JsMap = make(JsMap)
 	var kind string
@@ -47,49 +45,36 @@ func NewPropPing(connect string, uaid string, logger *SimpleLogger, store *Stora
 
 	switch kind {
 	case "gcm":
-		init_gcm(&c_js, config, logger)
+		init_gcm(&c_js, app.Logger(), app.gcm)
 	}
 
-	if err = store.SetPropConnect(uaid, connect); err != nil {
-		logger.Error("propping", "Could not store connect",
+	if err = app.Storage().SetPropConnect(uaid, connect); err != nil {
+		app.Logger().Error("propping", "Could not store connect",
 			LogFields{"error": err.Error()})
 	}
 
 	return &PropPing{
 		connect: c_js,
-		config:  config,
-		logger:  logger,
-		store:   store,
-		metrics: metrics,
+		logger:  app.Logger(),
+		store:   app.Storage(),
+		metrics: app.Metrics(),
 	}, nil
 }
 
-func init_gcm(connect *JsMap, logger *SimpleLogger) error {
-	ttl, err := strconv.ParseInt(config.Get("gcm.ttl", config.Get("db.timeout_live", "259200")), 10, 0)
-	if err != nil {
-		ttl = 259200
-		logger.Warn("propping",
-			"Could not parse config option time, using 259200",
-			LogFields{"error": err.Error()})
-	}
-	collapse_key := config.Get("gcm.collapse_key", "simplepush")
-	project_id := config.Get("gcm.project_id", "simplepush-gcm")
-	dry_run := config.GetFlag("gcm.dry_run")
-	api_key := config.Get("gcm.api_key", "")
-	gcm_url := config.Get("gcm.url", "https://android.googleapis.com/gcm/send")
-	if api_key == "" {
+func init_gcm(connect *JsMap, logger *SimpleLogger, gcmConfig *GCMConfig) error {
+	if gcmConfig.ApiKey == "" {
 		logger.Error("propping",
 			"No gcm.api_key defined in config file. Cannot send message.",
 			nil)
 		return ConfigurationErr
 	}
 
-	(*connect)["collapse_key"] = collapse_key
-	(*connect)["dry_run"] = dry_run
-	(*connect)["api_key"] = api_key
-	(*connect)["gcm_url"] = gcm_url
-	(*connect)["ttl"] = ttl
-	(*connect)["project_id"] = project_id
+	(*connect)["collapse_key"] = gcmConfig.CollapseKey
+	(*connect)["dry_run"] = gcmConfig.DryRun
+	(*connect)["api_key"] = gcmConfig.ApiKey
+	(*connect)["gcm_url"] = gcmConfig.Url
+	(*connect)["ttl"] = gcmConfig.TTL
+	(*connect)["project_id"] = gcmConfig.ProjectId
 	return nil
 }
 
