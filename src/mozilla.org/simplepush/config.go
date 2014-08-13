@@ -45,7 +45,7 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	// that are defined in the ExtensibleGlobals struct.
 	// Use reflection to extract the ExtensibleGlobals fields or TOML tag
 	// name if available
-	sp_params := make(map[string]interface{})
+	spParams := make(map[string]interface{})
 	pg := ExtensibleGlobals{}
 	rt := reflect.ValueOf(pg).Type()
 	for i := 0; i < rt.NumField(); i++ {
@@ -54,10 +54,10 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 		if len(kname) == 0 {
 			kname = sft.Name
 		}
-		sp_params[kname] = true
+		spParams[kname] = true
 	}
 
-	if err = toml.PrimitiveDecodeStrict(config, configStruct, sp_params); err != nil {
+	if err = toml.PrimitiveDecodeStrict(config, configStruct, spParams); err != nil {
 		configStruct = nil
 		matches := unknownOptionRegex.FindStringSubmatch(err.Error())
 		if len(matches) == 2 {
