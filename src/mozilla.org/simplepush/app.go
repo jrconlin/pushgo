@@ -5,16 +5,16 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
-	"fmt"
-	"github.com/gorilla/mux"
-	"strconv"
-	"time"
-
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"time"
+
+	"code.google.com/p/go.net/websocket"
+	"github.com/gorilla/mux"
 )
 
 type ApplicationConfig struct {

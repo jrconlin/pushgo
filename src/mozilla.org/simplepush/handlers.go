@@ -5,10 +5,6 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
-	"github.com/gorilla/mux"
-	"mozilla.org/simplepush/sperrors"
-
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +17,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"code.google.com/p/go.net/websocket"
+	"github.com/gorilla/mux"
+
+	"mozilla.org/simplepush/sperrors"
 )
 
 var (

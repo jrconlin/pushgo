@@ -5,9 +5,9 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
-
 	"time"
+
+	"code.google.com/p/go.net/websocket"
 )
 
 const (

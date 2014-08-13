@@ -11,10 +11,6 @@ package simplepush
  */
 
 import (
-	"github.com/ianoshen/gomc"
-
-	"mozilla.org/simplepush/sperrors"
-
 	"bufio"
 	"bytes"
 	"encoding/base64"
@@ -29,6 +25,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/ianoshen/gomc"
+
+	"mozilla.org/simplepush/sperrors"
 )
 
 const (

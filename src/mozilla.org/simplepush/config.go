@@ -7,9 +7,10 @@ package simplepush
 
 import (
 	"fmt"
-	"github.com/bbangert/toml"
 	"reflect"
 	"regexp"
+
+	"github.com/bbangert/toml"
 )
 
 // Extensible sections

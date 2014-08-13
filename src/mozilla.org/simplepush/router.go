@@ -14,9 +14,6 @@
 package simplepush
 
 import (
-	"github.com/coreos/go-etcd/etcd"
-	"strconv"
-
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
@@ -24,10 +21,13 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
 	"time"
+
+	"github.com/coreos/go-etcd/etcd"
 )
 
 const (
