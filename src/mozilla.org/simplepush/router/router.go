@@ -15,7 +15,7 @@ package router
 
 import (
 	"github.com/coreos/go-etcd/etcd"
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"bytes"
@@ -53,7 +53,7 @@ type Router struct {
 	client      *etcd.Client
 	lastRefresh time.Time
 	serverList  []string
-	storage     *storage.Storage
+	storage     *storage.Store
 	collider    func(string) bool
 	host        string
 	scheme      string
@@ -250,7 +250,7 @@ func (self *Router) SendUpdate(uaid, chid string, version int64, timer time.Time
 func New(config *util.MzConfig,
 	logger *util.MzLogger,
 	metrics *util.Metrics,
-	storage *storage.Storage,
+	storage *storage.Store,
 	collider func(string) bool) (self *Router) {
 	template, err := template.New("Route").Parse(config.Get("shard.url_template",
 		"{{.Scheme}}://{{.Host}}/route/{{.Uaid}}"))

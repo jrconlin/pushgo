@@ -9,7 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	"mozilla.org/simplepush"
 	"mozilla.org/simplepush/router"
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"encoding/base64"
@@ -33,7 +33,7 @@ var (
 		"logging level (0=none,1=critical ... 10=verbose")
 	logger  *util.MzLogger
 	metrics *util.Metrics
-	store   *storage.Storage
+	store   *storage.Store
 	route   *router.Router
 )
 
@@ -107,7 +107,7 @@ func main() {
 	// Currently, we're opting for a memcache "storage" mechanism, however
 	// and key/value store would suffice. (bonus points if the records are
 	// self expiring.)
-	store = storage.New(config, logger)
+	store = storage.NewStore(config, logger)
 
 	// Routing allows stand-alone instances to send updates between themselves.
 	// Websock does not allow for native redirects in some browsers. Routing

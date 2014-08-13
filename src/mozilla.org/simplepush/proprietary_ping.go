@@ -5,7 +5,7 @@
 package simplepush
 
 import (
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"bytes"
@@ -19,7 +19,7 @@ type PropPing struct {
 	connect util.JsMap
 	config  *util.MzConfig
 	logger  *util.MzLogger
-	store   *storage.Storage
+	store   *storage.Store
 	metrics *util.Metrics
 }
 
@@ -27,7 +27,7 @@ var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.MzLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
+func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.MzLogger, store *storage.Store, metrics *util.Metrics) (*PropPing, error) {
 
 	var err error
 	var c_js util.JsMap = make(util.JsMap)

@@ -5,7 +5,7 @@
 package simplepush
 
 import (
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"encoding/json"
@@ -44,11 +44,11 @@ type Serv struct {
 	config  *util.MzConfig
 	logger  *util.MzLogger
 	metrics *util.Metrics
-	storage *storage.Storage
+	storage *storage.Store
 	key     []byte
 }
 
-func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) *Serv {
+func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Store, key []byte) *Serv {
 	return &Serv{config: config,
 		key:     key,
 		logger:  logger,
@@ -57,7 +57,7 @@ func NewServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metri
 	}
 }
 
-func InitServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Storage, key []byte) (err error) {
+func InitServer(config *util.MzConfig, logger *util.MzLogger, metrics *util.Metrics, storage *storage.Store, key []byte) (err error) {
 	serverSingleton = NewServer(config, logger, metrics, storage, key)
 	return nil
 }
@@ -226,7 +226,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments ut
 	var endPoint string
 	endPoint = self.config.Get("push.endpoint", self.config.Get("pushEndpoint", "http://localhost/update/<token>"))
 	// Generate the call back URL
-	token, err := storage.GenPK(sock.Uaid,
+	token, err := self.storage.GenPK(sock.Uaid,
 		args["channelID"].(string))
 	if err != nil {
 		return 500, nil
@@ -313,7 +313,7 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
     defer MuClient.Unlock()
     if client, ok := Clients[uid]; ok {
         reason = "Failed to generate PK"
-        if pk, err := storage.GenPK(uid, chid); err == nil {
+        if pk, err := self.storage.GenPK(uid, chid); err == nil {
             reason = "Failed to update channel"
             if err = self.storage.UpdateChannel(pk, vers); err == nil {
                 reason = "Failed to flush"

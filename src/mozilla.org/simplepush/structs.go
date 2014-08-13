@@ -6,7 +6,7 @@ package simplepush
 
 import (
 	"code.google.com/p/go.net/websocket"
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"time"
@@ -42,7 +42,7 @@ type PushCommand struct {
 type PushWS struct {
 	Uaid    string          // id
 	Socket  *websocket.Conn // Remote connection
-	Storage *storage.Storage
+	Storage *storage.Store
 	Logger  *util.MzLogger
 	Metrics *util.Metrics
 	Born    time.Time

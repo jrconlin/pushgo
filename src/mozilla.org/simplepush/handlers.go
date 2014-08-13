@@ -9,7 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	"mozilla.org/simplepush/router"
 	"mozilla.org/simplepush/sperrors"
-	storage "mozilla.org/simplepush/storage/mcstorage"
+	"mozilla.org/simplepush/storage"
 	"mozilla.org/util"
 
 	"encoding/json"
@@ -92,7 +92,7 @@ func IStr(i interface{}) (reply string) {
 type Handler struct {
 	config          *util.MzConfig
 	logger          *util.MzLogger
-	storage         *storage.Storage
+	storage         *storage.Store
 	router          *router.Router
 	metrics         *util.Metrics
 	max_connections int64
@@ -101,7 +101,7 @@ type Handler struct {
 
 func NewHandler(config *util.MzConfig,
 	logger *util.MzLogger,
-	storage *storage.Storage,
+	storage *storage.Store,
 	router *router.Router,
 	metrics *util.Metrics,
 	token_key []byte) *Handler {
@@ -324,7 +324,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	uaid, chid, err := storage.ResolvePK(pk)
+	uaid, chid, err := self.storage.ResolvePK(pk)
 	if err != nil {
 		if self.logger != nil {
 			self.logger.Error("update",
