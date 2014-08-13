@@ -56,27 +56,27 @@ type Router struct {
 }
 
 type RouterConfig struct {
-	bucketSize  int64  `toml:"bucket_size"`
-	urlTemplate string `toml:"url_template"`
-	ctimeout    string
-	rwtimeout   string
-	scheme      string
-	defaultHost string `toml:"default_host"`
-	port        int
-	defaultTTL  string
-	etcdServers []string `toml:"etcd_servers"`
+	BucketSize  int64 `toml:"bucket_size"`
+	Ctimeout    string
+	DefaultHost string   `toml:"default_host"`
+	EtcdServers []string `toml:"etcd_servers"`
+	Rwtimeout   string
+	Scheme      string
+	Port        int
+	DefaultTTL  string
+	UrlTemplate string `toml:"url_template"`
 }
 
 func (r *Router) ConfigStruct() interface{} {
 	return &RouterConfig{
-		urlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
-		ctimeout:    "3s",
-		rwtimeout:   "3s",
-		scheme:      "http",
-		defaultTTL:  "24h",
-		port:        3000,
-		bucketSize:  int64(10),
-		etcdServers: []string{"http://localhost:4001"},
+		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
+		Ctimeout:    "3s",
+		Rwtimeout:   "3s",
+		Scheme:      "http",
+		DefaultTTL:  "24h",
+		Port:        3000,
+		BucketSize:  int64(10),
+		EtcdServers: []string{"http://localhost:4001"},
 	}
 }
 
@@ -85,33 +85,33 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 
-	r.template, err = template.New("Route").Parse(conf.urlTemplate)
+	r.template, err = template.New("Route").Parse(conf.UrlTemplate)
 	if err != nil {
 		r.logger.Critical("router", "Could not parse router template",
 			LogFields{"error": err.Error()})
 		return
 	}
-	r.ctimeout, err = time.ParseDuration(conf.ctimeout)
+	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
 	if err != nil {
 		r.ctimeout, _ = time.ParseDuration("3s")
 	}
-	r.rwtimeout, err = time.ParseDuration(conf.rwtimeout)
+	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
 	if err != nil {
 		r.rwtimeout, _ = time.ParseDuration("3s")
 	}
-	r.scheme = conf.scheme
-	r.port = conf.port
-	r.bucketSize = conf.bucketSize
-	r.serverList = conf.etcdServers
+	r.scheme = conf.Scheme
+	r.port = conf.Port
+	r.bucketSize = conf.BucketSize
+	r.serverList = conf.EtcdServers
 
-	if conf.defaultHost == "" {
+	if conf.DefaultHost == "" {
 		r.host = app.Hostname()
 	} else {
-		r.host = conf.defaultHost
+		r.host = conf.DefaultHost
 	}
 
 	// default time for the server to be "live"
-	defaultTTLs := conf.defaultTTL
+	defaultTTLs := conf.DefaultTTL
 	defaultTTLd, err := time.ParseDuration(defaultTTLs)
 	if err != nil {
 		r.logger.Critical("router",

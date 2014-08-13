@@ -110,15 +110,15 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 		a.fullHostname = "https://" + a.hostname
 	} else if usingSSL {
 		a.fullHostname = "https://" + a.hostname + ":" + string(conf.Port)
-	} else if conf.port == 80 {
+	} else if conf.Port == 80 {
 		a.fullHostname = "http://" + a.hostname
 	} else {
 		a.fullHostname = "http://" + a.hostname + ":" + string(conf.Port)
 	}
 
-	a.gcm = &conf.gcm
-	a.host = conf.host
-	a.port = conf.port
+	a.gcm = &conf.Gcm
+	a.host = conf.Host
+	a.port = conf.Port
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
 		err = fmt.Errorf("Unable to parse 'client_min_ping_interval: %s",
 			err.Error())

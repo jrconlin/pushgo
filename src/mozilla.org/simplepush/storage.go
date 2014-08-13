@@ -245,27 +245,27 @@ func keydecode(key string) []byte {
 }
 
 type MemcacheConf struct {
-	recvTimeout  string `toml:"recv_timeout"`
-	sendTimeout  string `toml:"send_timeout"`
-	pollTimeout  string `toml:"poll_timeout"`
-	retryTimeout string `toml:"retry_timeout"`
-	poolSize     int    `toml:"pool_size"`
-	server       []string
+	RecvTimeout  string `toml:"recv_timeout"`
+	SendTimeout  string `toml:"send_timeout"`
+	PollTimeout  string `toml:"poll_timeout"`
+	RetryTimeout string `toml:"retry_timeout"`
+	PoolSize     int    `toml:"pool_size"`
+	Server       []string
 }
 
 type DbConf struct {
-	timeoutLive   int64  `toml:"timeout_live"`
-	timeoutReg    int64  `toml:"timeout_reg"`
-	timeoutDel    int64  `toml:"timeout_del"`
-	handleTimeout string `toml:"handle_time"`
-	propPrefix    string `toml:"prop_prefix"`
-	maxChannels   int    `toml:"max_channels"`
+	TimeoutLive   int64  `toml:"timeout_live"`
+	TimeoutReg    int64  `toml:"timeout_reg"`
+	TimeoutDel    int64  `toml:"timeout_del"`
+	HandleTimeout string `toml:"handle_time"`
+	PropPrefix    string `toml:"prop_prefix"`
+	MaxChannels   int    `toml:"max_channels"`
 }
 
 type StorageConf struct {
-	elasticacheConfigEndpoint string `toml:"elasticache_config_endpoint"`
-	memcache                  MemcacheConf
-	db                        DbConf
+	ElasticacheConfigEndpoint string `toml:"elasticache_config_endpoint"`
+	Memcache                  MemcacheConf
+	Db                        DbConf
 }
 
 type Storage struct {
@@ -281,20 +281,20 @@ type Storage struct {
 
 func (self *Storage) ConfigStruct() interface{} {
 	return &StorageConf{
-		memcache: MemcacheConf{
-			recvTimeout:  "1s",
-			sendTimeout:  "1s",
-			pollTimeout:  "1s",
-			retryTimeout: "1s",
-			poolSize:     100,
-			server:       []string{"127.0.0.1:11211"},
+		Memcache: MemcacheConf{
+			RecvTimeout:  "1s",
+			SendTimeout:  "1s",
+			PollTimeout:  "1s",
+			RetryTimeout: "1s",
+			PoolSize:     100,
+			Server:       []string{"127.0.0.1:11211"},
 		},
-		db: DbConf{
-			timeoutLive:   259200,
-			timeoutReg:    10800,
-			timeoutDel:    86400,
-			handleTimeout: "5s",
-			propPrefix:    "_pc-",
+		Db: DbConf{
+			TimeoutLive:   259200,
+			TimeoutReg:    10800,
+			TimeoutDel:    86400,
+			HandleTimeout: "5s",
+			PropPrefix:    "_pc-",
 		},
 	}
 }
@@ -312,8 +312,8 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*StorageConf)
 	self.logger = app.Logger()
 
-	if conf.elasticacheConfigEndpoint != "" {
-		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.elasticacheConfigEndpoint, 2)
+	if conf.ElasticacheConfigEndpoint != "" {
+		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.ElasticacheConfigEndpoint, 2)
 		if err == nil {
 			// do NOT include any spaces
 			self.servers = strings.Split(no_whitespace.Replace(memcacheEndpoint), ",")
@@ -322,25 +322,25 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 				LogFields{"error": err.Error()})
 		}
 	} else {
-		self.servers = conf.memcache.server
+		self.servers = conf.Memcache.Server
 	}
 
-	self.mc_timeout = parseDuration(conf.db.handleTimeout, "storage.db.handle_timeout", self.logger)
-	self.poolSize = conf.memcache.poolSize
-	self.propPrefix = conf.db.propPrefix
-	self.maxChannels = conf.db.maxChannels
+	self.mc_timeout = parseDuration(conf.Db.HandleTimeout, "storage.db.handle_timeout", self.logger)
+	self.poolSize = conf.Memcache.PoolSize
+	self.propPrefix = conf.Db.PropPrefix
+	self.maxChannels = conf.Db.MaxChannels
 
 	timeouts := make(map[string]int64)
-	timeouts["live"] = conf.db.timeoutLive
-	timeouts["reg"] = conf.db.timeoutReg
-	timeouts["del"] = conf.db.timeoutDel
-	timeouts["mc_recv_timeout"] = parseDuration(conf.memcache.recvTimeout,
+	timeouts["live"] = conf.Db.TimeoutLive
+	timeouts["reg"] = conf.Db.TimeoutReg
+	timeouts["del"] = conf.Db.TimeoutDel
+	timeouts["mc_recv_timeout"] = parseDuration(conf.Memcache.RecvTimeout,
 		"storage.memcache.recv_timeout", self.logger).Nanoseconds() * 1000
-	timeouts["mc_send_timeout"] = parseDuration(conf.memcache.sendTimeout,
+	timeouts["mc_send_timeout"] = parseDuration(conf.Memcache.SendTimeout,
 		"storage.memcache.send_timeout", self.logger).Nanoseconds() * 1000
-	timeouts["mc_poll_timeout"] = parseDuration(conf.memcache.pollTimeout,
+	timeouts["mc_poll_timeout"] = parseDuration(conf.Memcache.PollTimeout,
 		"storage.memcache.poll_timeout", self.logger).Nanoseconds() * 1000
-	timeouts["mc_retry_timeout"] = parseDuration(conf.memcache.retryTimeout,
+	timeouts["mc_retry_timeout"] = parseDuration(conf.Memcache.RetryTimeout,
 		"storage.memcache.retry_timeout", self.logger).Nanoseconds() * 1000
 	self.timeouts = timeouts
 

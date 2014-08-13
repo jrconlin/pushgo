@@ -111,7 +111,7 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	}
 
 	obj := ext()
-	loadedConfig, err := LoadConfigStruct(configFile, obj)
+	loadedConfig, err := LoadConfigStruct(conf, obj)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	app, _ = obj.(*Application)
 
 	// Next, many things require the logger, and logger has no other deps
-	if obj, err = LoadExtensibleSection(app, "logger", AvailableLoggers, configFile); err != nil {
+	if obj, err = LoadExtensibleSection(app, "logging", AvailableLoggers, configFile); err != nil {
 		return
 	}
 	logger, _ := obj.(Logger)

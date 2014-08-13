@@ -92,8 +92,8 @@ func (sl *SimpleLogger) Critical(mtype, msg string, fields LogFields) {
 // Standard output logger implementation
 
 type StdOutLoggerConfig struct {
-	filter int32
-	trace  bool
+	Filter int32
+	Trace  bool
 }
 
 type StdOutLogger struct {
@@ -106,8 +106,8 @@ type StdOutLogger struct {
 
 func (ml *StdOutLogger) ConfigStruct() interface{} {
 	return &StdOutLoggerConfig{
-		filter: 0,
-		trace:  false,
+		Filter: 0,
+		Trace:  false,
 	}
 }
 
@@ -115,8 +115,8 @@ func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*StdOutLoggerConfig)
 	ml.pid = int32(os.Getpid())
 	ml.hostname = app.Hostname()
-	ml.tracer = conf.trace
-	ml.filter = LogLevel(conf.filter)
+	ml.tracer = conf.Trace
+	ml.filter = LogLevel(conf.Filter)
 	return
 }
 

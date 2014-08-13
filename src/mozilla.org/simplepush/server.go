@@ -45,7 +45,7 @@ type Serv struct {
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
-		pushEndpoint: "http://localhost/update/<token>",
+		PushEndpoint: "<current_host>/update/<token>",
 	}
 }
 
