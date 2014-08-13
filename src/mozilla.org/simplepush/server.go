@@ -28,10 +28,10 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	pushEndpoint       string `toml:"push_endpoint"`
-	pushLongPongs      int    `toml:"push_long_ponts"`
-	clientMinPing      string `toml:"client_min_ping"`
-	clientHelloTimeout string `toml:"client_hello_timeout"`
+	PushEndpoint       string `toml:"push_endpoint"`
+	PushLongPongs      int    `toml:"push_long_ponts"`
+	ClientMinPing      string `toml:"client_min_ping"`
+	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
 
 type Serv struct {
@@ -56,7 +56,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.metrics = app.Metrics()
 	self.storage = app.Storage()
 	self.key = app.TokenKey()
-	self.pushEndpoint = conf.pushEndpoint
+	self.pushEndpoint = conf.PushEndpoint
 	return
 }
 

@@ -17,18 +17,18 @@ import (
 )
 
 type ApplicationConfig struct {
-	hostname           string `toml:"current_host"`
-	host               string
-	port               int
-	tokenKey           string `toml:"token_key"`
-	maxConnections     int    `toml:"max_connections"`
-	useAwsHost         bool   `toml:"use_aws_host"`
-	sslCertFile        string `toml:"ssl_cert_file"`
-	sslKeyFile         string `toml:"ssl_key_file"`
-	clientMinPing      string `toml:"client_min_ping_interval"`
-	clientHelloTimeout string `toml:"client_hello_timeout"`
-	pushLongPongs      bool   `toml:"push_long_pongs"`
-	gcm                GCMConfig
+	Hostname           string `toml:"current_host"`
+	Host               string
+	Port               int
+	TokenKey           string `toml:"token_key"`
+	MaxConnections     int    `toml:"max_connections"`
+	UseAwsHost         bool   `toml:"use_aws_host"`
+	SslCertFile        string `toml:"ssl_cert_file"`
+	SslKeyFile         string `toml:"ssl_key_file"`
+	ClientMinPing      string `toml:"client_min_ping_interval"`
+	ClientHelloTimeout string `toml:"client_hello_timeout"`
+	PushLongPongs      bool   `toml:"push_long_pongs"`
+	Gcm                GCMConfig
 }
 
 type GCMConfig struct {
@@ -66,14 +66,14 @@ type Application struct {
 func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
-		hostname:           defaultHost,
-		host:               "0.0.0.0",
-		port:               8080,
-		maxConnections:     1000,
-		useAwsHost:         false,
-		clientMinPing:      "20s",
-		clientHelloTimeout: "30s",
-		gcm: GCMConfig{
+		Hostname:           defaultHost,
+		Host:               "0.0.0.0",
+		Port:               8080,
+		MaxConnections:     1000,
+		UseAwsHost:         false,
+		ClientMinPing:      "20s",
+		ClientHelloTimeout: "30s",
+		Gcm: GCMConfig{
 			TTL:         259200,
 			CollapseKey: "simplepush",
 			ProjectId:   "simplepush-gcm",
@@ -90,49 +90,49 @@ func (a *Application) ConfigStruct() interface{} {
 func (a *Application) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
-	if conf.useAwsHost {
+	if conf.UseAwsHost {
 		if a.hostname, err = GetAWSPublicHostname(); err != nil {
 			return
 		}
 	} else {
-		a.hostname = conf.hostname
+		a.hostname = conf.Hostname
 	}
 
-	token_str := conf.tokenKey
+	token_str := conf.TokenKey
 	if len(token_str) > 0 {
 		if a.tokenKey, err = base64.URLEncoding.DecodeString(token_str); err != nil {
 			return
 		}
 	}
 
-	usingSSL := len(conf.sslCertFile) > 0 && len(conf.sslKeyFile) > 0
-	if usingSSL && conf.port == 443 {
+	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
+	if usingSSL && conf.Port == 443 {
 		a.fullHostname = "https://" + a.hostname
 	} else if usingSSL {
-		a.fullHostname = "https://" + a.hostname + ":" + string(conf.port)
+		a.fullHostname = "https://" + a.hostname + ":" + string(conf.Port)
 	} else if conf.port == 80 {
 		a.fullHostname = "http://" + a.hostname
 	} else {
-		a.fullHostname = "http://" + a.hostname + ":" + string(conf.port)
+		a.fullHostname = "http://" + a.hostname + ":" + string(conf.Port)
 	}
 
 	a.gcm = &conf.gcm
 	a.host = conf.host
 	a.port = conf.port
-	if a.clientMinPing, err = time.ParseDuration(conf.clientMinPing); err != nil {
+	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
 		err = fmt.Errorf("Unable to parse 'client_min_ping_interval: %s",
 			err.Error())
 		return
 	}
-	if a.clientHelloTimeout, err = time.ParseDuration(conf.clientHelloTimeout); err != nil {
+	if a.clientHelloTimeout, err = time.ParseDuration(conf.ClientHelloTimeout); err != nil {
 		err = fmt.Errorf("Unable to parse 'client_hello_timeout: %s",
 			err.Error())
 		return
 	}
-	a.pushLongPongs = conf.pushLongPongs
-	a.sslCertFile = conf.sslCertFile
-	a.sslKeyFile = conf.sslKeyFile
-	a.maxConnnections = conf.maxConnections
+	a.pushLongPongs = conf.PushLongPongs
+	a.sslCertFile = conf.SslCertFile
+	a.sslKeyFile = conf.SslKeyFile
+	a.maxConnnections = conf.MaxConnections
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
 	return
