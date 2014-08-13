@@ -334,13 +334,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	err = self.storage.UpdateChannel(pk, version)
 
 	if err != nil {
-		if self.logger.ShouldLog(ERROR) {
-			self.logger.Error("update", "Cound not update channel",
-				LogFields{"UAID": uaid,
-					"channelID": chid,
-					"version":   strconv.FormatInt(version, 10),
-					"error":     err.Error()})
-		}
+		self.logger.Error("update", "Cound not update channel",
+			LogFields{"UAID": uaid,
+				"channelID": chid,
+				"version":   strconv.FormatInt(version, 10),
+				"error":     err.Error()})
 		status, _ := sperrors.ErrToStatus(err)
 		http.Error(resp, "Could not update channel version", status)
 		return
