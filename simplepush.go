@@ -7,12 +7,13 @@ package main
 import (
 	"flag"
 	"log"
-	"mozilla.org/simplepush"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
+
+	"mozilla.org/simplepush"
 )
 
 var (
