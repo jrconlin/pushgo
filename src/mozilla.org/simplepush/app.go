@@ -8,6 +8,7 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"fmt"
 	"github.com/gorilla/mux"
+	"strconv"
 	"time"
 
 	"encoding/base64"
@@ -109,11 +110,11 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 	if usingSSL && conf.Port == 443 {
 		a.fullHostname = "https://" + a.hostname
 	} else if usingSSL {
-		a.fullHostname = "https://" + a.hostname + ":" + string(conf.Port)
+		a.fullHostname = "https://" + a.hostname + ":" + strconv.Itoa(conf.Port)
 	} else if conf.Port == 80 {
 		a.fullHostname = "http://" + a.hostname
 	} else {
-		a.fullHostname = "http://" + a.hostname + ":" + string(conf.Port)
+		a.fullHostname = "http://" + a.hostname + ":" + strconv.Itoa(conf.Port)
 	}
 
 	a.gcm = &conf.Gcm
@@ -184,13 +185,13 @@ func (a *Application) Run() (errChan chan error) {
 
 	RouteMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
 
-	a.log.Info("app", fmt.Sprintf("listening on %s:%s", a.host, a.port), nil)
+	a.log.Info("app", fmt.Sprintf("listening on %s:%d", a.host, a.port), nil)
 
 	// Weigh the anchor!
 	go func() {
-		addr := a.host + ":" + string(a.port)
+		addr := a.host + ":" + strconv.Itoa(a.port)
 		if len(a.sslCertFile) > 0 && len(a.sslKeyFile) > 0 {
-			a.log.Info("main", "Using TLS", nil)
+			a.log.Info("app", "Using TLS", nil)
 			errChan <- http.ListenAndServeTLS(addr, a.sslCertFile, a.sslKeyFile, RESTMux)
 		} else {
 			errChan <- http.ListenAndServe(addr, RESTMux)
@@ -198,8 +199,8 @@ func (a *Application) Run() (errChan chan error) {
 	}()
 
 	go func() {
-		addr := ":" + string(a.router.port)
-		a.log.Info("main", "Starting Router", LogFields{"port": addr})
+		addr := ":" + strconv.Itoa(a.router.port)
+		a.log.Info("app", "Starting Router", LogFields{"port": addr})
 		errChan <- http.ListenAndServe(addr, RouteMux)
 	}()
 

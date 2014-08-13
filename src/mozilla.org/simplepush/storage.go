@@ -284,7 +284,7 @@ func (self *Storage) ConfigStruct() interface{} {
 		Memcache: MemcacheConf{
 			RecvTimeout:  "1s",
 			SendTimeout:  "1s",
-			PollTimeout:  "1s",
+			PollTimeout:  "10ms",
 			RetryTimeout: "1s",
 			PoolSize:     100,
 			Server:       []string{"127.0.0.1:11211"},
@@ -350,6 +350,7 @@ func (self *Storage) Init(app *Application, config interface{}) (err error) {
 	for i := 0; i < self.poolSize; i++ {
 		mcs <- self.newMC()
 	}
+	self.mcs = mcs
 
 	return
 }
@@ -495,6 +496,7 @@ func (self *Storage) storeAppIDArray(uaid []byte, arr ia) (err error) {
 
 	err = mc.Set(keycode(uaid), arr, 0)
 	if err != nil {
+		log.Println("ERROR: EEKS: ", keycode(uaid))
 		self.isFatal(err)
 	}
 	return err

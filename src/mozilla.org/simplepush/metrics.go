@@ -24,9 +24,9 @@ type JsMap map[string]interface{}
 type timer map[string]trec
 
 type MetricsConfig struct {
-	prefix       string
-	statsdServer string `toml:"statsd_server"`
-	statsdName   string `toml:"statsd_name"`
+	Prefix       string
+	StatsdServer string `toml:"statsd_server"`
+	StatsdName   string `toml:"statsd_name"`
 }
 
 type Metrics struct {
@@ -41,8 +41,8 @@ type Metrics struct {
 
 func (m *Metrics) ConfigStruct() interface{} {
 	return &MetricsConfig{
-		prefix:     "simplepush",
-		statsdName: "undef",
+		Prefix:     "simplepush",
+		StatsdName: "undef",
 	}
 }
 
@@ -51,9 +51,9 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 
 	m.logger = app.Logger()
 
-	if conf.statsdServer != "" {
-		name := strings.ToLower(conf.statsdName)
-		client, err := statsd.New(conf.statsdServer, name)
+	if conf.StatsdServer != "" {
+		name := strings.ToLower(conf.StatsdName)
+		client, err := statsd.New(conf.StatsdServer, name)
 		if err != nil {
 			m.logger.Error("metrics", "Could not init statsd connection",
 				LogFields{"error": err.Error()})
@@ -64,7 +64,7 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 
 	m.dict = make(map[string]int64)
 	m.timer = make(timer)
-	m.prefix = conf.prefix
+	m.prefix = conf.Prefix
 	m.born = time.Now()
 	m.metrex = new(sync.Mutex)
 	return

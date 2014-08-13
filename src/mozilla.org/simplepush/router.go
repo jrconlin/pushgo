@@ -15,6 +15,7 @@ package simplepush
 
 import (
 	"github.com/coreos/go-etcd/etcd"
+	"strconv"
 
 	"bytes"
 	"crypto/tls"
@@ -203,7 +204,7 @@ func (r *Router) getBuckets(servers []string) (buckets [][]string) {
 func (r *Router) Register() (err error) {
 	var hostname string
 	if r.port != 80 {
-		hostname = r.host + ":" + string(r.port)
+		hostname = r.host + ":" + strconv.Itoa(r.port)
 	} else {
 		hostname = r.host
 	}
