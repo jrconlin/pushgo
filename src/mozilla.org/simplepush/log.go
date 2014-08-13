@@ -125,6 +125,11 @@ func (ml *StdOutLogger) ShouldLog(level LogLevel) bool {
 }
 
 func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields LogFields) {
+	// Return ASAP if we shouldn't be logging
+	if !ml.ShouldLog(level) {
+		return
+	}
+
 	var caller LogFields
 	// add in go language tracing. (Also CPU intensive, but REALLY helpful
 	// when dev/debugging)
@@ -139,22 +144,19 @@ func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields 
 		}
 	}
 
-	// Only print out the debug message if it's less than the filter.
-	if level < ml.filter {
-		dump := fmt.Sprintf("[%d]% 7s: %s", level, messageType, payload)
-		if len(fields) > 0 {
-			var fld []string
-			for key, val := range fields {
-				fld = append(fld, key+": "+val)
-			}
-			dump += " {" + strings.Join(fld, ", ") + "}"
+	dump := fmt.Sprintf("[%d]% 7s: %s", level, messageType, payload)
+	if len(fields) > 0 {
+		var fld []string
+		for key, val := range fields {
+			fld = append(fld, key+": "+val)
 		}
-		if len(caller) > 0 {
-			dump += fmt.Sprintf(" [%s:%s %s]", caller["file"],
-				caller["line"], caller["name"])
-		}
-		log.Printf(dump)
+		dump += " {" + strings.Join(fld, ", ") + "}"
 	}
+	if len(caller) > 0 {
+		dump += fmt.Sprintf(" [%s:%s %s]", caller["file"],
+			caller["line"], caller["name"])
+	}
+	log.Printf(dump)
 	return
 }
 
