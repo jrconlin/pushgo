@@ -35,9 +35,6 @@ type HasConfigStruct interface {
 
 var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
-// If `configable` supports the `HasConfigStruct` interface this will use said
-// interface to fetch a config struct object and populate it w/ the values in
-// provided `config`. If not, simply returns `config` unchanged.
 func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
