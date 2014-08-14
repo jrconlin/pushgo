@@ -29,6 +29,35 @@ type Update struct {
 	Version   uint64 `json:"version"`
 }
 
+// DbConf specifies generic database adapter options.
+type DbConf struct {
+	// TimeoutLive is the active channel record timeout. Defaults to 3 days.
+	TimeoutLive time.Duration `toml:"timeout_live"`
+
+	// TimeoutReg is the registered channel record timeout. Defaults to 3 hours;
+	// an app server should send a notification on a registered channel before
+	// this timeout.
+	TimeoutReg time.Duration `toml:"timeout_reg"`
+
+	// TimeoutDel is the deleted channel record timeout. Defaults to 1 day;
+	// deleted records will be pruned after this timeout.
+	TimeoutDel time.Duration `toml:"timeout_del"`
+
+	// HandleTimeout is the maximum time to wait when acquiring a connection from
+	// the pool. Defaults to 5 seconds.
+	HandleTimeout time.Duration `toml:"handle_time"`
+
+	// HostPrefix is the key prefix for client hosts. Defaults to `"_h-"`.
+	HostPrefix string `toml:"shard_prefix"`
+
+	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
+	// `"_pc-"`.
+	PingPrefix string `toml:"prop_prefix"`
+
+	// MaxChannels is the maximum number of allowed channels. Defaults to 200.
+	MaxChannels int `toml:"max_channels"`
+}
+
 // Store describes a storage adapter.
 type Store interface {
 	// MaxChannels returns the maximum number of channel registrations allowed

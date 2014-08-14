@@ -10,11 +10,12 @@ import (
 	"time"
 )
 
-// NoStoreConfig is required for reflection; the TOML parser will panic if
-// `NoStore.ConfigStruct()` returns `nil`.
-type NoStoreConfig struct{}
+type NoStoreConfig struct {
+	Db DbConf
+}
 
 type NoStore struct {
+	config *NoStoreConfig
 	logger *SimpleLogger
 }
 
@@ -33,13 +34,21 @@ func (*NoStore) IDsToKey(suaid, schid string) (key string, ok bool) {
 	return
 }
 
-func (*NoStore) ConfigStruct() interface{} { return new(NoStoreConfig) }
+func (*NoStore) ConfigStruct() interface{} {
+	return &NoStoreConfig{
+		Db: DbConf{
+			MaxChannels: 200,
+		},
+	}
+}
+
 func (n *NoStore) Init(app *Application, config interface{}) error {
+	n.config = config.(*NoStoreConfig)
 	n.logger = app.Logger()
 	return nil
 }
 
-func (*NoStore) MaxChannels() int                                       { return 0 }
+func (n *NoStore) MaxChannels() int                                     { return n.config.Db.MaxChannels }
 func (*NoStore) Close() error                                           { return nil }
 func (*NoStore) Status() (bool, error)                                  { return true, nil }
 func (*NoStore) Exists(string) bool                                     { return true }
