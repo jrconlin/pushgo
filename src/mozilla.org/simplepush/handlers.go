@@ -15,17 +15,12 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
 
 	"mozilla.org/simplepush/sperrors"
-)
-
-var (
-	toomany int32 = 0
 )
 
 type HandlerConfig struct{}
@@ -157,17 +152,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	var pping *PropPing
 
 	if self.app.ClientCount() > int(self.max_connections) {
-		if toomany == 0 {
-			atomic.StoreInt32(&toomany, 1)
-			self.logger.Error("handler", "Socket Count Exceeded", nil)
-		}
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
 		self.metrics.Increment("updates.appserver.too_many_connections")
 		return
-	}
-	if toomany != 0 {
-		atomic.StoreInt32(&toomany, 0)
 	}
 
 	timer := time.Now()
@@ -355,18 +343,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	if self.app.ClientCount() > int(self.max_connections) {
-		if toomany == 0 {
-			// Don't flood the error log.
-			atomic.StoreInt32(&toomany, 1)
-			self.logger.Error("dash", "Socket Count Exceeded", nil)
-		}
 		websocket.JSON.Send(ws, JsMap{
 			"status": http.StatusServiceUnavailable,
 			"error":  "Server Unavailable"})
 		return
-	}
-	if toomany != 0 {
-		atomic.StoreInt32(&toomany, 0)
 	}
 	timer := time.Now()
 	sock := PushWS{Uaid: "",
