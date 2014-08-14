@@ -38,9 +38,9 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid    string          // id
-	Socket  *websocket.Conn // Remote connection
-	Storage *Storage
+	Uaid   string          // id
+	Socket *websocket.Conn // Remote connection
+	Store
 	Logger  *SimpleLogger
 	Metrics *Metrics
 	Born    time.Time

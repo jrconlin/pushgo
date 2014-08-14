@@ -38,7 +38,7 @@ type Serv struct {
 	app          *Application
 	logger       *SimpleLogger
 	metrics      *Metrics
-	storage      *Storage
+	store        Store
 	key          []byte
 	pushEndpoint string
 }
@@ -54,7 +54,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.app = app
 	self.logger = app.Logger()
 	self.metrics = app.Metrics()
-	self.storage = app.Storage()
+	self.store = app.Store()
 	self.key = app.TokenKey()
 	self.pushEndpoint = conf.PushEndpoint
 	return
@@ -193,8 +193,8 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	var endPoint string
 	endPoint = self.pushEndpoint
 	// Generate the call back URL
-	token, err := GenPK(sock.Uaid, args["channelID"].(string))
-	if err != nil {
+	token, ok := self.store.IDsToKey(sock.Uaid, args["channelID"].(string))
+	if !ok {
 		return 500, nil
 	}
 	// if there is a key, encrypt the token
@@ -261,23 +261,32 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments Js
 }
 
 func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
-	updateErr := errors.New("Update Error")
-	reason := "Unknown UID"
-	if client, ok := self.app.GetClient(uid); ok {
-		reason = "Failed to generate PK"
-		if pk, err := GenPK(uid, chid); err == nil {
-			reason = "Failed to update channel"
-			if err = self.storage.UpdateChannel(pk, vers); err == nil {
-				reason = "Failed to flush"
-				if err = self.RequestFlush(client, chid, vers); err == nil {
-					reason = ""
-					return nil
-				}
-			}
-		}
+	var (
+		reason, pk string
+		ok         bool
+	)
+	client, ok := self.app.GetClient(uid)
+	if !ok {
+		reason = "Unknown UID"
+		goto Error
 	}
+	pk, ok = self.store.IDsToKey(uid, chid)
+	if !ok {
+		reason = "Failed to generate PK"
+		goto Error
+	}
+	if err = self.store.Update(pk, vers); err != nil {
+		reason = "Failed to update channel"
+		goto Error
+	}
+	if err = self.RequestFlush(client, chid, vers); err != nil {
+		reason = "Failed to flush"
+		goto Error
+	}
+	return nil
+Error:
 	if err == nil {
-		err = updateErr
+		err = errors.New("Update Error")
 	}
 	self.logger.Error("server", reason,
 		LogFields{"error": err.Error(),

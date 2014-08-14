@@ -58,7 +58,7 @@ type Application struct {
 	clients            map[string]*Client
 	clientMux          *sync.RWMutex
 	server             *Serv
-	storage            *Storage
+	store              Store
 	router             *Router
 	handlers           *Handler
 	gcm                *GCMConfig
@@ -149,8 +149,8 @@ func (a *Application) SetMetrics(metrics *Metrics) error {
 	return nil
 }
 
-func (a *Application) SetStorage(storage *Storage) error {
-	a.storage = storage
+func (a *Application) SetStore(store Store) error {
+	a.store = store
 	return nil
 }
 
@@ -222,8 +222,8 @@ func (a *Application) Logger() *SimpleLogger {
 	return a.log
 }
 
-func (a *Application) Storage() *Storage {
-	return a.storage
+func (a *Application) Store() Store {
+	return a.store
 }
 
 func (a *Application) Metrics() *Metrics {

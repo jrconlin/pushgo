@@ -14,7 +14,7 @@ import (
 type PropPing struct {
 	connect JsMap
 	logger  *SimpleLogger
-	store   *Storage
+	store   Store
 	metrics *Metrics
 }
 
@@ -48,7 +48,7 @@ func NewPropPing(connect string, uaid string, app *Application) (*PropPing, erro
 		init_gcm(&c_js, app.Logger(), app.gcm)
 	}
 
-	if err = app.Storage().SetPropConnect(uaid, connect); err != nil {
+	if err = app.Store().PutPing(uaid, connect); err != nil {
 		app.Logger().Error("propping", "Could not store connect",
 			LogFields{"error": err.Error()})
 	}
@@ -56,7 +56,7 @@ func NewPropPing(connect string, uaid string, app *Application) (*PropPing, erro
 	return &PropPing{
 		connect: c_js,
 		logger:  app.Logger(),
-		store:   app.Storage(),
+		store:   app.Store(),
 		metrics: app.Metrics(),
 	}, nil
 }

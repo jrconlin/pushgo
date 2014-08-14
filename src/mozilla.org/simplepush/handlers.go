@@ -33,7 +33,7 @@ type HandlerConfig struct{}
 type Handler struct {
 	app             *Application
 	logger          *SimpleLogger
-	storage         *Storage
+	store           Store
 	router          *Router
 	metrics         *Metrics
 	max_connections int
@@ -47,7 +47,7 @@ func (self *Handler) ConfigStruct() interface{} {
 func (self *Handler) Init(app *Application, config interface{}) error {
 	self.app = app
 	self.logger = app.Logger()
-	self.storage = app.Storage()
+	self.store = app.Store()
 	self.metrics = app.Metrics()
 	self.router = app.Router()
 	self.max_connections = app.MaxConnections()
@@ -99,7 +99,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	if okClients = clientCount > int(self.max_connections); !okClients {
 		msg += "Exceeding max_connections, "
 	}
-	mcStatus, err := self.storage.Status()
+	mcStatus, err := self.store.Status()
 	if !mcStatus {
 		msg += fmt.Sprintf(" Memcache error %s,", err)
 	}
@@ -249,13 +249,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	uaid, chid, err := ResolvePK(pk)
-	if err != nil {
+	uaid, chid, ok := self.store.KeyToIDs(pk)
+	if !ok {
 		self.logger.Error("update",
 			"Could not resolve PK",
 			LogFields{"primaryKey": pk,
-				"path":  req.URL.Path,
-				"error": ErrStr(err)})
+				"path": req.URL.Path})
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -284,7 +283,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	// is there a Proprietary Ping for this?
-	connect, err := self.storage.GetPropConnect(uaid)
+	connect, err := self.store.FetchPing(uaid)
 	if err == nil && len(connect) > 0 {
 		fmt.Printf("### Connect %s\n", connect)
 		// TODO: store the prop ping?
@@ -331,7 +330,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			LogFields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(version, 10)})
 	}
-	err = self.storage.UpdateChannel(pk, version)
+	err = self.store.Update(pk, version)
 
 	if err != nil {
 		self.logger.Error("update", "Cound not update channel",
@@ -370,10 +369,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	}
 	timer := time.Now()
 	sock := PushWS{Uaid: "",
-		Socket:  ws,
-		Storage: self.storage,
-		Logger:  self.logger,
-		Born:    timer}
+		Socket: ws,
+		Store:  self.store,
+		Logger: self.logger,
+		Born:   timer}
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("handler", "websocket connection", LogFields{

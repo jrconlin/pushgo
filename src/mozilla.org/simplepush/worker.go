@@ -59,7 +59,7 @@ func NewWorker(app *Application) *Worker {
 	var maxChannels int
 	var pingInterval int
 
-	maxChannels = app.Storage().maxChannels
+	maxChannels = app.Store().MaxChannels()
 	pingInterval = int(app.clientMinPing.Seconds())
 
 	return &Worker{
@@ -315,7 +315,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			if num > self.maxChannels {
 				forceReset = forceReset || true
 			}
-			if !sock.Storage.IsKnownUaid(sock.Uaid) {
+			if !sock.Store.Exists(sock.Uaid) {
 				forceReset = forceReset || true
 			}
 		}
@@ -326,7 +326,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 				LogFields{"uaid": sock.Uaid})
 		}
 		if len(sock.Uaid) > 0 {
-			sock.Storage.PurgeUAID(sock.Uaid)
+			sock.Store.DropAll(sock.Uaid)
 		}
 		sock.Uaid, _ = GenUUID4()
 	}
@@ -385,11 +385,36 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(JsMap)
-	if data["updates"] == nil {
+	data, _ := buffer.(JsMap)
+	updates, _ := data["updates"].([]interface{})
+	if len(updates) == 0 {
 		return sperrors.MissingDataError
 	}
-	err = sock.Storage.Ack(sock.Uaid, data)
+	var (
+		update map[string]interface{}
+		schid  string
+		ok     bool
+	)
+	for _, field := range updates {
+		if update, ok = field.(map[string]interface{}); !ok {
+			continue
+		}
+		if schid, ok = update["channelID"].(string); !ok {
+			continue
+		}
+		if err = sock.Store.Drop(sock.Uaid, schid); err != nil {
+			break
+		}
+	}
+	expired, _ := data["expired"].([]interface{})
+	for _, field := range expired {
+		if schid, ok = field.(string); !ok {
+			continue
+		}
+		if err = sock.Store.Drop(sock.Uaid, schid); err != nil {
+			break
+		}
+	}
 	// Get the lastAccessed time from wherever.
 	if err == nil {
 		return self.Flush(sock, 0, "", 0)
@@ -425,13 +450,13 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	if len(appid) > CHID_MAX_LEN {
 		return sperrors.InvalidDataError
 	}
-	if self.filter.Find([]byte(strings.ToLower(appid))) != nil {
+	if self.filter.FindStringIndex(strings.ToLower(appid)) != nil {
 		return sperrors.InvalidDataError
 	}
-	err = sock.Storage.RegisterAppID(sock.Uaid, appid, 0)
+	err = sock.Store.Register(sock.Uaid, appid, 0)
 	if err != nil {
 		self.logger.Error("worker",
-			fmt.Sprintf("ERROR: RegisterAppID failed %s", err),
+			fmt.Sprintf("ERROR: Register failed %s", err),
 			nil)
 		return err
 	}
@@ -488,7 +513,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 	}
 	appid := data["channelID"].(string)
 	// Always return success for an UNREG.
-	sock.Storage.DeleteAppID(sock.Uaid, appid, false)
+	sock.Store.Unregister(sock.Uaid, appid)
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"cmd": "unregister", "error": ErrStr(err)})
@@ -527,53 +552,50 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		return nil
 	}
 	// Fetch the pending updates from #storage
-	var updates JsMap
+	var (
+		updates []Update
+		reply   JsMap
+	)
 	mod := false
 	// if we have a channel, don't flush. we can get them later in the ACK
-	if channel == "" {
-		updates, err = sock.Storage.GetUpdates(sock.Uaid, lastAccessed)
+	if len(channel) == 0 {
+		var expired []string
+		updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0))
 		if err != nil {
 			self.handleError(sock, JsMap{"messageType": messageType}, err)
 			return err
 		}
+		if len(updates) > 0 || len(expired) > 0 {
+			reply = JsMap{"updates": updates, "expired": expired}
+		}
 	} else {
 		// hand craft a notification update to the client.
 		// TODO: allow bulk updates.
-		update := make([]map[string]interface{}, 1)
-		update[0] = make(map[string]interface{}, 2)
-		update[0]["channelID"] = channel
-		update[0]["version"] = version
-		updates = JsMap{"updates": update}
+		updates = []Update{Update{channel, uint64(version)}}
+		reply = JsMap{"updates": updates}
 	}
-	if updates == nil {
+	if reply == nil {
 		return nil
 	}
-	var updatess []string
-	for _, update := range updates["updates"].([]map[string]interface{}) {
-		if update == nil {
-			continue
+	var logStrings []string
+	if len(channel) > 0 {
+		logStrings := make([]string, len(updates))
+		prefix := ">>"
+		if !mod {
+			prefix = "+>"
 		}
-		if channel != "" {
-			prefix := ">>"
-			if !mod {
-				prefix = "+>"
-			}
-			line := prefix + " " +
-				sock.Uaid + "." +
-				IStr(update["channelID"]) + " = " +
-				strconv.FormatInt(update["version"].(int64), 10)
-			// log.Print(line)
-			updatess = append(updatess, line)
+		for index, update := range updates {
+			logStrings[index] = fmt.Sprintf("%s %s.%s = %d", prefix, sock.Uaid, update.ChannelID, update.Version)
 			self.metrics.Increment("updates.sent")
 		}
 	}
 
-	updates["messageType"] = messageType
+	reply["messageType"] = messageType
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "Flushing data back to socket",
-			LogFields{"updates": "[" + strings.Join(updatess, ", ") + "]"})
+			LogFields{"updates": "[" + strings.Join(logStrings, ", ") + "]"})
 	}
-	websocket.JSON.Send(sock.Socket, updates)
+	websocket.JSON.Send(sock.Socket, reply)
 	return nil
 }
 
