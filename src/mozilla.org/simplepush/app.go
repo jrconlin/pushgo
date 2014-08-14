@@ -107,13 +107,13 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 
 	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
 	if usingSSL && conf.Port == 443 {
-		a.fullHostname = "https://" + a.hostname
+		a.fullHostname = fmt.Sprintf("https://%s", a.hostname)
 	} else if usingSSL {
-		a.fullHostname = "https://" + a.hostname + ":" + strconv.Itoa(conf.Port)
+		a.fullHostname = fmt.Sprintf("https://%s:%d", a.hostname, conf.Port)
 	} else if conf.Port == 80 {
-		a.fullHostname = "http://" + a.hostname
+		a.fullHostname = fmt.Sprintf("http://%s", a.hostname)
 	} else {
-		a.fullHostname = "http://" + a.hostname + ":" + strconv.Itoa(conf.Port)
+		a.fullHostname = fmt.Sprintf("http://%s:%d", a.hostname, conf.Port)
 	}
 
 	a.gcm = &conf.Gcm
