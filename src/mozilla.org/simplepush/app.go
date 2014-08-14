@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
@@ -57,6 +58,7 @@ type Application struct {
 	metrics            *Metrics
 	clients            map[string]*Client
 	clientMux          *sync.RWMutex
+	clientCount        *int32
 	server             *Serv
 	storage            *Storage
 	router             *Router
@@ -135,6 +137,8 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 	a.maxConnnections = conf.MaxConnections
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
+	count := int32(0)
+	a.clientCount = &count
 	return
 }
 
@@ -243,10 +247,7 @@ func (a *Application) TokenKey() []byte {
 }
 
 func (a *Application) ClientCount() (count int) {
-	a.clientMux.RLock()
-	count = len(a.clients)
-	a.clientMux.RUnlock()
-	return
+	return int(atomic.LoadInt32(a.clientCount))
 }
 
 func (a *Application) ClientExists(uaid string) (collision bool) {
@@ -265,10 +266,12 @@ func (a *Application) AddClient(uaid string, client *Client) {
 	a.clientMux.Lock()
 	a.clients[uaid] = client
 	a.clientMux.Unlock()
+	atomic.AddInt32(a.clientCount, 1)
 }
 
 func (a *Application) RemoveClient(uaid string) {
 	a.clientMux.Lock()
 	delete(a.clients, uaid)
 	a.clientMux.Unlock()
+	atomic.AddInt32(a.clientCount, -1)
 }
