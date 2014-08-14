@@ -49,18 +49,13 @@ func ErrStr(err error) string {
 
 // Attempt to convert an interface to a string, ignore failures
 func IStr(i interface{}) (reply string) {
-	defer func() {
-		if r := recover(); r != nil {
-			reply = "Undefined"
-		}
-	}()
-
-	if i != nil {
-		reply = i.(string)
-	} else {
-		reply = ""
+	if i == nil {
+		return ""
 	}
-	return reply
+	if reply, ok := i.(string); ok {
+		return reply
+	}
+	return "Undefined"
 }
 
 // SimplePush Logger implementation, utilizes the passed in Logger
