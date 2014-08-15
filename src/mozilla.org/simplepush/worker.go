@@ -5,18 +5,20 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"mozilla.org/simplepush/sperrors"
 	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"code.google.com/p/go.net/websocket"
+
+	"mozilla.org/simplepush/sperrors"
 )
 
 var MissingChannelErr = errors.New("Missing channelID")

@@ -14,20 +14,21 @@
 package simplepush
 
 import (
-	"github.com/coreos/go-etcd/etcd"
-	"strconv"
-
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
 	"time"
+
+	"github.com/coreos/go-etcd/etcd"
 )
 
 const (
@@ -94,11 +95,11 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	}
 	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
 	if err != nil {
-		r.ctimeout, _ = time.ParseDuration("3s")
+		return fmt.Errorf("Unable to parse router ctimeout: %s", err.Error())
 	}
 	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
 	if err != nil {
-		r.rwtimeout, _ = time.ParseDuration("3s")
+		return fmt.Errorf("Unable to parse router rwtimeout: %s", err.Error())
 	}
 	r.scheme = conf.Scheme
 	r.port = conf.Port
@@ -152,13 +153,13 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	}
 
 	// auto refresh slightly more often than the TTL
-	go func(r *Router, defaultTTL uint64) {
+	go func() {
 		timeout := 0.75 * float64(r.defaultTTL)
 		tick := time.Tick(time.Second * time.Duration(timeout))
 		for _ = range tick {
 			r.Register()
 		}
-	}(r, r.defaultTTL)
+	}()
 	r.Register()
 	return nil
 }
@@ -289,7 +290,10 @@ func (r *Router) bucketSend(uaid string, msg []byte, serverList []string) (succe
 					req.Header.Add("Content-Type", "application/json")
 					if err = r.send(r.rclient, req, server); err == nil {
 						r.logger.Debug("router", "Server accepted", LogFields{"server": server})
-						test <- true
+						select {
+						case test <- true:
+						default:
+						}
 						return
 					}
 				}

@@ -5,16 +5,17 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
-	"fmt"
-	"github.com/gorilla/mux"
-	"strconv"
-	"time"
-
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"code.google.com/p/go.net/websocket"
+	"github.com/gorilla/mux"
 )
 
 type ApplicationConfig struct {
@@ -57,6 +58,7 @@ type Application struct {
 	metrics            *Metrics
 	clients            map[string]*Client
 	clientMux          *sync.RWMutex
+	clientCount        *int32
 	server             *Serv
 	storage            *Storage
 	router             *Router
@@ -99,22 +101,21 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 		a.hostname = conf.Hostname
 	}
 
-	token_str := conf.TokenKey
-	if len(token_str) > 0 {
-		if a.tokenKey, err = base64.URLEncoding.DecodeString(token_str); err != nil {
+	if len(conf.TokenKey) > 0 {
+		if a.tokenKey, err = base64.URLEncoding.DecodeString(conf.TokenKey); err != nil {
 			return
 		}
 	}
 
 	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
 	if usingSSL && conf.Port == 443 {
-		a.fullHostname = "https://" + a.hostname
+		a.fullHostname = fmt.Sprintf("https://%s", a.hostname)
 	} else if usingSSL {
-		a.fullHostname = "https://" + a.hostname + ":" + strconv.Itoa(conf.Port)
+		a.fullHostname = fmt.Sprintf("https://%s:%d", a.hostname, conf.Port)
 	} else if conf.Port == 80 {
-		a.fullHostname = "http://" + a.hostname
+		a.fullHostname = fmt.Sprintf("http://%s", a.hostname)
 	} else {
-		a.fullHostname = "http://" + a.hostname + ":" + strconv.Itoa(conf.Port)
+		a.fullHostname = fmt.Sprintf("http://%s:%d", a.hostname, conf.Port)
 	}
 
 	a.gcm = &conf.Gcm
@@ -136,6 +137,8 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 	a.maxConnnections = conf.MaxConnections
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
+	count := int32(0)
+	a.clientCount = &count
 	return
 }
 
@@ -244,10 +247,7 @@ func (a *Application) TokenKey() []byte {
 }
 
 func (a *Application) ClientCount() (count int) {
-	a.clientMux.RLock()
-	count = len(a.clients)
-	a.clientMux.RUnlock()
-	return
+	return int(atomic.LoadInt32(a.clientCount))
 }
 
 func (a *Application) ClientExists(uaid string) (collision bool) {
@@ -266,10 +266,12 @@ func (a *Application) AddClient(uaid string, client *Client) {
 	a.clientMux.Lock()
 	a.clients[uaid] = client
 	a.clientMux.Unlock()
+	atomic.AddInt32(a.clientCount, 1)
 }
 
 func (a *Application) RemoveClient(uaid string) {
 	a.clientMux.Lock()
 	delete(a.clients, uaid)
 	a.clientMux.Unlock()
+	atomic.AddInt32(a.clientCount, -1)
 }

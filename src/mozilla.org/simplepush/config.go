@@ -7,9 +7,10 @@ package simplepush
 
 import (
 	"fmt"
-	"github.com/bbangert/toml"
 	"reflect"
 	"regexp"
+
+	"github.com/bbangert/toml"
 )
 
 // Extensible sections
@@ -34,9 +35,6 @@ type HasConfigStruct interface {
 
 var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
-// If `configable` supports the `HasConfigStruct` interface this will use said
-// interface to fetch a config struct object and populate it w/ the values in
-// provided `config`. If not, simply returns `config` unchanged.
 func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
@@ -47,7 +45,7 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	// that are defined in the ExtensibleGlobals struct.
 	// Use reflection to extract the ExtensibleGlobals fields or TOML tag
 	// name if available
-	sp_params := make(map[string]interface{})
+	spParams := make(map[string]interface{})
 	pg := ExtensibleGlobals{}
 	rt := reflect.ValueOf(pg).Type()
 	for i := 0; i < rt.NumField(); i++ {
@@ -56,10 +54,10 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 		if len(kname) == 0 {
 			kname = sft.Name
 		}
-		sp_params[kname] = true
+		spParams[kname] = true
 	}
 
-	if err = toml.PrimitiveDecodeStrict(config, configStruct, sp_params); err != nil {
+	if err = toml.PrimitiveDecodeStrict(config, configStruct, spParams); err != nil {
 		configStruct = nil
 		matches := unknownOptionRegex.FindStringSubmatch(err.Error())
 		if len(matches) == 2 {
@@ -72,11 +70,11 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 
 // Loads the config for a section supplied, configures the supplied object, and initializes
 func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
-	configFile ConfigFile) (loadedObject interface{}, err error) {
+	configFile ConfigFile) (err error) {
 
 	conf, ok := configFile[sectionName]
 	if !ok {
-		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
+		return fmt.Errorf("Error loading config file, section: %s", sectionName)
 	}
 	confStruct := obj.ConfigStruct()
 	if err = toml.PrimitiveDecode(conf, confStruct); err != nil {
@@ -85,7 +83,6 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 		return
 	}
 	err = obj.Init(app, confStruct)
-	loadedObject = obj
 	return
 }
 
@@ -136,11 +133,10 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	// available on the Application at each stage of application setup
 
 	// Setup the base application first
-	obj, err = LoadConfigForSection(nil, "default", new(Application), configFile)
-	if err != nil {
+	app = new(Application)
+	if err = LoadConfigForSection(nil, "default", app, configFile); err != nil {
 		return
 	}
-	app, _ = obj.(*Application)
 
 	// Next, many things require the logger, and logger has no other deps
 	if obj, err = LoadExtensibleSection(app, "logging", AvailableLoggers, configFile); err != nil {
@@ -152,28 +148,28 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	}
 
 	// Next, metrics, Deps: Logger
-	if obj, err = LoadConfigForSection(app, "metrics", new(Metrics), configFile); err != nil {
+	metrics := new(Metrics)
+	if err = LoadConfigForSection(app, "metrics", metrics, configFile); err != nil {
 		return
 	}
-	metrics, _ := obj.(*Metrics)
 	if err = app.SetMetrics(metrics); err != nil {
 		return
 	}
 
 	// Next, storage, Deps: Logger, Metrics
-	if obj, err = LoadConfigForSection(app, "storage", new(Storage), configFile); err != nil {
+	storage := new(Storage)
+	if err = LoadConfigForSection(app, "storage", storage, configFile); err != nil {
 		return
 	}
-	storage, _ := obj.(*Storage)
 	if err = app.SetStorage(storage); err != nil {
 		return
 	}
 
 	// Next, setup the router, Deps: Logger, Metrics
-	if obj, err = LoadConfigForSection(app, "router", new(Router), configFile); err != nil {
+	router := new(Router)
+	if err = LoadConfigForSection(app, "router", router, configFile); err != nil {
 		return
 	}
-	router, _ := obj.(*Router)
 	if err = app.SetRouter(router); err != nil {
 		return
 	}

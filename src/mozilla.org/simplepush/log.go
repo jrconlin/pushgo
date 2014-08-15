@@ -49,18 +49,13 @@ func ErrStr(err error) string {
 
 // Attempt to convert an interface to a string, ignore failures
 func IStr(i interface{}) (reply string) {
-	defer func() {
-		if r := recover(); r != nil {
-			reply = "Undefined"
-		}
-	}()
-
-	if i != nil {
-		reply = i.(string)
-	} else {
-		reply = ""
+	if i == nil {
+		return ""
 	}
-	return reply
+	if reply, ok := i.(string); ok {
+		return reply
+	}
+	return "Undefined"
 }
 
 // SimplePush Logger implementation, utilizes the passed in Logger
@@ -150,10 +145,10 @@ func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields 
 		for key, val := range fields {
 			fld = append(fld, key+": "+val)
 		}
-		dump += " {" + strings.Join(fld, ", ") + "}"
+		dump = fmt.Sprintf("%s {%s}", dump, strings.Join(fld, ", "))
 	}
 	if len(caller) > 0 {
-		dump += fmt.Sprintf(" [%s:%s %s]", caller["file"],
+		dump = fmt.Sprintf("%s [%s:%s %s]", dump, caller["file"],
 			caller["line"], caller["name"])
 	}
 	log.Printf(dump)
