@@ -239,7 +239,6 @@ type EmceeStore struct {
 	Hosts         []string
 	MinConns      int
 	MaxConns      int
-	HostPrefix    string
 	PingPrefix    string
 	recvTimeout   uint64
 	sendTimeout   uint64
@@ -320,7 +319,6 @@ func (*EmceeStore) ConfigStruct() interface{} {
 			TimeoutReg:    3 * 60 * 60,
 			TimeoutDel:    24 * 60 * 60,
 			HandleTimeout: "5s",
-			HostPrefix:    "_h-",
 			PingPrefix:    "_pc-",
 			MaxChannels:   200,
 		},
@@ -350,7 +348,6 @@ func (s *EmceeStore) Init(app *Application, config interface{}) error {
 	s.MinConns = conf.Driver.MinConns
 	s.MaxConns = conf.Driver.MaxConns
 	s.maxChannels = conf.Db.MaxChannels
-	s.HostPrefix = conf.Db.HostPrefix
 	s.PingPrefix = conf.Db.PingPrefix
 	s.HandleTimeout = parseTimeout(EmceeHandle, conf.Db.HandleTimeout, s.logger)
 
@@ -769,9 +766,6 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	if err = client.Delete(encodeKey(uaid), 0); err != nil && !isMissing(err) {
 		return err
 	}
-	if err = client.Delete(s.HostPrefix+hex.EncodeToString(uaid), 0); err != nil && !isMissing(err) {
-		return err
-	}
 	return nil
 }
 
@@ -819,87 +813,6 @@ func (s *EmceeStore) DropPing(suaid string) error {
 	}
 	defer s.releaseClient(client)
 	return client.Delete(s.PingPrefix+hex.EncodeToString(uaid), 0)
-}
-
-// FetchHost returns the host name of the Simple Push server that currently
-// maintains a connection to the device. Implements `Store.FetchHost()`.
-func (s *EmceeStore) FetchHost(suaid string) (host string, err error) {
-	uaid, err := DecodeID(suaid)
-	if err != nil {
-		return "", err
-	}
-	deviceString := hex.EncodeToString(uaid)
-	defer func(defaultHost string) {
-		if err := recover(); err != nil {
-			s.logger.Error("emcee", "FetchHost no host", LogFields{
-				"uaid":  deviceString,
-				"error": err.(error).Error(),
-			})
-		}
-	}(s.defaultHost)
-	client, err := s.getClient()
-	if err != nil {
-		return s.defaultHost, err
-	}
-	defer s.releaseClient(client)
-	err = client.Get(s.HostPrefix+deviceString, &host)
-	if err != nil {
-		if isMissing(err) {
-			return s.defaultHost, ErrUnknownUAID
-		}
-		s.logger.Error("emcee", "FetchHost Fetch error", LogFields{
-			"uaid":  deviceString,
-			"item":  host,
-			"error": err.Error(),
-		})
-		return s.defaultHost, err
-	}
-	if len(host) == 0 {
-		host = s.defaultHost
-	}
-	s.logger.Debug("emcee", "FetchHost", LogFields{
-		"uaid": deviceString,
-		"host": host,
-	})
-	s.storeHost(client, deviceString, host)
-	return
-}
-
-// PutHost updates the host name associated with the device ID. Implements
-// `Store.PutHost()`.
-func (s *EmceeStore) PutHost(suaid string, host string) error {
-	uaid, err := DecodeID(suaid)
-	if err != nil {
-		return err
-	}
-	if len(host) == 0 {
-		host = s.defaultHost
-	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	defer s.releaseClient(client)
-	return s.storeHost(client, hex.EncodeToString(uaid), host)
-}
-
-// DropHost removes the host mapping for the given device ID from memcached.
-// Implements `Store.DropHost()`.
-func (s *EmceeStore) DropHost(suaid string) error {
-	uaid, err := DecodeID(suaid)
-	if err != nil {
-		return err
-	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	defer s.releaseClient(client)
-	err = client.Delete(s.HostPrefix+hex.EncodeToString(uaid), 0)
-	if err == nil || isMissing(err) {
-		return nil
-	}
-	return err
 }
 
 // Queries memcached for a list of current subscriptions associated with the
@@ -1082,19 +995,6 @@ func (s *EmceeStore) newClient() (mc.Client, error) {
 		return nil, err
 	}
 	return client, nil
-}
-
-// Stores host information in memcached.
-func (s *EmceeStore) storeHost(client mc.Client, uaid, host string) error {
-	s.logger.Debug("emcee", "storeHost", LogFields{
-		"uaid": uaid,
-		"host": host,
-	})
-	err := client.Set(s.HostPrefix+uaid, host, s.TimeoutLive)
-	if err == nil || isMissing(err) {
-		return nil
-	}
-	return err
 }
 
 // The store run loop.

@@ -61,9 +61,6 @@ func (*NoStore) DropAll(string) error                                   { return
 func (*NoStore) FetchPing(string) (string, error)                       { return "", nil }
 func (*NoStore) PutPing(string, string) error                           { return nil }
 func (*NoStore) DropPing(string) error                                  { return nil }
-func (*NoStore) FetchHost(string) (string, error)                       { return "", nil }
-func (*NoStore) PutHost(string, string) error                           { return nil }
-func (*NoStore) DropHost(string) error                                  { return nil }
 
 func init() {
 	AvailableStores["none"] = func() HasConfigStruct { return new(NoStore) }

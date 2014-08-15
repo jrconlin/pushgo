@@ -46,9 +46,6 @@ type DbConf struct {
 	// the pool. Defaults to 5 seconds.
 	HandleTimeout string `toml:"handle_timeout"`
 
-	// HostPrefix is the key prefix for client hosts. Defaults to `"_h-"`.
-	HostPrefix string `toml:"shard_prefix"`
-
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
 	// `"_pc-"`.
 	PingPrefix string `toml:"prop_prefix"`
@@ -111,14 +108,4 @@ type Store interface {
 
 	// DropPing removes all proprietary ping info for the given device.
 	DropPing(suaid string) error
-
-	// FetchHost returns the host name of the Simple Push server that currently
-	// maintains a connection to the device.
-	FetchHost(suaid string) (host string, err error)
-
-	// PutHost updates the host name associated with the device ID.
-	PutHost(suaid, host string) error
-
-	// DropHost removes the host mapping for the given device
-	DropHost(suaid string) error
 }
