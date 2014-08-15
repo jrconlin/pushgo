@@ -7,10 +7,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"fmt"
+)
+
+const (
+	NoStatus = -1
 )
 
 var (
-	ErrMismatchedIds    = &ClientError{"Attempted duplicate handshake with different device ID."}
+	ErrMismatchedIds    = &ClientError{"Mismatched synchronous request ID."}
 	ErrUnknownType      = &ClientError{"Unknown request type."}
 	ErrDuplicateRequest = &ClientError{"Duplicate request."}
 	ErrInvalidState     = &ClientError{"Invalid client state."}
@@ -19,6 +24,9 @@ var (
 // TODO: Extract the spooling logic (`pending{Lock}, messages, SpoolAll`) into
 // a higher-level client that supports streaming notifications, automatic
 // reconnects, etc.
+
+// TODO: Separate command (`hello`, `register`, `unregister`) and
+// message (`notification`) decoders. Add typed error decoders.
 
 type Conn struct {
 	Socket        *ws.Conn      // The underlying WebSocket connection.
@@ -50,17 +58,16 @@ type (
 )
 
 type Decoder interface {
-	Decode(c *Conn, statusCode int, fields Fields) (Reply, error)
+	Decode(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error)
 }
 
-type DecoderFunc func(c *Conn, statusCode int, fields Fields) (Reply, error)
+type DecoderFunc func(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error)
 
-func (d DecoderFunc) Decode(c *Conn, statusCode int, fields Fields) (Reply, error) {
-	return d(c, statusCode, fields)
+func (d DecoderFunc) Decode(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+	return d(c, fields, statusCode, errorText)
 }
 
 var DefaultDecoders = Decoders{
-	"ping":         DecoderFunc(decodePing),
 	"hello":        DecoderFunc(decodeHelo),
 	"register":     DecoderFunc(decodeRegister),
 	"notification": DecoderFunc(decodeNotification),
@@ -443,7 +450,7 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 		return register.Endpoint, nil
 	}
 	if register.StatusCode == 409 {
-		return "", &ClientError{"The channel ID `" + channelId + "` is in use."}
+		return "", &ClientError{fmt.Sprintf("The channel ID `%s` is in use.", channelId)}
 	}
 	return "", &ServerError{"register", c.Origin(), "Unexpected status code.", register.StatusCode}
 }
@@ -551,8 +558,8 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 	// Extract the `status`, `error`, and `messageType` fields. Per RFC 7159,
 	// Go's JSON library represents numbers as 64-bit floats when decoding into
 	// an untyped map.
-	statusCode := -1
-	if asFloat, ok := fields["status"].(float64); ok {
+	statusCode := NoStatus
+	if asFloat, ok := fields["status"].(float64); ok && asFloat >= 0 {
 		statusCode = int(asFloat)
 	}
 	errorText, hasErrorText := fields["error"].(string)
@@ -574,22 +581,43 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 		}
 		return nil, &ServerError{"internal", c.Origin(), message, statusCode}
 	}
+	if decoder := c.Decoder(messageType); decoder != nil {
+		return decoder.Decode(c, fields, statusCode, errorText)
+	}
 	if hasErrorText {
 		// Typed error response. Construct an error reply with the `messageType`
 		// and `error` fields, and `status` if present.
 		return nil, &ServerError{messageType, c.Origin(), errorText, statusCode}
 	}
-	if decoder := c.Decoder(messageType); decoder != nil {
-		return decoder.Decode(c, statusCode, fields)
+	return nil, nil
+}
+
+func (c *Conn) decodeUpdate(field interface{}) (result *Update, err error) {
+	update, ok := field.(map[string]interface{})
+	if !ok {
+		return nil, &IncompleteError{"notification", c.Origin(), "update"}
 	}
-	return nil, nil
+	channelId, ok := update["channelID"].(string)
+	if !ok {
+		return nil, &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
+	}
+	var version int64
+	if asFloat, ok := update["version"].(float64); ok {
+		version = int64(asFloat)
+	} else {
+		return nil, &IncompleteError{"notification", c.Origin(), "version"}
+	}
+	result = &Update{
+		ChannelId: channelId,
+		Version:   version,
+	}
+	return
 }
 
-func decodePing(c *Conn, statusCode int, fields Fields) (Reply, error) {
-	return nil, nil
-}
-
-func decodeHelo(c *Conn, statusCode int, fields Fields) (Reply, error) {
+func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+	if len(errorText) > 0 {
+		return nil, &ServerError{"hello", c.Origin(), errorText, statusCode}
+	}
 	deviceId, hasDeviceId := fields["uaid"].(string)
 	if !hasDeviceId {
 		return nil, &IncompleteError{"hello", c.Origin(), "uaid"}
@@ -603,7 +631,10 @@ func decodeHelo(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	return reply, nil
 }
 
-func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
+func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+	if len(errorText) > 0 {
+		return nil, &ServerError{"register", c.Origin(), errorText, statusCode}
+	}
 	channelId, hasChannelId := fields["channelID"].(string)
 	if !hasChannelId {
 		return nil, &IncompleteError{"register", c.Origin(), "channelID"}
@@ -620,7 +651,10 @@ func decodeRegister(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	return reply, nil
 }
 
-func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
+func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+	if statusCode != NoStatus || len(errorText) > 0 {
+		return nil, &ServerError{"notification", c.Origin(), errorText, statusCode}
+	}
 	updates, hasUpdates := fields["updates"].([]interface{})
 	if !hasUpdates {
 		return nil, &IncompleteError{"notification", c.Origin(), "updates"}
@@ -628,27 +662,14 @@ func decodeNotification(c *Conn, statusCode int, fields Fields) (Reply, error) {
 	defer c.pendingLock.Unlock()
 	c.pendingLock.Lock()
 	for _, field := range updates {
-		update, hasUpdate := field.(map[string]interface{})
-		if !hasUpdate {
-			return nil, &IncompleteError{"notification", c.Origin(), "update"}
+		update, err := c.decodeUpdate(field)
+		if err != nil {
+			return nil, err
 		}
-		channelId, hasChannelId := update["channelID"].(string)
-		if !hasChannelId {
-			return nil, &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
-		}
-		if !c.SpoolAll && !c.Registered(channelId) {
+		if !c.SpoolAll && !c.Registered(update.ChannelId) {
 			continue
 		}
-		var version int64
-		if asFloat, ok := update["version"].(float64); ok {
-			version = int64(asFloat)
-		} else {
-			return nil, &IncompleteError{"notification", c.Origin(), "version"}
-		}
-		c.pending = append(c.pending, Update{
-			ChannelId: channelId,
-			Version:   version,
-		})
+		c.pending = append(c.pending, *update)
 	}
 	return nil, nil
 }
