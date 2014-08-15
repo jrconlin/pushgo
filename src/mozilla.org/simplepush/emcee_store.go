@@ -583,7 +583,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	for x := 0; x < 3; x++ {
 		channel, err := s.fetchRec(key)
 		if err != nil {
-			s.logger.Error("emcee", "Could not delete Channel", LogFields{
+			s.logger.Warn("emcee", "Could not delete Channel", LogFields{
 				"primarykey": hex.EncodeToString(key),
 				"error":      err.Error(),
 			})
@@ -704,7 +704,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			version := channel.V
 			if version == 0 {
 				version = uint64(time.Now().UTC().Unix())
-				s.logger.Error("emcee", "FetchAll Using Timestamp", LogFields{
+				s.logger.Debug("emcee", "FetchAll Using Timestamp", LogFields{
 					"uaid": deviceString,
 					"chid": channelString,
 				})
@@ -715,13 +715,13 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			}
 			updates = append(updates, update)
 		case DELETED:
-			s.logger.Info("emcee", "FetchAll Deleting record", LogFields{
+			s.logger.Debug("emcee", "FetchAll Deleting record", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
 			})
 			schid, err := EncodeID(chid)
 			if err != nil {
-				s.logger.Error("emcee", "FetchAll Failed to encode channel ID", LogFields{
+				s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
 					"uaid": deviceString,
 					"chid": channelString,
 				})
@@ -926,7 +926,7 @@ func (s *EmceeStore) storeRec(pk []byte, rec *cr) error {
 	keyString := encodeKey(pk)
 	err = client.Set(keyString, rec, ttl)
 	if err != nil {
-		s.logger.Error("emcee", "Failure to set item", LogFields{
+		s.logger.Warn("emcee", "Failure to set item", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
 		})
