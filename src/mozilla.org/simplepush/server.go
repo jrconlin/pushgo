@@ -29,7 +29,7 @@ type Client struct {
 // Basic global server options
 type ServerConfig struct {
 	PushEndpoint       string `toml:"push_endpoint"`
-	PushLongPongs      int    `toml:"push_long_ponts"`
+	PushLongPongs      int    `toml:"push_long_pongs"`
 	ClientMinPing      string `toml:"client_min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
