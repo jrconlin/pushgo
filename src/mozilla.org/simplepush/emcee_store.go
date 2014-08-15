@@ -670,7 +670,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 	deviceString := hex.EncodeToString(uaid)
 	s.logger.Debug("emcee", "Fetching items", LogFields{
 		"uaid":  deviceString,
-		"items": "[" + strings.Join(keys, ", ") + "]",
+		"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
 	})
 	client, err := s.getClient()
 	if err != nil {
@@ -1191,5 +1191,5 @@ func (s *EmceeStore) signalClose() (err error) {
 }
 
 func init() {
-	AvailableStores["emcee"] = NewEmcee
+	AvailableStores["memcache"] = NewEmcee
 }
