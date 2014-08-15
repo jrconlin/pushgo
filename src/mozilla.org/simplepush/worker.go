@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -31,7 +30,6 @@ type Worker struct {
 	app          *Application
 	logger       *SimpleLogger
 	state        int
-	filter       *regexp.Regexp
 	stopped      bool
 	maxChannels  int
 	lastPing     time.Time
@@ -52,16 +50,12 @@ const (
 	CHID_DEFAULT_MAX_NUM = 200
 )
 
-// Allow [0-9a-z_-]/i as valid ChannelID characters.
-var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
-
 func NewWorker(app *Application) *Worker {
 	return &Worker{
 		app:          app,
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
 		state:        INACTIVE,
-		filter:       workerFilter,
 		stopped:      false,
 		lastPing:     time.Now(),
 		pingInt:      int(app.clientMinPing.Seconds()),
@@ -257,6 +251,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
 	}
+	suggestedUAID = data["uaid"].(string)
 	/* NOTE: This seems to be a redirect, which I don't believe we support
 	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
 		resp := JsMap{
@@ -269,25 +264,24 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 				LogFields{"messageType": data["messageType"].(string),
 					"status":   strconv.FormatInt(data["status"].(int64), 10),
 					"redirect": data["redirect"].(string),
-					"uaid":     data["uaid"].(string)})
+					"uaid":     suggestedUAID})
 		}
 		websocket.JSON.Send(sock.Socket, resp)
 		return nil
 	} */
-	suggestedUAID = data["uaid"].(string)
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
 		self.logger.Debug("worker", "Missing ChannelIDs", nil)
 		return sperrors.MissingDataError
 	}
 	if len(sock.Uaid) > 0 &&
-		len(data["uaid"].(string)) > 0 &&
+		len(suggestedUAID) > 0 &&
 		sock.Uaid != suggestedUAID {
 		// if there's already a Uaid for this channel, don't accept a new one
 		self.logger.Debug("worker", "Conflicting UAIDs", nil)
 		return sperrors.InvalidChannelError
 	}
-	if self.filter.Find([]byte(strings.ToLower(suggestedUAID))) != nil {
+	if len(suggestedUAID) > 0 && !ValidUAID(suggestedUAID) {
 		self.logger.Debug("worker", "Invalid character in UAID", nil)
 		return sperrors.InvalidChannelError
 	}
@@ -437,14 +431,11 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 		return sperrors.InvalidCommandError
 	}
 	data := buffer.(JsMap)
-	if data["channelID"] == nil {
+	appid, _ := data["channelID"].(string)
+	if length := len(appid); length == 0 || length > CHID_MAX_LEN {
 		return sperrors.InvalidDataError
 	}
-	appid := data["channelID"].(string)
-	if len(appid) > CHID_MAX_LEN {
-		return sperrors.InvalidDataError
-	}
-	if self.filter.FindStringIndex(strings.ToLower(appid)) != nil {
+	if !ValidUAID(appid) {
 		return sperrors.InvalidDataError
 	}
 	err = sock.Store.Register(sock.Uaid, appid, 0)

@@ -30,6 +30,23 @@ func GenUUID4() (string, error) {
 	return hex.EncodeToString(uuid), nil
 }
 
+// ValidUAID ensures that the given ID only contains hex digits and hyphens.
+func ValidUAID(id string) bool {
+	if len(id) == 0 {
+		return false
+	}
+	for index := 0; index < len(id); index++ {
+		b := id[index]
+		if b >= 'A' && b <= 'F' {
+			b += 'a' - 'A'
+		}
+		if b != '-' && (b < 'a' || b > 'f') && (b < '0' || b > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 func ScanUUID(uuids string) ([]byte, error) {
 	// scan a UUID and return it as byte array
 	trimmed := strings.TrimSpace(strings.Replace(uuids, "-", "", -1))
