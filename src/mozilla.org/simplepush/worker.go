@@ -56,11 +56,8 @@ const (
 var workerFilter *regexp.Regexp = regexp.MustCompile("[^a-fA-F0-9\\-]")
 
 func NewWorker(app *Application) *Worker {
-	var maxChannels int
-	var pingInterval int
-
-	maxChannels = app.Storage().maxChannels
-	pingInterval = int(app.clientMinPing.Seconds())
+	maxChannels := app.Storage().maxChannels
+	pingInterval := int(app.clientMinPing.Seconds())
 
 	return &Worker{
 		app:          app,
