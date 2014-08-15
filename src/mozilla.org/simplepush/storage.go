@@ -19,7 +19,7 @@ type StorageError string
 
 // Error implements the `error` interface.
 func (err StorageError) Error() string {
-	return fmt.Sprintf("StorageError: %s", err)
+	return fmt.Sprintf("StorageError: %s", string(err))
 }
 
 // Update represents a notification sent on a channel.
