@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
@@ -94,11 +95,11 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	}
 	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
 	if err != nil {
-		r.ctimeout, _ = time.ParseDuration("3s")
+		return fmt.Errorf("Unable to parse router ctimeout: %s", err.Error())
 	}
 	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
 	if err != nil {
-		r.rwtimeout, _ = time.ParseDuration("3s")
+		return fmt.Errorf("Unable to parse router rwtimeout: %s", err.Error())
 	}
 	r.scheme = conf.Scheme
 	r.port = conf.Port
