@@ -11,15 +11,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	mc "github.com/ianoshen/gomc"
 	"io"
-	"mozilla.org/simplepush/sperrors"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	mc "github.com/ianoshen/gomc"
+
+	"mozilla.org/simplepush/sperrors"
 )
 
 // Channel record status constants.

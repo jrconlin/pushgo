@@ -5,7 +5,6 @@
 package simplepush
 
 import (
-	"encoding/hex"
 	"fmt"
 	"time"
 )
@@ -20,7 +19,7 @@ type StorageError string
 
 // Error implements the `error` interface.
 func (err StorageError) Error() string {
-	return "StorageError: " + string(err)
+	return fmt.Sprintf("StorageError: %s", err)
 }
 
 // Update represents a notification sent on a channel.
@@ -122,37 +121,4 @@ type Store interface {
 
 	// DropHost removes the host mapping for the given device
 	DropHost(suaid string) error
-}
-
-// EncodeID converts a UUID into a hex-encoded string.
-func EncodeID(bytes []byte) (string, error) {
-	if len(bytes) != 16 {
-		return "", ErrInvalidID
-	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x", bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:]), nil
-}
-
-// DecodeID decodes a hyphenated or non-hyphenated UUID into a byte slice.
-// Returns an error if the UUID is invalid.
-func DecodeID(id string) ([]byte, error) {
-	if !(len(id) == 32 || (len(id) == 36 && id[8] == '-' && id[13] == '-' && id[18] == '-' && id[23] == '-')) {
-		return nil, ErrInvalidID
-	}
-	destination := make([]byte, 16)
-	source := make([]byte, 32)
-	sourceIndex := 0
-	for index := 0; index < len(id); index++ {
-		if len(id) == 36 && (index == 8 || index == 13 || index == 18 || index == 23) {
-			if id[index] != '-' {
-				return nil, ErrInvalidID
-			}
-			continue
-		}
-		source[sourceIndex] = id[index]
-		sourceIndex++
-	}
-	if _, err := hex.Decode(destination, source); err != nil {
-		return nil, err
-	}
-	return destination, nil
 }
