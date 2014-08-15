@@ -38,8 +38,9 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid   string          // id
-	Socket *websocket.Conn // Remote connection
+	Uaid     string          // Hex-encoded client ID; not normalized
+	deviceID []byte          // Raw client ID bytes
+	Socket   *websocket.Conn // Remote connection
 	Store
 	Logger  *SimpleLogger
 	Metrics *Metrics

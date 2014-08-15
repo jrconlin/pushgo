@@ -275,3 +275,8 @@ func (a *Application) RemoveClient(uaid string) {
 	a.clientMux.Unlock()
 	atomic.AddInt32(a.clientCount, -1)
 }
+
+func (a *Application) Stop() {
+	a.router.Unregister()
+	a.store.Close()
+}
