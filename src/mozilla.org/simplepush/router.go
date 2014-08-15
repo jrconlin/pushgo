@@ -153,13 +153,13 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	}
 
 	// auto refresh slightly more often than the TTL
-	go func(r *Router, defaultTTL uint64) {
+	go func() {
 		timeout := 0.75 * float64(r.defaultTTL)
 		tick := time.Tick(time.Second * time.Duration(timeout))
 		for _ = range tick {
 			r.Register()
 		}
-	}(r, r.defaultTTL)
+	}()
 	r.Register()
 	return nil
 }
