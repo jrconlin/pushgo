@@ -21,17 +21,17 @@ type NoStore struct {
 
 func (*NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
-	if ok = len(items) == 2; ok {
-		suaid, schid = items[0], items[1]
+	if len(items) < 2 {
+		return "", "", false
 	}
-	return
+	return items[0], items[1], true
 }
 
-func (*NoStore) IDsToKey(suaid, schid string) (key string, ok bool) {
-	if ok = len(suaid) > 0 && len(schid) > 0; ok {
-		key = fmt.Sprintf("%s.%s", suaid, schid)
+func (*NoStore) IDsToKey(suaid, schid string) (string, bool) {
+	if len(suaid) == 0 || len(schid) == 0 {
+		return "", false
 	}
-	return
+	return fmt.Sprintf("%s.%s", suaid, schid), true
 }
 
 func (*NoStore) ConfigStruct() interface{} {

@@ -192,7 +192,7 @@ type FreeClient struct {
 }
 
 // NewEmcee creates an unconfigured memcached adapter.
-func NewEmcee() HasConfigStruct {
+func NewEmcee() *EmceeStore {
 	s := &EmceeStore{
 		closeSignal:  make(chan bool),
 		clients:      make(chan mc.Client),
@@ -398,24 +398,24 @@ func (s *EmceeStore) Close() (err error) {
 // readable primary key. Implements `Store.KeyToIDs()`.
 func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
-	if ok = len(items) == 2; ok {
-		suaid, schid = items[0], items[1]
+	if len(items) < 2 {
+		return "", "", false
 	}
-	return
+	return items[0], items[1], true
 }
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // `Store.IDsToKey()`.
-func (*EmceeStore) IDsToKey(suaid, schid string) (key string, ok bool) {
-	if ok = len(suaid) > 0 && len(schid) > 0; ok {
-		key = fmt.Sprintf("%s.%s", suaid, schid)
+func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
+	if len(suaid) == 0 || len(schid) == 0 {
+		return "", false
 	}
-	return
+	return fmt.Sprintf("%s.%s", suaid, schid), true
 }
 
 // Status queries whether memcached is available for reading and writing.
-// Implements `Store.Status().
+// Implements `Store.Status()`.
 func (s *EmceeStore) Status() (success bool, err error) {
 	defer func() {
 		if recv := recover(); recv != nil {
@@ -1193,5 +1193,5 @@ func (s *EmceeStore) signalClose() (err error) {
 }
 
 func init() {
-	AvailableStores["memcache"] = NewEmcee
+	AvailableStores["memcache"] = func() HasConfigStruct { return NewEmcee() }
 }
