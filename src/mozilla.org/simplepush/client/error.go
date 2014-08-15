@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"strconv"
 )
 
@@ -26,12 +27,12 @@ type ServerError struct {
 }
 
 func (err *ServerError) Error() string {
-	result := err.messageType + " (" + strconv.Itoa(err.statusCode)
+	result := strconv.Itoa(err.statusCode)
 	host := err.Host()
 	if len(host) > 0 {
 		result += "; " + host
 	}
-	return result + "): " + err.message
+	return fmt.Sprintf("%s (%s): %s", err.messageType, result, err.message)
 }
 
 func (err *ServerError) Status() int { return err.statusCode }
@@ -55,7 +56,7 @@ func (err *IncompleteError) Error() string {
 	if len(host) > 0 {
 		result += " (" + host + ")"
 	}
-	return result + ": Missing field `" + err.field + "`."
+	return fmt.Sprintf("%s: Missing field `%s`.", result, err.field)
 }
 
 func (err *IncompleteError) Status() int { return -1 }
@@ -73,7 +74,7 @@ type RedirectError struct {
 }
 
 func (err *RedirectError) Error() string {
-	return strconv.Itoa(err.statusCode) + " redirect to `" + err.url + "`."
+	return fmt.Sprintf("%d redirect to `%s`.", err.statusCode, err.url)
 }
 
 func (err *RedirectError) Status() int  { return err.statusCode }

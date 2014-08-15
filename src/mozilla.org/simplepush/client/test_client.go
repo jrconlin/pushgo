@@ -16,18 +16,48 @@ var (
 	ErrChanClosed = &ClientError{"The notification channel was closed by the connection."}
 )
 
-func DoTest(origin string, channels, updates int) error {
-	client := &TestClient{
-		Timeout:       1 * time.Minute,
-		Origin:        origin,
-		Channels:      channels,
-		Updates:       updates,
-		MaxRegisters:  1,
-		MaxRedirects:  0,
-		pushEndpoints: make(map[string]string, channels),
-		pushVersions:  make(map[string]int64, channels),
+type Endpoint struct {
+	URI string
+	Version int64
+}
+
+type Endpoints map[string]Endpoint
+
+func DoTest(origin string, channels, updates int) (err error) {
+	currentRedirect, maxRedirects := 0, 10
+	var conn *Conn
+	for {
+		conn, err = DialOrigin(origin)
+		if err != nil {
+			return
+		}
+		_, err := conn.WriteHelo("", []string{})
+		if err == nil {
+			break
+		}
+		clientErr, ok := err.(Error)
+		if !ok || clientErr.Status() < 300 || clientErr.Status() >= 400 {
+			return err
+		}
+		currentRedirect++
+		if currentRedirect >= maxRedirects {
+			return err
+		}
+		origin = clientErr.Host()
 	}
-	return client.Do()
+	return PushThrough(conn, channels, updates)
+}
+
+func PushThrough(conn *Conn, channels, updates int) error {
+	t := &TestClient{
+		Timeout: 1 * time.Minute,
+		Channels: channels,
+		Updates: updates,
+		MaxRegisters: 1,
+		conn: conn,
+		endpoints: make(Endpoints, channels),
+	}
+	return t.Do()
 }
 
 func Notify(endpoint string, version int64) (err error) {
@@ -51,154 +81,55 @@ func Notify(endpoint string, version int64) (err error) {
 	return
 }
 
-type clientState func(*TestClient) (clientState, error)
-
 type TestClient struct {
 	sync.RWMutex
 	Timeout         time.Duration // The deadline for receiving all notifications.
-	Origin          string        // The Simple Push server URI.
 	Channels        int           // The number of channels to create.
 	Updates         int           // The number of notifications to send on each channel.
 	MaxRegisters    int           // The number of times to retry failed registrations.
-	MaxRedirects    int           // The number of redirects to follow during authentication.
-	registerAttempt int
-	currentRedirect int
-	conn            *Conn
-	pushEndpoints   map[string]string
-	pushVersions    map[string]int64
-	deviceId        string
+	accept bool
+	pendingTimeout time.Duration
+	conn *Conn
+	endpoints Endpoints
 }
 
-func (t *TestClient) ok() bool {
-	return t != nil && t.conn != nil
-}
-
-func (t *TestClient) Do() (err error) {
-	for state := helo; state != nil; {
-		if state, err = state(t); err != nil {
-			break
-		}
-	}
-	if !t.ok() {
-		return ErrInvalidState
-	}
-	if err := t.conn.Close(); err != nil {
+func (t *TestClient) Do() error {
+	if err := t.subscribe(); err != nil {
 		return err
 	}
-	return
-}
-
-func (t *TestClient) nextVersion(channelId string) int64 {
-	defer t.Unlock()
-	t.Lock()
-	t.pushVersions[channelId]++
-	return t.pushVersions[channelId]
-}
-
-func (t *TestClient) lastVersion(channelId string) int64 {
-	defer t.RUnlock()
-	t.RLock()
-	return t.pushVersions[channelId]
-}
-
-func (t *TestClient) waitAll(signal chan bool) (err error) {
-	if !t.ok() {
-		return ErrInvalidState
-	}
-	timeout := time.After(t.Timeout)
-	updates := make([]Update, 0, len(t.pushEndpoints))
-	// Wait for all updates, but only acknowledge the latest version. This can
-	// be changed to exit as soon as the latest version is received.
-	expected, actual := len(t.pushEndpoints)*t.Updates, 0
-	for ok := true; ok; {
-		var update Update
-		if actual >= expected {
-			break
-		}
-		select {
-		case ok = <-signal:
-		case <-timeout:
-			ok = false
-			err = ErrTimedOut
-
-		case update, ok = <-t.conn.Messages():
-			if _, ok := t.pushEndpoints[update.ChannelId]; !ok {
-				break
-			}
-			actual++
-			if update.Version < t.lastVersion(update.ChannelId) {
-				break
-			}
-			// Only acknowledge the latest version.
-			updates = append(updates, update)
-		}
-	}
-	if err := t.conn.AcceptBatch(updates); err != nil {
+	if err := t.notifyAll(); err != nil {
 		return err
 	}
-	if len(updates) != len(t.pushEndpoints) {
-		return ErrChanClosed
-	}
-	return
+	return nil
 }
 
-func helo(t *TestClient) (clientState, error) {
-	conn, err := DialOrigin(t.Origin)
-	if err != nil {
-		return nil, err
-	}
-	t.conn = conn
-	deviceId, err := t.conn.WriteHelo(t.deviceId, []string{})
-	if err != nil {
-		clientErr, ok := err.(Error)
-		if !ok || clientErr.Status() < 300 || clientErr.Status() >= 400 {
-			return nil, err
-		}
-		t.currentRedirect++
-		if t.currentRedirect >= t.MaxRedirects {
-			return nil, err
-		}
-		t.Origin = clientErr.Host()
-		return helo, nil
-	}
-	t.deviceId = deviceId
-	return register, nil
-}
-
-func register(t *TestClient) (clientState, error) {
-	if !t.ok() {
-		return nil, ErrInvalidState
-	}
+func (t *TestClient) subscribe() error {
 	for index := 0; index < t.Channels; index++ {
 		currentRegister := 0
 		for {
-			channelId, err := GenerateId()
-			if err != nil {
-				return nil, err
-			}
-			endpoint, err := t.conn.Register(channelId)
+			channelId, uri, err := t.conn.Subscribe()
 			if err == nil {
-				t.pushEndpoints[channelId] = endpoint
+				t.endpoints[channelId] = Endpoint{uri, 1}
 				break
 			}
 			currentRegister++
 			if currentRegister >= t.MaxRegisters {
-				return nil, err
+				return err
 			}
 			clientErr, ok := err.(Error)
 			if !ok || clientErr.Status() != 409 {
-				return nil, err
+				return err
 			}
 			// If the channel already exists, deregister and re-register.
 			if err := t.conn.Unregister(channelId); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	return update, nil
+	return nil
 }
 
-func update(t *TestClient) (clientState, error) {
+func (t *TestClient) notifyAll() error {
 	var notifyWait sync.WaitGroup
 	signal, errors := make(chan bool), make(chan error)
 	// Listen for incoming messages.
@@ -218,12 +149,16 @@ func update(t *TestClient) (clientState, error) {
 		case errors <- Notify(endpoint, version):
 		}
 	}
-	notifyWait.Add(len(t.pushEndpoints) * t.Updates)
-	for channelId, endpoint := range t.pushEndpoints {
+	t.Lock()
+	notifyWait.Add(len(t.endpoints) * t.Updates)
+	for channelId, endpoint := range t.endpoints {
 		for index := 0; index < t.Updates; index++ {
-			go notifyOne(endpoint, t.nextVersion(channelId))
+			nextVersion := endpoint.Version + int64(index)
+			t.endpoints[channelId] = Endpoint{endpoint.URI, nextVersion}
+			go notifyOne(endpoint.URI, nextVersion)
 		}
 	}
+	t.Unlock()
 	go func() {
 		notifyWait.Wait()
 		close(errors)
@@ -231,8 +166,49 @@ func update(t *TestClient) (clientState, error) {
 	for err := range errors {
 		if err != nil {
 			close(signal)
-			return nil, err
+			return err
 		}
 	}
-	return nil, nil
+	return nil
+}
+
+func (t *TestClient) waitAll(signal chan bool) (err error) {
+	defer t.RUnlock()
+	t.RLock()
+	timer := time.After(t.Timeout)
+	updates := make([]Update, 0, len(t.endpoints))
+	// Wait for all updates, but only acknowledge the latest version. This can
+	// be changed to exit as soon as the latest version is received.
+	expected, actual := len(t.endpoints)*t.Updates, 0
+	for ok := true; ok; {
+		var update Update
+		if actual >= expected {
+			break
+		}
+		select {
+		case ok = <-signal:
+		case <-timer:
+			ok = false
+			err = ErrTimedOut
+
+		case update, ok = <-t.conn.Messages():
+			if !ok {
+				break
+			}
+			if endpoint, ok := t.endpoints[update.ChannelId]; ok {
+				actual++
+				// Only acknowledge the latest version.
+				if update.Version >= endpoint.Version {
+					updates = append(updates, update)
+				}
+			}
+		}
+	}
+	if err := t.conn.AcceptBatch(updates); err != nil {
+		return err
+	}
+	if len(updates) != len(t.endpoints) {
+		return ErrChanClosed
+	}
+	return
 }
