@@ -290,7 +290,10 @@ func (r *Router) bucketSend(uaid string, msg []byte, serverList []string) (succe
 					req.Header.Add("Content-Type", "application/json")
 					if err = r.send(r.rclient, req, server); err == nil {
 						r.logger.Debug("router", "Server accepted", LogFields{"server": server})
-						test <- true
+						select {
+						case test <- true:
+						default:
+						}
 						return
 					}
 				}
