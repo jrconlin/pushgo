@@ -382,7 +382,7 @@ func (s *EmceeStore) MaxChannels() int {
 }
 
 // Close closes the connection pool and unblocks all pending operations with
-// errors. Safe to call multiple times. Implements `Adapter.Close()`.
+// errors. Safe to call multiple times. Implements `Store.Close()`.
 func (s *EmceeStore) Close() (err error) {
 	err, ok := s.stop()
 	if !ok {
@@ -393,7 +393,7 @@ func (s *EmceeStore) Close() (err error) {
 }
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
-// readable primary key. Implements `Adapter.KeyToIDs()`.
+// readable primary key. Implements `Store.KeyToIDs()`.
 func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if ok = len(items) == 2; ok {
@@ -404,7 +404,7 @@ func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
-// `Adapter.IDsToKey()`.
+// `Store.IDsToKey()`.
 func (*EmceeStore) IDsToKey(suaid, schid string) (key string, ok bool) {
 	if ok = len(suaid) > 0 && len(schid) > 0; ok {
 		key = fmt.Sprintf("%s.%s", suaid, schid)
@@ -413,7 +413,7 @@ func (*EmceeStore) IDsToKey(suaid, schid string) (key string, ok bool) {
 }
 
 // Status queries whether memcached is available for reading and writing.
-// Implements `Adapter.Status().
+// Implements `Store.Status().
 func (s *EmceeStore) Status() (success bool, err error) {
 	defer func() {
 		if recv := recover(); recv != nil {
@@ -443,7 +443,7 @@ func (s *EmceeStore) Status() (success bool, err error) {
 }
 
 // Exists returns a Boolean indicating whether a device has previously
-// registered with the Simple Push server. Implements `Adapter.Exists()`.
+// registered with the Simple Push server. Implements `Store.Exists()`.
 func (s *EmceeStore) Exists(suaid string) bool {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -453,7 +453,7 @@ func (s *EmceeStore) Exists(suaid string) bool {
 	return err == nil
 }
 
-// ...
+// Stores a new channel record in memcached.
 func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
@@ -485,7 +485,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 
 // Register creates and stores a channel record for the given device ID and
 // channel ID. If the channel `version` is > 0, the record will be marked as
-// active. Implements `Adapter.Register()`.
+// active. Implements `Store.Register()`.
 func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -500,7 +500,7 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 	return s.storeRegister(uaid, chid, version)
 }
 
-// ...
+// Updates a channel record in memcached.
 func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
@@ -543,7 +543,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 }
 
 // Update updates the version for the given device ID and channel ID.
-// Implements `Adapter.Update()`.
+// Implements `Store.Update()`.
 func (s *EmceeStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
@@ -563,7 +563,7 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 	return s.storeUpdate(uaid, chid, version)
 }
 
-// ...
+// Marks a memcached channel record as expired.
 func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
@@ -599,7 +599,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 }
 
 // Unregister marks the channel ID associated with the given device ID
-// as inactive. Implements `Adapter.Unregister()`.
+// as inactive. Implements `Store.Unregister()`.
 func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -616,7 +616,7 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 
 // Drop removes a channel ID associated with the given device ID from
 // memcached. Deregistration calls should use `Unregister()` instead.
-// Implements `Adapter.Drop()`.
+// Implements `Store.Drop()`.
 func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -645,7 +645,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 }
 
 // FetchAll returns all channel updates and expired channels for a device ID
-// since the specified cutoff time. Implements `Adapter.FetchAll()`.
+// since the specified cutoff time. Implements `Store.FetchAll()`.
 func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
 		return nil, nil, sperrors.InvalidDataError
@@ -742,7 +742,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 }
 
 // DropAll removes all channel records for the given device ID. Implements
-// `Adapter.DropAll()`.
+// `Store.DropAll()`.
 func (s *EmceeStore) DropAll(suaid string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -774,7 +774,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
-// from memcached. Implements `Adapter.FetchPing()`.
+// from memcached. Implements `Store.FetchPing()`.
 func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -790,7 +790,7 @@ func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
-// memcached. Implements `Adapter.PutPing()`.
+// memcached. Implements `Store.PutPing()`.
 func (s *EmceeStore) PutPing(suaid string, connect string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -805,7 +805,7 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
-// Implements `Adapter.DropPing()`.
+// Implements `Store.DropPing()`.
 func (s *EmceeStore) DropPing(suaid string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -820,7 +820,7 @@ func (s *EmceeStore) DropPing(suaid string) error {
 }
 
 // FetchHost returns the host name of the Simple Push server that currently
-// maintains a connection to the device. Implements `Adapter.FetchHost()`.
+// maintains a connection to the device. Implements `Store.FetchHost()`.
 func (s *EmceeStore) FetchHost(suaid string) (host string, err error) {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -864,7 +864,7 @@ func (s *EmceeStore) FetchHost(suaid string) (host string, err error) {
 }
 
 // PutHost updates the host name associated with the device ID. Implements
-// `Adapter.PutHost()`.
+// `Store.PutHost()`.
 func (s *EmceeStore) PutHost(suaid string, host string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
@@ -882,7 +882,7 @@ func (s *EmceeStore) PutHost(suaid string, host string) error {
 }
 
 // DropHost removes the host mapping for the given device ID from memcached.
-// Implements `Adapter.DropHost()`.
+// Implements `Store.DropHost()`.
 func (s *EmceeStore) DropHost(suaid string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
