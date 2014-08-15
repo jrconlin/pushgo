@@ -38,6 +38,14 @@ var (
 	ErrElastiCacheTimeout StorageError = "ElastiCache query timed out"
 )
 
+var noWhitespace = strings.NewReplacer(" ", "",
+	"\x08", "",
+	"\x09", "",
+	"\x0a", "",
+	"\x0b", "",
+	"\x0c", "",
+	"\x0d", "")
+
 // cr is a channel record. The short type and field names are used to reduce
 // the size of the encoded Gob structure.
 type cr struct {
@@ -209,34 +217,47 @@ type EmceeDriverConf struct {
 
 	// RecvTimeout is the socket receive timeout (`SO_RCVTIMEO`) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	RecvTimeout time.Duration `toml:"recv_timeout"`
+	RecvTimeout string `toml:"recv_timeout"`
 
 	// SendTimeout is the socket send timeout (`SO_SNDTIMEO`) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	SendTimeout time.Duration `toml:"send_timeout"`
+	SendTimeout string `toml:"send_timeout"`
 
 	// PollTimeout is the `poll()` timeout used by the memcached driver. Supports
 	// millisecond granularity; defaults to 5 seconds.
-	PollTimeout time.Duration `toml:"poll_timeout"`
+	PollTimeout string `toml:"poll_timeout"`
 
 	// RetryTimeout is the time to wait before retrying a request on an unhealthy
 	// memcached node. Supports second granularity; defaults to 5 seconds.
-	RetryTimeout time.Duration `toml:"retry_timeout"`
+	RetryTimeout string `toml:"retry_timeout"`
 }
 
 // EmceeStore is a memcached adapter.
 type EmceeStore struct {
-	config       *EmceeConf
-	defaultHost  string
-	logger       *SimpleLogger
-	closeWait    sync.WaitGroup
-	closeSignal  chan bool
-	closeLock    sync.Mutex
-	isClosing    bool
-	clients      chan mc.Client
-	releases     chan *FreeClient
-	acquisitions chan chan *FreeClient
-	lastErr      error
+	Hosts         []string
+	MinConns      int
+	MaxConns      int
+	HostPrefix    string
+	PingPrefix    string
+	recvTimeout   uint64
+	sendTimeout   uint64
+	pollTimeout   uint64
+	retryTimeout  uint64
+	TimeoutLive   time.Duration
+	TimeoutReg    time.Duration
+	TimeoutDel    time.Duration
+	HandleTimeout time.Duration
+	maxChannels   int
+	defaultHost   string
+	logger        *SimpleLogger
+	closeWait     sync.WaitGroup
+	closeSignal   chan bool
+	closeLock     sync.Mutex
+	isClosing     bool
+	clients       chan mc.Client
+	releases      chan *FreeClient
+	acquisitions  chan chan *FreeClient
+	lastErr       error
 }
 
 // EmceeConf specifies memcached adapter options.
@@ -244,6 +265,39 @@ type EmceeConf struct {
 	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
 	Driver                    EmceeDriverConf `toml:"memcache"`
 	Db                        DbConf
+}
+
+type emceeTimeout string
+
+// Timeout configuration field names, used by `parseTimeout()` for logging and
+// providing default values.
+const (
+	EmceeRecv   emceeTimeout = "storage.memcache.recv_timeout"
+	EmceeSend   emceeTimeout = "storage.memcache.send_timeout"
+	EmceePoll   emceeTimeout = "storage.memcache.poll_timeout"
+	EmceeRetry  emceeTimeout = "storage.memcache.retry_timeout"
+	EmceeHandle emceeTimeout = "storage.db.handle_timeout"
+)
+
+// Default adapter timeouts.
+var defaultEmceeTimeouts = map[emceeTimeout]time.Duration{
+	EmceeRecv:   1 * time.Second,
+	EmceeSend:   1 * time.Second,
+	EmceePoll:   10 * time.Millisecond,
+	EmceeRetry:  1 * time.Second,
+	EmceeHandle: 5 * time.Second,
+}
+
+// Parses a timeout configuration field value, returning a default value if
+// the field's contents could not be parsed.
+func parseTimeout(kind emceeTimeout, val string, logger *SimpleLogger) (t time.Duration) {
+	t, err := time.ParseDuration(val)
+	if err != nil {
+		logger.Error("emcee", fmt.Sprintf("Could not parse %s", kind),
+			LogFields{"error": err.Error()})
+		return defaultEmceeTimeouts[kind]
+	}
+	return
 }
 
 // ConfigStruct returns a configuration object with defaults. Implements
@@ -254,16 +308,16 @@ func (*EmceeStore) ConfigStruct() interface{} {
 			Hosts:        []string{"127.0.0.1:11211"},
 			MinConns:     100,
 			MaxConns:     400,
-			RecvTimeout:  5 * time.Second,
-			SendTimeout:  5 * time.Second,
-			PollTimeout:  5 * time.Second,
-			RetryTimeout: 5 * time.Second,
+			RecvTimeout:  "1s",
+			SendTimeout:  "1s",
+			PollTimeout:  "10ms",
+			RetryTimeout: "1s",
 		},
 		Db: DbConf{
-			TimeoutLive:   3 * 24 * time.Hour,
-			TimeoutReg:    3 * time.Hour,
-			TimeoutDel:    1 * 24 * time.Hour,
-			HandleTimeout: 5 * time.Second,
+			TimeoutLive:   3 * 24 * 60 * 60,
+			TimeoutReg:    3 * 60 * 60,
+			TimeoutDel:    24 * 60 * 60,
+			HandleTimeout: "5s",
 			HostPrefix:    "_h-",
 			PingPrefix:    "_pc-",
 			MaxChannels:   200,
@@ -275,10 +329,42 @@ func (*EmceeStore) ConfigStruct() interface{} {
 // seeds the pool with `MinConns` connections. Implements
 // `HasConfigStruct.Init()`.
 func (s *EmceeStore) Init(app *Application, config interface{}) error {
-	s.config = config.(*EmceeConf)
+	conf := config.(*EmceeConf)
 	s.logger = app.Logger()
 	s.defaultHost = app.Hostname()
-	for index := 0; index < s.config.Driver.MinConns; index++ {
+	if len(conf.ElastiCacheConfigEndpoint) == 0 {
+		s.Hosts = conf.Driver.Hosts
+	} else {
+		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2)
+		if err != nil {
+			s.logger.Error("storage", "Elastisearch error.",
+				LogFields{"error": err.Error()})
+			return err
+		}
+		// do NOT include any spaces
+		s.Hosts = strings.Split(noWhitespace.Replace(memcacheEndpoint), ",")
+	}
+
+	s.MinConns = conf.Driver.MinConns
+	s.MaxConns = conf.Driver.MaxConns
+	s.maxChannels = conf.Db.MaxChannels
+	s.HostPrefix = conf.Db.HostPrefix
+	s.PingPrefix = conf.Db.PingPrefix
+	s.HandleTimeout = parseTimeout(EmceeHandle, conf.Db.HandleTimeout, s.logger)
+
+	// The send and receive timeouts are expressed in microseconds.
+	s.recvTimeout = uint64(parseTimeout(EmceeRecv, conf.Driver.RecvTimeout, s.logger) / time.Microsecond)
+	s.sendTimeout = uint64(parseTimeout(EmceeSend, conf.Driver.SendTimeout, s.logger) / time.Microsecond)
+	// `poll(2)` accepts a millisecond timeout.
+	s.pollTimeout = uint64(parseTimeout(EmceePoll, conf.Driver.PollTimeout, s.logger) / time.Millisecond)
+	// The memcached retry timeout is expressed in seconds.
+	s.retryTimeout = uint64(parseTimeout(EmceeRetry, conf.Driver.RetryTimeout, s.logger) / time.Second)
+
+	s.TimeoutLive = time.Duration(conf.Db.TimeoutLive) * time.Second
+	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
+	s.TimeoutDel = time.Duration(conf.Db.TimeoutReg) * time.Second
+
+	for index := 0; index < s.MinConns; index++ {
 		client, err := s.newClient()
 		if err != nil {
 			s.fatal(err)
@@ -292,7 +378,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) error {
 // MaxChannels returns the maximum number of channel registrations allowed per
 // client. Implements `Store.MaxChannels()`.
 func (s *EmceeStore) MaxChannels() int {
-	return s.config.Db.MaxChannels
+	return s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
@@ -681,7 +767,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	if err = client.Delete(encodeKey(uaid), 0); err != nil && !isMissing(err) {
 		return err
 	}
-	if err = client.Delete(s.config.Db.HostPrefix+hex.EncodeToString(uaid), 0); err != nil && !isMissing(err) {
+	if err = client.Delete(s.HostPrefix+hex.EncodeToString(uaid), 0); err != nil && !isMissing(err) {
 		return err
 	}
 	return nil
@@ -699,7 +785,7 @@ func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 		return
 	}
 	defer s.releaseClient(client)
-	err = client.Get(s.config.Db.PingPrefix+hex.EncodeToString(uaid), &connect)
+	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &connect)
 	return
 }
 
@@ -715,7 +801,7 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 		return err
 	}
 	defer s.releaseClient(client)
-	return client.Set(s.config.Db.PingPrefix+hex.EncodeToString(uaid), connect, 0)
+	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), connect, 0)
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
@@ -730,7 +816,7 @@ func (s *EmceeStore) DropPing(suaid string) error {
 		return err
 	}
 	defer s.releaseClient(client)
-	return client.Delete(s.config.Db.PingPrefix+hex.EncodeToString(uaid), 0)
+	return client.Delete(s.PingPrefix+hex.EncodeToString(uaid), 0)
 }
 
 // FetchHost returns the host name of the Simple Push server that currently
@@ -754,7 +840,7 @@ func (s *EmceeStore) FetchHost(suaid string) (host string, err error) {
 		return s.defaultHost, err
 	}
 	defer s.releaseClient(client)
-	err = client.Get(s.config.Db.HostPrefix+deviceString, &host)
+	err = client.Get(s.HostPrefix+deviceString, &host)
 	if err != nil {
 		if isMissing(err) {
 			return s.defaultHost, ErrUnknownUAID
@@ -807,7 +893,7 @@ func (s *EmceeStore) DropHost(suaid string) error {
 		return err
 	}
 	defer s.releaseClient(client)
-	err = client.Delete(s.config.Db.HostPrefix+hex.EncodeToString(uaid), 0)
+	err = client.Delete(s.HostPrefix+hex.EncodeToString(uaid), 0)
 	if err == nil || isMissing(err) {
 		return nil
 	}
@@ -910,11 +996,11 @@ func (s *EmceeStore) storeRec(pk []byte, rec *cr) error {
 	var ttl time.Duration
 	switch rec.S {
 	case DELETED:
-		ttl = s.config.Db.TimeoutDel
+		ttl = s.TimeoutDel
 	case REGISTERED:
-		ttl = s.config.Db.TimeoutReg
+		ttl = s.TimeoutReg
 	default:
-		ttl = s.config.Db.TimeoutLive
+		ttl = s.TimeoutLive
 	}
 	rec.L = time.Now().UTC().Unix()
 	client, err := s.getClient()
@@ -954,14 +1040,14 @@ func (s *EmceeStore) getClient() (*FreeClient, error) {
 		if client := <-freeClients; client != nil {
 			return client, nil
 		}
-	case <-time.After(s.config.Db.HandleTimeout):
+	case <-time.After(s.HandleTimeout):
 	}
 	return nil, ErrPoolSaturated
 }
 
 // Creates and configures a memcached client connection.
 func (s *EmceeStore) newClient() (mc.Client, error) {
-	client, err := mc.NewClient(s.config.Driver.Hosts, 1, mc.ENCODING_GOB)
+	client, err := mc.NewClient(s.Hosts, 1, mc.ENCODING_GOB)
 	if err != nil {
 		return nil, err
 	}
@@ -976,27 +1062,20 @@ func (s *EmceeStore) newClient() (mc.Client, error) {
 		client.Close()
 		return nil, err
 	}
-	// The send and receive timeouts are expressed in microseconds.
 	// `SetBehavior()` wraps libmemcached's `memcached_behavior_set()` call.
-	sendTimeout := uint64(s.config.Driver.SendTimeout / time.Microsecond)
-	if err := client.SetBehavior(mc.BEHAVIOR_SND_TIMEOUT, sendTimeout); err != nil {
+	if err := client.SetBehavior(mc.BEHAVIOR_SND_TIMEOUT, s.sendTimeout); err != nil {
 		client.Close()
 		return nil, err
 	}
-	receiveTimeout := uint64(s.config.Driver.RecvTimeout / time.Microsecond)
-	if err := client.SetBehavior(mc.BEHAVIOR_RCV_TIMEOUT, receiveTimeout); err != nil {
+	if err := client.SetBehavior(mc.BEHAVIOR_RCV_TIMEOUT, s.recvTimeout); err != nil {
 		client.Close()
 		return nil, err
 	}
-	// `poll(2)` accepts a millisecond timeout.
-	pollTimeout := uint64(s.config.Driver.PollTimeout / time.Millisecond)
-	if err := client.SetBehavior(mc.BEHAVIOR_POLL_TIMEOUT, pollTimeout); err != nil {
+	if err := client.SetBehavior(mc.BEHAVIOR_POLL_TIMEOUT, s.pollTimeout); err != nil {
 		client.Close()
 		return nil, err
 	}
-	// The memcached retry timeout is expressed in seconds.
-	retryTimeout := uint64(s.config.Driver.RetryTimeout / time.Second)
-	if err = client.SetBehavior(mc.BEHAVIOR_RETRY_TIMEOUT, retryTimeout); err != nil {
+	if err = client.SetBehavior(mc.BEHAVIOR_RETRY_TIMEOUT, s.retryTimeout); err != nil {
 		client.Close()
 		return nil, err
 	}
@@ -1009,7 +1088,7 @@ func (s *EmceeStore) storeHost(client mc.Client, uaid, host string) error {
 		"uaid": uaid,
 		"host": host,
 	})
-	err := client.Set(s.config.Db.HostPrefix+uaid, host, s.config.Db.TimeoutLive)
+	err := client.Set(s.HostPrefix+uaid, host, s.TimeoutLive)
 	if err == nil || isMissing(err) {
 		return nil
 	}
@@ -1025,7 +1104,7 @@ func (s *EmceeStore) run() {
 		select {
 		case ok = <-s.closeSignal:
 		case client := <-s.clients:
-			if capacity >= s.config.Driver.MaxConns {
+			if capacity >= s.MaxConns {
 				client.Close()
 				break
 			}
@@ -1033,7 +1112,7 @@ func (s *EmceeStore) run() {
 			capacity++
 
 		case freeClient := <-s.releases:
-			if capacity >= s.config.Driver.MaxConns {
+			if capacity >= s.MaxConns {
 				// Maximum pool size exceeded; close the connection.
 				freeClient.Close()
 				break
@@ -1049,7 +1128,7 @@ func (s *EmceeStore) run() {
 				close(acquisition)
 				break
 			}
-			if capacity < s.config.Driver.MaxConns {
+			if capacity < s.MaxConns {
 				// All connections are in use, but the pool has not reached its maximum
 				// capacity. The caller should call `s.releaseClient()` to return the
 				// connection to the pool. TODO: Spawning a separate Goroutine to handle

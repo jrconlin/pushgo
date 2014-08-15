@@ -32,20 +32,20 @@ type Update struct {
 // DbConf specifies generic database adapter options.
 type DbConf struct {
 	// TimeoutLive is the active channel record timeout. Defaults to 3 days.
-	TimeoutLive time.Duration `toml:"timeout_live"`
+	TimeoutLive int64 `toml:"timeout_live"`
 
 	// TimeoutReg is the registered channel record timeout. Defaults to 3 hours;
 	// an app server should send a notification on a registered channel before
 	// this timeout.
-	TimeoutReg time.Duration `toml:"timeout_reg"`
+	TimeoutReg int64 `toml:"timeout_reg"`
 
 	// TimeoutDel is the deleted channel record timeout. Defaults to 1 day;
 	// deleted records will be pruned after this timeout.
-	TimeoutDel time.Duration `toml:"timeout_del"`
+	TimeoutDel int64 `toml:"timeout_del"`
 
 	// HandleTimeout is the maximum time to wait when acquiring a connection from
 	// the pool. Defaults to 5 seconds.
-	HandleTimeout time.Duration `toml:"handle_time"`
+	HandleTimeout string `toml:"handle_timeout"`
 
 	// HostPrefix is the key prefix for client hosts. Defaults to `"_h-"`.
 	HostPrefix string `toml:"shard_prefix"`
