@@ -261,24 +261,35 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments Js
 }
 
 func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
+	var pk string
 	updateErr := errors.New("Update Error")
 	reason := "Unknown UID"
-	if client, ok := self.app.GetClient(uid); ok {
-		reason = "Failed to generate PK"
-		if pk, err := GenPK(uid, chid); err == nil {
-			reason = "Failed to update channel"
-			if err = self.storage.UpdateChannel(pk, vers); err == nil {
-				reason = "Failed to flush"
-				if err = self.RequestFlush(client, chid, vers); err == nil {
-					reason = ""
-					return nil
-				}
-			}
-		}
-	}
-	if err == nil {
+
+	client, ok := self.app.GetClient(uid)
+	if !ok {
 		err = updateErr
+		goto updateError
 	}
+
+	pk, err = GenPK(uid, chid)
+	if err != nil {
+		reason = "Failed to generate PK"
+		goto updateError
+	}
+
+	err = self.storage.UpdateChannel(pk, vers)
+	if err != nil {
+		reason = "Failed to update channel"
+		goto updateError
+	}
+
+	err = self.RequestFlush(client, chid, vers)
+	if err == nil {
+		return
+	}
+	reason = "Failed to flush"
+
+updateError:
 	self.logger.Error("server", reason,
 		LogFields{"error": err.Error(),
 			"UID":  uid,
