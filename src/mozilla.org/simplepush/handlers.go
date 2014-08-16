@@ -33,6 +33,7 @@ type Handler struct {
 	metrics         *Metrics
 	max_connections int
 	token_key       []byte
+	propping        *PropPing
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -47,6 +48,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.router = app.Router()
 	self.max_connections = app.MaxConnections()
 	self.token_key = app.TokenKey()
+	self.SetPropPing(app.PropPing())
 	return nil
 }
 
@@ -149,7 +151,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// Handle the version updates.
 	var err error
 	var version int64
-	var pping *PropPing
 
 	if self.app.ClientCount() > int(self.max_connections) {
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
@@ -279,7 +280,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	connect, err := self.storage.GetPropConnect(uaid)
 	if err == nil && len(connect) > 0 {
 		// TODO: store the prop ping?
-		pping, err = NewPropPing(connect, uaid, self.app)
+		err = self.propping.Register(connect, uaid)
 		if err != nil {
 			self.logger.Warn("update",
 				"Could not generate Proprietary Ping",
@@ -293,8 +294,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
-	if pping != nil && pping.CanBypassWebsocket() {
-		err = pping.Send(version)
+	if self.propping != nil && self.propping.CanBypassWebsocket() {
+		err = self.propping.Send(version)
 		if err != nil {
 			self.logger.Error("update",
 				"Could not force to proprietary ping",
@@ -461,6 +462,15 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	http.Error(resp, "Ok", http.StatusOK)
 	return
+}
+
+func (r *Handler) SetPropPing(ping IPropPing) (err error) {
+	r.propping, err = NewPropPing(ping)
+	return
+}
+
+func (r *Handler) PropPing() *PropPing {
+	return r.propping
 }
 
 // o4fs
