@@ -6,7 +6,6 @@ package simplepush
 
 import (
 	"errors"
-	"fmt"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -22,7 +21,7 @@ type Client struct {
 	Worker *Worker
 	PushWS PushWS    `json:"-"`
 	UAID   string    `json:"uaid"`
-	Prop   *PropPing `json:"-"`
+	Prop   IPropPing `json:"-"`
 }
 
 // Basic global server options
@@ -40,7 +39,7 @@ type Serv struct {
 	storage      *Storage
 	key          []byte
 	pushEndpoint string
-	prop         *PropPing
+	prop         IPropPing
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -63,7 +62,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop *PropPing
+	var prop IPropPing
 	var err error
 
 	args := cmd.Arguments.(JsMap)
@@ -102,16 +101,13 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	}
 
 	if connect, ok := args["connect"]; ok && connect != nil {
-		if len(connect.(string)) != 0 {
-			fmt.Printf("### APP::: %+v\n", self.app)
-			ppingCopy := *self.app.PropPing()
-			if err = ppingCopy.Register(connect.(string), uaid); err != nil {
-				self.logger.Warn("server", "Could not set proprietary info",
-					LogFields{"error": err.Error(),
-						"connect": connect.(string)})
-			} else {
-				self.prop = &ppingCopy
-			}
+		ppingCopy := self.app.PropPing()
+		if err = ppingCopy.Register(connect.(map[string]interface{}), uaid); err != nil {
+			self.logger.Warn("server", "Could not set proprietary info",
+				LogFields{"error": err.Error(),
+					"connect": connect.(string)})
+		} else {
+			self.prop = ppingCopy
 		}
 	}
 

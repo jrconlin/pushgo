@@ -13,6 +13,7 @@ import (
 
 type IPropPing interface {
 	HasConfigStruct
+	Register(connect JsMap, uaid string) error
 	Send(vers int64) error
 	CanBypassWebsocket() bool
 }
@@ -25,10 +26,6 @@ var AvailablePings = make(AvailableExtensions)
 
 type PropPing struct {
 	IPropPing
-}
-
-func NewPropPing(ping IPropPing) (*PropPing, error) {
-	return &PropPing{ping}, nil
 }
 
 func init() {
@@ -50,6 +47,10 @@ type NoopPingConfig struct {
 	config *NoopPingConfig
 }
 
+func (ml *NoopPing) ConfigStruct() interface{} {
+	return &NoopPingConfig{}
+}
+
 // Generic configuration for an Ping
 func (r *NoopPing) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*NoopPingConfig)
@@ -57,23 +58,19 @@ func (r *NoopPing) Init(app *Application, config interface{}) (err error) {
 	return nil
 }
 
-func (ml *NoopPing) ConfigStruct() interface{} {
-	return &NoopPingConfig{}
-}
-
 // Register the ping to a user
-func (r *PropPing) Register(connect, uaid string) (err error) {
+func (r *NoopPing) Register(connect JsMap, uaid string) (err error) {
 	return nil
 }
 
-// try to send the ping.
-func (r *PropPing) Send(vers int64) error {
-	return UnsupportedProtocolErr
+// Can the ping bypass telling the device on the websocket?
+func (r *NoopPing) CanBypassWebsocket() bool {
+	return false
 }
 
-// Can the ping bypass telling the device on the websocket?
-func (r *PropPing) CanBypassWebsocket() bool {
-	return false
+// try to send the ping.
+func (r *NoopPing) Send(vers int64) error {
+	return UnsupportedProtocolErr
 }
 
 //===
@@ -103,17 +100,27 @@ func (r *UDPPing) Init(app *Application, config interface{}) error {
 	return nil
 }
 
-func (r *UDPPing) Register(connect, uaid string) (err error) {
+func (r *UDPPing) Register(connect JsMap, uaid string) (err error) {
 
-	if len(connect) == 0 {
-		return nil
+	cstr, err := json.Marshal(connect)
+	if err != nil {
+		r.app.Logger().Error("udpping", "Could not marshal connection string for storage",
+			LogFields{"error": err.Error()})
+		return err
 	}
-
-	if err = r.app.Storage().SetPropConnect(uaid, connect); err != nil {
+	// TODO: Convert this to take either []byte or JsMap
+	if err = r.app.Storage().SetPropConnect(uaid, string(cstr)); err != nil {
 		r.app.Logger().Error("propping", "Could not store connect",
 			LogFields{"error": err.Error()})
 	}
 	return nil
+}
+
+func (r *UDPPing) CanBypassWebsocket() bool {
+	// If the Ping does not require communication to the client via
+	// websocket, return true. If the ping should still attempt to
+	// try using the client's websocket connection, return false.
+	return false
 }
 
 // Send the version info to the Proprietary ping URL provided
@@ -124,13 +131,6 @@ func (r *UDPPing) Send(vers int64) error {
 	// Since UDP is not actually defined, we're returning this
 	// error.
 	return UnsupportedProtocolErr
-}
-
-func (r *UDPPing) CanBypassWebsocket() bool {
-	// If the Ping does not require communication to the client via
-	// websocket, return true. If the ping should still attempt to
-	// try using the client's websocket connection, return false.
-	return false
 }
 
 // ===
@@ -170,22 +170,10 @@ func (r *GCMPing) Init(app *Application, config interface{}) error {
 	return nil
 }
 
-func (r *GCMPing) Register(connect, uaid string) (err error) {
-	var c_js JsMap = make(JsMap)
-
-	if len(connect) == 0 {
-		return nil
-	}
-
+func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 	// already specified, no need to redo.
 	if r.config.UAID == uaid {
 		return nil
-	}
-
-	if err = json.Unmarshal([]byte(connect), &c_js); err != nil {
-		r.app.Logger().Error("gcmping", "Invalid connect string",
-			LogFields{"error": err.Error()})
-		return err
 	}
 
 	if r.config.APIKey == "" {
@@ -195,7 +183,7 @@ func (r *GCMPing) Register(connect, uaid string) (err error) {
 		return ConfigurationErr
 	}
 
-	regid, ok := c_js["regid"]
+	regid, ok := connect["regid"]
 	if !ok {
 		r.app.Logger().Error("gcmping",
 			"No user registration ID present. Cannot send message",
@@ -203,20 +191,21 @@ func (r *GCMPing) Register(connect, uaid string) (err error) {
 		return ConfigurationErr
 	}
 
-	c_js["collapse_key"] = r.config.CollapseKey
-	c_js["dry_run"] = r.config.DryRun
-	c_js["api_key"] = r.config.APIKey
-	c_js["gcm_url"] = r.config.URL
-	c_js["ttl"] = r.config.TTL
-	c_js["project_id"] = r.config.ProjectID
+	connect["collapse_key"] = r.config.CollapseKey
+	connect["dry_run"] = r.config.DryRun
+	connect["api_key"] = r.config.APIKey
+	connect["gcm_url"] = r.config.URL
+	connect["ttl"] = r.config.TTL
+	connect["project_id"] = r.config.ProjectID
 	r.config.RegID = regid.(string)
 	r.config.UAID = uaid
-	full_connect, err := json.Marshal(c_js)
+	full_connect, err := json.Marshal(connect)
 	if err != nil {
 		r.app.Logger().Error("gcmping", "Could not marshal connection string for storage",
 			LogFields{"error": err.Error()})
 		return err
 	}
+	// TODO: convert this to take either []byte or JsMap
 	if err = r.app.Storage().SetPropConnect(uaid, string(full_connect)); err != nil {
 		r.app.Logger().Error("gcmping", "Could not store connect",
 			LogFields{"error": err.Error()})

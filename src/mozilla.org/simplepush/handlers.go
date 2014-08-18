@@ -33,7 +33,7 @@ type Handler struct {
 	metrics         *Metrics
 	max_connections int
 	token_key       []byte
-	propping        *PropPing
+	propping        IPropPing
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -277,15 +277,25 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	// is there a Proprietary Ping for this?
+	//TODO: This should return JsMap, err
 	connect, err := self.storage.GetPropConnect(uaid)
 	if err == nil && len(connect) > 0 {
 		// TODO: store the prop ping?
-		err = self.propping.Register(connect, uaid)
+		c_js := make(JsMap)
+		err = json.Unmarshal([]byte(connect), &c_js)
 		if err != nil {
 			self.logger.Warn("update",
-				"Could not generate Proprietary Ping",
+				"Could not resolve Proprietary Ping connection string",
 				LogFields{"error": err.Error(),
 					"connect": connect})
+		} else {
+			err = self.propping.Register(c_js, uaid)
+			if err != nil {
+				self.logger.Warn("update",
+					"Could not generate Proprietary Ping",
+					LogFields{"error": err.Error(),
+						"connect": connect})
+			}
 		}
 	}
 
@@ -465,11 +475,11 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Handler) SetPropPing(ping IPropPing) (err error) {
-	r.propping, err = NewPropPing(ping)
+	r.propping = ping
 	return
 }
 
-func (r *Handler) PropPing() *PropPing {
+func (r *Handler) PropPing() IPropPing {
 	return r.propping
 }
 

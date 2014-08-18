@@ -151,7 +151,7 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 		return
 	}
 
-	// Next, many things require the logger, and logger has no other deps
+	// Load the Proprietary Ping element. Deps: Logger
 	if obj, err = LoadExtensibleSection(app, "propping", AvailablePings, configFile); err != nil {
 		return
 	}
