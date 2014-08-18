@@ -60,7 +60,7 @@ type Application struct {
 	clientMux          *sync.RWMutex
 	clientCount        *int32
 	server             *Serv
-	storage            *Storage
+	store              Store
 	router             *Router
 	handlers           *Handler
 	propping           PropPinger
@@ -150,8 +150,8 @@ func (a *Application) SetMetrics(metrics *Metrics) error {
 	return nil
 }
 
-func (a *Application) SetStorage(storage *Storage) error {
-	a.storage = storage
+func (a *Application) SetStore(store Store) error {
+	a.store = store
 	return nil
 }
 
@@ -228,8 +228,8 @@ func (a *Application) PropPinger() PropPinger {
 	return a.propping
 }
 
-func (a *Application) Storage() *Storage {
-	return a.storage
+func (a *Application) Store() Store {
+	return a.store
 }
 
 func (a *Application) Metrics() *Metrics {
@@ -276,4 +276,9 @@ func (a *Application) RemoveClient(uaid string) {
 	delete(a.clients, uaid)
 	a.clientMux.Unlock()
 	atomic.AddInt32(a.clientCount, -1)
+}
+
+func (a *Application) Stop() {
+	a.router.Unregister()
+	a.store.Close()
 }

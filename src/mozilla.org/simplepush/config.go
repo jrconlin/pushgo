@@ -146,7 +146,7 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	if obj, err = LoadExtensibleSection(app, "logging", AvailableLoggers, configFile); err != nil {
 		return
 	}
-	logger, _ := obj.(Logger)
+	logger := obj.(Logger)
 	if err = app.SetLogger(logger); err != nil {
 		return
 	}
@@ -170,11 +170,11 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	}
 
 	// Next, storage, Deps: Logger, Metrics
-	storage := new(Storage)
-	if err = LoadConfigForSection(app, "storage", storage, configFile); err != nil {
+	if obj, err = LoadExtensibleSection(app, "storage", AvailableStores, configFile); err != nil {
 		return
 	}
-	if err = app.SetStorage(storage); err != nil {
+	store := obj.(Store)
+	if err = app.SetStore(store); err != nil {
 		return
 	}
 

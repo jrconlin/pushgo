@@ -105,7 +105,7 @@ func (r *UDPPing) Register(connect JsMap, uaid string) (err error) {
 		return err
 	}
 	// TODO: Convert this to take either []byte or JsMap
-	if err = r.app.Storage().SetPropConnect(uaid, string(cstr)); err != nil {
+	if err = r.app.Store().PutPing(uaid, string(cstr)); err != nil {
 		r.app.Logger().Error("propping", "Could not store connect",
 			LogFields{"error": err.Error()})
 	}
@@ -202,7 +202,7 @@ func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 		return err
 	}
 	// TODO: convert this to take either []byte or JsMap
-	if err = r.app.Storage().SetPropConnect(uaid, string(full_connect)); err != nil {
+	if err = r.app.Store().PutPing(uaid, string(full_connect)); err != nil {
 		r.app.Logger().Error("gcmping", "Could not store connect",
 			LogFields{"error": err.Error()})
 		return err

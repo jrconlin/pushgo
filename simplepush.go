@@ -80,7 +80,7 @@ func main() {
 		}
 	case <-sigChan:
 		app.Logger().Info("main", "Recieved signal, shutting down.", nil)
-		app.Router().Unregister()
+		app.Stop()
 	}
 }
 
