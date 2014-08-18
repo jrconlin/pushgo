@@ -22,36 +22,41 @@ import (
 	"mozilla.org/simplepush/sperrors"
 )
 
-// Channel record status constants.
+// ChannelState represents the state of a channel record.
+type ChannelState int8
+
+// Channel record states.
 const (
-	DELETED = iota
-	LIVE
-	REGISTERED
+	StateDeleted ChannelState = iota
+	StateLive
+	StateRegistered
 )
+
+func (s ChannelState) String() string {
+	switch s {
+	case StateDeleted:
+		return "deleted"
+	case StateLive:
+		return "live"
+	case StateRegistered:
+		return "registered"
+	}
+	return ""
+}
 
 // Common adapter errors.
 var (
-	ErrPoolSaturated      StorageError = "Connection pool saturated"
-	ErrStatusFailed       StorageError = "Invalid value returned"
-	ErrUnknownUAID        StorageError = "Unknown UAID for host"
-	ErrNoElastiCache      StorageError = "ElastiCache returned no endpoints"
-	ErrElastiCacheTimeout StorageError = "ElastiCache query timed out"
+	ErrPoolSaturated StorageError = "Connection pool saturated"
+	ErrStatusFailed  StorageError = "Invalid value returned"
+	ErrUnknownUAID   StorageError = "Unknown UAID for host"
+	ErrNoNodes       StorageError = "No memcached nodes available"
 )
 
-var noWhitespace = strings.NewReplacer(" ", "",
-	"\x08", "",
-	"\x09", "",
-	"\x0a", "",
-	"\x0b", "",
-	"\x0c", "",
-	"\x0d", "")
-
-// cr is a channel record. The short type and field names are used to reduce
-// the size of the encoded Gob structure.
-type cr struct {
-	S int8   //State
-	V uint64 // Version
-	L int64  // Last touched
+// ChannelRecord represents a channel record persisted to memcached.
+type ChannelRecord struct {
+	State       ChannelState
+	Version     uint64
+	LastTouched int64
 }
 
 // ChannelIDs is a list of decoded channel IDs.
@@ -390,12 +395,13 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 			return err
 		}
 	}
-	rec := &cr{
-		S: REGISTERED,
-		L: time.Now().UTC().Unix()}
+	rec := &ChannelRecord{
+		State:       StateRegistered,
+		LastTouched: time.Now().UTC().Unix(),
+	}
 	if version != 0 {
-		rec.V = uint64(version)
-		rec.S = LIVE
+		rec.State = StateLive
+		rec.Version = uint64(version)
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
@@ -442,11 +448,12 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	}
 	if cRec != nil {
 		s.logger.Debug("emcee", "Replacing record", LogFields{"primarykey": keyString})
-		if cRec.S != DELETED {
-			newRecord := &cr{
-				V: uint64(version),
-				S: LIVE,
-				L: time.Now().UTC().Unix()}
+		if cRec.State != StateDeleted {
+			newRecord := &ChannelRecord{
+				State:       StateLive,
+				Version:     uint64(version),
+				LastTouched: time.Now().UTC().Unix(),
+			}
 			err = s.storeRec(key, newRecord)
 			if err != nil {
 				return err
@@ -515,7 +522,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 			})
 			continue
 		}
-		channel.S = DELETED
+		channel.State = StateDeleted
 		err = s.storeRec(key, channel)
 		break
 	}
@@ -605,7 +612,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
-		channel := new(cr)
+		channel := new(ChannelRecord)
 		if err := client.Get(key, channel); err != nil {
 			continue
 		}
@@ -614,9 +621,9 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		s.logger.Debug("emcee", "FetchAll Fetched record ", LogFields{
 			"uaid":  deviceString,
 			"chid":  channelString,
-			"value": fmt.Sprintf("%d,%d,%d", channel.L, channel.S, channel.V),
+			"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
 		})
-		if channel.L < sinceUnix {
+		if channel.LastTouched < sinceUnix {
 			s.logger.Debug("emcee", "Skipping record...", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
@@ -625,9 +632,9 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		}
 		// Yay! Go translates numeric interface values as float64s
 		// Apparently float64(1) != int(1).
-		switch channel.S {
-		case LIVE:
-			version := channel.V
+		switch channel.State {
+		case StateLive:
+			version := channel.Version
 			if version == 0 {
 				version = uint64(time.Now().UTC().Unix())
 				s.logger.Debug("emcee", "FetchAll Using Timestamp", LogFields{
@@ -640,7 +647,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 				Version:   version,
 			}
 			updates = append(updates, update)
-		case DELETED:
+		case StateDeleted:
 			s.logger.Debug("emcee", "FetchAll Deleting record", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
@@ -654,7 +661,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 				continue
 			}
 			expired = append(expired, schid)
-		case REGISTERED:
+		case StateRegistered:
 			// Item registered, but not yet active. Ignore it.
 		default:
 			s.logger.Warn("emcee", "Unknown state", LogFields{
@@ -795,7 +802,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 }
 
 // Retrieves a channel record from memcached.
-func (s *EmceeStore) fetchRec(pk []byte) (*cr, error) {
+func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
 		return nil, sperrors.InvalidPrimaryKeyError
 	}
@@ -805,7 +812,7 @@ func (s *EmceeStore) fetchRec(pk []byte) (*cr, error) {
 		return nil, err
 	}
 	defer s.releaseClient(client)
-	result := new(cr)
+	result := new(ChannelRecord)
 	err = client.Get(keyString, result)
 	if err != nil && !isMissing(err) {
 		s.logger.Error("emcee", "Get Failed", LogFields{
@@ -816,13 +823,13 @@ func (s *EmceeStore) fetchRec(pk []byte) (*cr, error) {
 	}
 	s.logger.Debug("emcee", "Fetched", LogFields{
 		"primarykey": keyString,
-		"result":     fmt.Sprintf("state: %d, vers: %d, last: %d", result.S, result.V, result.L),
+		"result":     fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
 	})
 	return result, nil
 }
 
 // Stores an updated channel record in memcached.
-func (s *EmceeStore) storeRec(pk []byte, rec *cr) error {
+func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
 		return sperrors.InvalidPrimaryKeyError
 	}
@@ -830,15 +837,15 @@ func (s *EmceeStore) storeRec(pk []byte, rec *cr) error {
 		return sperrors.NoDataToStoreError
 	}
 	var ttl time.Duration
-	switch rec.S {
-	case DELETED:
+	switch rec.State {
+	case StateDeleted:
 		ttl = s.TimeoutDel
-	case REGISTERED:
+	case StateRegistered:
 		ttl = s.TimeoutReg
 	default:
 		ttl = s.TimeoutLive
 	}
-	rec.L = time.Now().UTC().Unix()
+	rec.LastTouched = time.Now().UTC().Unix()
 	client, err := s.getClient()
 	if err != nil {
 		return err
