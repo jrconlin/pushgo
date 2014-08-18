@@ -5,14 +5,12 @@
 package simplepush
 
 import (
-	"bufio"
 	"bytes"
 	"container/list"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,63 +94,6 @@ func remove(list [][]byte, pos int) (res [][]byte) {
 		return list
 	}
 	return append(list[:pos], list[pos+1:]...)
-}
-
-// Use the AWS system to query for the endpoints to use.
-// (Allows for dynamic endpoint assignments)
-func getElastiCacheEndpoints(configEndpoint string) (string, error) {
-	c, err := net.Dial("tcp", configEndpoint)
-	if err != nil {
-		return "", err
-	}
-	defer c.Close()
-
-	reader, writer := bufio.NewReader(c), bufio.NewWriter(c)
-	writer.Write([]byte("config get cluster\r\n"))
-	writer.Flush()
-
-	reader.ReadString('\n')
-	reader.ReadString('\n')
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return "", nil
-	}
-
-	endPoints := strings.Split(line, " ")
-	if len(endPoints) < 1 {
-		return "", ErrNoElastiCache
-	}
-
-	var retEndpoints []string
-	for _, v := range endPoints {
-		endPoint := strings.Split(v, "|")
-		if len(endPoint) < 3 {
-			continue
-		}
-		retEndpoints = append(retEndpoints, fmt.Sprintf("%s:%s", endPoint[1], strings.TrimSpace(endPoint[2])))
-	}
-	return strings.Join(retEndpoints, ","), nil
-}
-
-func getElastiCacheEndpointsTimeout(configEndpoint string, seconds int) (string, error) {
-	type strErr struct {
-		ep  string
-		err error
-	}
-
-	ch := make(chan strErr, 1)
-
-	go func() {
-		ep, err := getElastiCacheEndpoints(configEndpoint)
-		ch <- strErr{ep, err}
-	}()
-	select {
-	case se := <-ch:
-		return se.ep, se.err
-	case <-time.After(time.Duration(seconds) * time.Second):
-		return "", ErrElastiCacheTimeout
-	}
-
 }
 
 // Determines whether the given error is a memcached "missing key" error.
@@ -335,14 +276,13 @@ func (s *EmceeStore) Init(app *Application, config interface{}) error {
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
 		s.Hosts = conf.Driver.Hosts
 	} else {
-		memcacheEndpoint, err := getElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2)
+		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Error("storage", "Elastisearch error.",
+			s.logger.Error("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
-		// do NOT include any spaces
-		s.Hosts = strings.Split(noWhitespace.Replace(memcacheEndpoint), ",")
+		s.Hosts = endpoints
 	}
 
 	s.MinConns = conf.Driver.MinConns
@@ -962,6 +902,9 @@ func (s *EmceeStore) getClient() (*FreeClient, error) {
 
 // Creates and configures a memcached client connection.
 func (s *EmceeStore) newClient() (mc.Client, error) {
+	if len(s.Hosts) == 0 {
+		return nil, ErrNoNodes
+	}
 	client, err := mc.NewClient(s.Hosts, 1, mc.ENCODING_GOB)
 	if err != nil {
 		return nil, err
