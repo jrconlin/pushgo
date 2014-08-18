@@ -30,6 +30,13 @@ func GenUUID4() (string, error) {
 	return hex.EncodeToString(uuid), nil
 }
 
+func isHex(b byte) bool {
+	if b >= 'A' && b <= 'F' {
+		b += 'a' - 'A'
+	}
+	return b >= 'a' && b <= 'f' || b >= '0' && b <= '9'
+}
+
 // ValidUAID ensures that the given ID only contains hex digits and hyphens.
 func ValidUAID(id string) bool {
 	if len(id) == 0 {
@@ -37,10 +44,7 @@ func ValidUAID(id string) bool {
 	}
 	for index := 0; index < len(id); index++ {
 		b := id[index]
-		if b >= 'A' && b <= 'F' {
-			b += 'a' - 'A'
-		}
-		if b != '-' && (b < 'a' || b > 'f') && (b < '0' || b > '9') {
+		if b != '-' && !isHex(b) {
 			return false
 		}
 	}
@@ -53,7 +57,7 @@ func ScanUUID(uuids string) ([]byte, error) {
 	return hex.DecodeString(trimmed)
 }
 
-// EncodeID converts a UUID into a hex-encoded string.
+// EncodeID converts a UUID into a hyphenated, hex-encoded string.
 func EncodeID(bytes []byte) (string, error) {
 	if len(bytes) != 16 {
 		return "", ErrInvalidID
