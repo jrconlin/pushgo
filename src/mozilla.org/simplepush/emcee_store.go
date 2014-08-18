@@ -209,39 +209,6 @@ type EmceeConf struct {
 	Db                        DbConf
 }
 
-type emceeTimeout string
-
-// Timeout configuration field names, used by `parseTimeout()` for logging and
-// providing default values.
-const (
-	EmceeRecv   emceeTimeout = "storage.memcache.recv_timeout"
-	EmceeSend   emceeTimeout = "storage.memcache.send_timeout"
-	EmceePoll   emceeTimeout = "storage.memcache.poll_timeout"
-	EmceeRetry  emceeTimeout = "storage.memcache.retry_timeout"
-	EmceeHandle emceeTimeout = "storage.db.handle_timeout"
-)
-
-// Default adapter timeouts.
-var defaultEmceeTimeouts = map[emceeTimeout]time.Duration{
-	EmceeRecv:   1 * time.Second,
-	EmceeSend:   1 * time.Second,
-	EmceePoll:   10 * time.Millisecond,
-	EmceeRetry:  1 * time.Second,
-	EmceeHandle: 5 * time.Second,
-}
-
-// Parses a timeout configuration field value, returning a default value if
-// the field's contents could not be parsed.
-func parseTimeout(kind emceeTimeout, val string, logger *SimpleLogger) (t time.Duration) {
-	t, err := time.ParseDuration(val)
-	if err != nil {
-		logger.Error("emcee", fmt.Sprintf("Could not parse %s", kind),
-			LogFields{"error": err.Error()})
-		return defaultEmceeTimeouts[kind]
-	}
-	return
-}
-
 // ConfigStruct returns a configuration object with defaults. Implements
 // `HasConfigStruct.ConfigStruct()`.
 func (*EmceeStore) ConfigStruct() interface{} {
@@ -269,7 +236,7 @@ func (*EmceeStore) ConfigStruct() interface{} {
 // Init initializes the memcached adapter with the given configuration and
 // seeds the pool with `MinConns` connections. Implements
 // `HasConfigStruct.Init()`.
-func (s *EmceeStore) Init(app *Application, config interface{}) error {
+func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EmceeConf)
 	s.logger = app.Logger()
 	s.defaultHost = app.Hostname()
@@ -289,15 +256,39 @@ func (s *EmceeStore) Init(app *Application, config interface{}) error {
 	s.MaxConns = conf.Driver.MaxConns
 	s.maxChannels = conf.Db.MaxChannels
 	s.PingPrefix = conf.Db.PingPrefix
-	s.HandleTimeout = parseTimeout(EmceeHandle, conf.Db.HandleTimeout, s.logger)
+	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
+		s.logger.Error("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		return err
+	}
 
 	// The send and receive timeouts are expressed in microseconds.
-	s.recvTimeout = uint64(parseTimeout(EmceeRecv, conf.Driver.RecvTimeout, s.logger) / time.Microsecond)
-	s.sendTimeout = uint64(parseTimeout(EmceeSend, conf.Driver.SendTimeout, s.logger) / time.Microsecond)
+	var recvTimeout, sendTimeout time.Duration
+	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
+		s.logger.Error("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		return err
+	}
+	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
+		s.logger.Error("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		return err
+	}
+	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
+	s.sendTimeout = uint64(sendTimeout / time.Microsecond)
+
 	// `poll(2)` accepts a millisecond timeout.
-	s.pollTimeout = uint64(parseTimeout(EmceePoll, conf.Driver.PollTimeout, s.logger) / time.Millisecond)
+	var pollTimeout time.Duration
+	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
+		s.logger.Error("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
+		return err
+	}
+	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
+
 	// The memcached retry timeout is expressed in seconds.
-	s.retryTimeout = uint64(parseTimeout(EmceeRetry, conf.Driver.RetryTimeout, s.logger) / time.Second)
+	var retryTimeout time.Duration
+	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
+		s.logger.Error("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
+		return err
+	}
+	s.retryTimeout = uint64(retryTimeout / time.Second)
 
 	s.TimeoutLive = time.Duration(conf.Db.TimeoutLive) * time.Second
 	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
