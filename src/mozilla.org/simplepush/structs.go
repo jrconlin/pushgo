@@ -33,8 +33,8 @@ var cmdLabels = map[int]string{
 
 type PushCommand struct {
 	// Use mutable int value
-	Command   int         //command type (UNREG, REGIS, ACK, etc)
-	Arguments interface{} //command arguments
+	Command   int   //command type (UNREG, REGIS, ACK, etc)
+	Arguments JsMap //command arguments
 }
 
 type PushWS struct {

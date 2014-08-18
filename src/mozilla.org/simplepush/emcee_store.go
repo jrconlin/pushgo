@@ -344,14 +344,10 @@ func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
 // Status queries whether memcached is available for reading and writing.
 // Implements `Store.Status()`.
 func (s *EmceeStore) Status() (success bool, err error) {
-	defer func() {
-		if recv := recover(); recv != nil {
-			success = false
-			err = recv.(error)
-			return
-		}
-	}()
-	fakeID, _ := GenUUID4()
+	fakeID, err := GenUUID4()
+	if err != nil {
+		return false, err
+	}
 	key := "status_" + fakeID
 	client, err := s.getClient()
 	if err != nil {
@@ -804,14 +800,6 @@ func (s *EmceeStore) fetchRec(pk []byte) (*cr, error) {
 		return nil, sperrors.InvalidPrimaryKeyError
 	}
 	keyString := encodeKey(pk)
-	defer func() {
-		if err := recover(); err != nil {
-			s.logger.Error("emcee", "could not fetch record", LogFields{
-				"primarykey": keyString,
-				"error":      err.(error).Error(),
-			})
-		}
-	}()
 	client, err := s.getClient()
 	if err != nil {
 		return nil, err

@@ -144,12 +144,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 				self.stopped = true
 				continue
 			} else {
-				switch mt.(type) {
-				case string:
-					messageType = mt.(string)
-				default:
-					messageType = ""
-				}
+				messageType, _ = mt.(string)
 			}
 			buffer["messageType"] = strings.ToLower(messageType)
 			switch strings.ToLower(messageType) {
@@ -169,7 +164,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 				if self.logger.ShouldLog(WARNING) {
 					self.logger.Warn("worker",
 						"Bad command",
-						LogFields{"messageType": buffer["messageType"].(string)})
+						LogFields{"messageType": messageType})
 				}
 				err = sperrors.UnknownCommandError
 			}
@@ -180,7 +175,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 					LogFields{"error": ErrStr(err)})
 			} else {
 				log.Printf("sniffer:%s Unknown error occurred %s",
-					messageType, err.Error())
+					messageType, ErrStr(err))
 			}
 			self.handleError(sock, buffer, err)
 			self.stopped = true
@@ -212,7 +207,9 @@ func (self *Worker) Run(sock *PushWS) {
 
 	defer func(sock *PushWS) {
 		if r := recover(); r != nil {
-			self.logger.Error("worker", r.(error).Error(), nil)
+			if err, _ := r.(error); err != nil {
+				self.logger.Error("worker", ErrStr(err), nil)
+			}
 			sock.Socket.Close()
 		}
 		return
@@ -233,9 +230,11 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			debug.PrintStack()
-			self.logger.Error("worker",
-				"Unhandled error",
-				LogFields{"cmd": "hello", "error": r.(error).Error()})
+			if err, _ := r.(error); err != nil {
+				self.logger.Error("worker",
+					"Unhandled error",
+					LogFields{"cmd": "hello", "error": ErrStr(err)})
+			}
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -244,26 +243,35 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// This is done by returning a new UAID.
 	forceReset := false
 
-	var suggestedUAID string
-
-	data := buffer.(JsMap)
-	if _, ok := data["uaid"]; !ok {
+	var (
+		data JsMap
+		ok   bool
+	)
+	if data, ok = buffer.(JsMap); !ok {
+		return sperrors.InvalidDataError
+	}
+	if _, ok = data["uaid"]; !ok {
 		// Must include "uaid" (even if blank)
 		data["uaid"] = ""
 	}
-	suggestedUAID = data["uaid"].(string)
+	suggestedUAID, ok := data["uaid"].(string)
+	if !ok {
+		return sperrors.InvalidDataError
+	}
+	messageType, _ := data["messageType"].(string)
 	/* NOTE: This seems to be a redirect, which I don't believe we support
 	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
+		statusCode := 302
 		resp := JsMap{
-			"messageType": data["messageType"],
-			"status":      302,
+			"messageType": messageType,
+			"status":      statusCode,
 			"redirect":    redir,
 			"uaid":        sock.Uaid}
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("worker", "sending redirect",
-				LogFields{"messageType": data["messageType"].(string),
-					"status":   strconv.FormatInt(data["status"].(int64), 10),
-					"redirect": data["redirect"].(string),
+				LogFields{"messageType": messageType,
+					"status":   strconv.FormatInt(statusCode, 10),
+					"redirect": redir,
 					"uaid":     suggestedUAID})
 		}
 		websocket.JSON.Send(sock.Socket, resp)
@@ -292,19 +300,18 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			self.logger.Debug("worker", "UAID is too long", nil)
 			return sperrors.InvalidDataError
 		}
-		if len(sock.Uaid) == 0 {
-			forceReset = forceReset || true
+		forceReset = len(sock.Uaid) == 0
+		if !forceReset {
+			forceReset = self.app.ClientExists(sock.Uaid)
 		}
-		if self.app.ClientExists(sock.Uaid) {
-			forceReset = true
-		}
-		if num := len(data["channelIDs"].([]interface{})); num > 0 {
+		if !forceReset {
+			channelIDs, _ := data["channelIDs"].([]interface{})
 			// are there a suspicious number of channels?
-			if num > self.maxChannels {
-				forceReset = forceReset || true
+			if len(channelIDs) > self.maxChannels {
+				forceReset = true
 			}
-			if !sock.Store.Exists(sock.Uaid) {
-				forceReset = forceReset || true
+			if !forceReset {
+				forceReset = !sock.Store.Exists(sock.Uaid)
 			}
 		}
 	}
@@ -344,7 +351,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// 	"messageType": data["messageType"],
 	// 	"status":      result.Command,
 	// 	"uaid":        sock.Uaid})
-	msg := []byte("{\"messageType\":\"" + data["messageType"].(string) +
+	msg := []byte("{\"messageType\":\"" + messageType +
 		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
 		",\"uaid\":\"" + sock.Uaid + "\"}")
 	_, err = sock.Socket.Write(msg)
@@ -363,10 +370,12 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			if err, _ := r.(error); err != nil {
+				self.logger.Error("worker",
+					"Unhandled error",
+					LogFields{"cmd": "ack", "error": ErrStr(err)})
+			}
 			debug.PrintStack()
-			self.logger.Error("worker",
-				"Unhandled error",
-				LogFields{"cmd": "ack", "error": r.(error).Error()})
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -419,9 +428,11 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			self.logger.Error("worker",
-				"Unhandled error",
-				LogFields{"cmd": "register", "error": ErrStr(r.(error))})
+			if err, _ := r.(error); err != nil {
+				self.logger.Error("worker",
+					"Unhandled error",
+					LogFields{"cmd": "register", "error": ErrStr(err)})
+			}
 			debug.PrintStack()
 			err = sperrors.InvalidDataError
 		}
@@ -430,7 +441,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(JsMap)
+	data, _ := buffer.(JsMap)
 	appid, _ := data["channelID"].(string)
 	if length := len(appid); length == 0 || length > CHID_MAX_LEN {
 		return sperrors.InvalidDataError
@@ -455,20 +466,22 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 				"args.channelID": IStr(args["channelID"]),
 				"args.uaid":      IStr(args["uaid"])})
 	}
-	endpoint := result.Arguments.(JsMap)["push.endpoint"].(string)
+	endpoint, _ := result.Arguments["push.endpoint"].(string)
 	// return the info back to the socket
-	reply := JsMap{"messageType": data["messageType"],
+	messageType, _ := data["messageType"].(string)
+	statusCode := 200
+	reply := JsMap{"messageType": messageType,
 		"uaid":         sock.Uaid,
-		"status":       200,
-		"channelID":    data["channelID"],
+		"status":       statusCode,
+		"channelID":    appid,
 		"pushEndpoint": endpoint}
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response", LogFields{
-			"messageType":  reply["messageType"].(string),
-			"uaid":         reply["uaid"].(string),
-			"status":       strconv.FormatInt(int64(reply["status"].(int)), 10),
-			"channelID":    reply["channelID"].(string),
-			"pushEndpoint": reply["pushEndpoint"].(string)})
+			"messageType":  messageType,
+			"uaid":         sock.Uaid,
+			"status":       strconv.FormatInt(int64(statusCode), 10),
+			"channelID":    appid,
+			"pushEndpoint": endpoint})
 	}
 	websocket.JSON.Send(sock.Socket, reply)
 	self.metrics.Increment("updates.client.register")
@@ -479,9 +492,11 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			self.logger.Error("worker",
-				"Unhandled error",
-				LogFields{"cmd": "register", "error": r.(error).Error()})
+			if err, _ := r.(error); err != nil {
+				self.logger.Error("worker",
+					"Unhandled error",
+					LogFields{"cmd": "register", "error": ErrStr(err)})
+			}
 			err = sperrors.InvalidDataError
 		}
 	}()
@@ -490,13 +505,13 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 			"Unregister failed, missing sock.uaid", nil)
 		return sperrors.InvalidCommandError
 	}
-	data := buffer.(JsMap)
-	if data["channelID"] == nil {
+	data, _ := buffer.(JsMap)
+	appid, _ := data["channelID"].(string)
+	if len(appid) == 0 {
 		self.logger.Error("worker",
 			"Unregister failed, missing channelID", nil)
 		return sperrors.MissingDataError
 	}
-	appid := data["channelID"].(string)
 	// Always return success for an UNREG.
 	sock.Store.Unregister(sock.Uaid, appid)
 	if self.logger.ShouldLog(DEBUG) {
@@ -593,7 +608,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		self.metrics.Increment("updates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
-	data := buffer.(JsMap)
+	data, _ := buffer.(JsMap)
 	if self.app.pushLongPongs {
 		websocket.JSON.Send(sock.Socket, JsMap{
 			"messageType": data["messageType"],

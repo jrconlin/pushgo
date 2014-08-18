@@ -66,7 +66,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	var prop *PropPing
 	var err error
 
-	args := cmd.Arguments.(JsMap)
+	args := cmd.Arguments
 	if self.logger.ShouldLog(INFO) {
 		chidss := ""
 		if chids, ok := args["channelIDs"]; ok {
@@ -179,7 +179,7 @@ func (self *Serv) Bye(sock *PushWS) {
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	// This is effectively a no-op, since we don't hold client session info
-	args := cmd.Arguments.(JsMap)
+	args := cmd.Arguments
 	args["status"] = 200
 	return 200, args
 }
@@ -188,12 +188,13 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
 	var err error
-	args := cmd.Arguments.(JsMap)
+	args := cmd.Arguments
 	args["status"] = 200
 	var endPoint string
 	endPoint = self.pushEndpoint
 	// Generate the call back URL
-	token, ok := self.store.IDsToKey(sock.Uaid, args["channelID"].(string))
+	chid, _ := args["channelID"].(string)
+	token, ok := self.store.IDsToKey(sock.Uaid, chid)
 	if !ok {
 		return 500, nil
 	}
@@ -204,7 +205,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		if err != nil {
 			self.logger.Error("server", "Token Encoding error",
 				LogFields{"uaid": sock.Uaid,
-					"channelID": args["channelID"].(string)})
+					"channelID": chid})
 			return 500, nil
 		}
 
@@ -217,7 +218,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		self.logger.Info("server",
 			"Generated Endpoint",
 			LogFields{"uaid": sock.Uaid,
-				"channelID": args["channelID"].(string),
+				"channelID": chid,
 				"token":     token,
 				"endpoint":  endPoint})
 	}
@@ -301,7 +302,7 @@ updateError:
 func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args JsMap) {
 	var ret JsMap
 	if cmd.Arguments != nil {
-		args = cmd.Arguments.(JsMap)
+		args = cmd.Arguments
 	} else {
 		args = make(JsMap)
 	}
