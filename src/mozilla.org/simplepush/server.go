@@ -21,7 +21,7 @@ type Client struct {
 	Worker *Worker
 	PushWS PushWS   `json:"-"`
 	UAID   string   `json:"uaid"`
-	Prop   PropPing `json:"-"`
+	Prop   PropPinger `json:"-"`
 }
 
 // Basic global server options
@@ -39,7 +39,7 @@ type Serv struct {
 	storage      *Storage
 	key          []byte
 	pushEndpoint string
-	prop         PropPing
+	prop         PropPinger
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -62,7 +62,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop PropPing
+	var prop PropPinger
 	var err error
 
 	args := cmd.Arguments.(JsMap)
@@ -101,7 +101,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	}
 
 	if connect, ok := args["connect"]; ok && connect != nil {
-		ppingCopy := self.app.PropPing()
+		ppingCopy := self.app.PropPinger()
 		if err = ppingCopy.Register(connect.(map[string]interface{}), uaid); err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
 				LogFields{"error": err.Error(),

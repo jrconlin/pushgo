@@ -63,7 +63,7 @@ type Application struct {
 	storage            *Storage
 	router             *Router
 	handlers           *Handler
-	propping           PropPing
+	propping           PropPinger
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -140,7 +140,7 @@ func (a *Application) SetLogger(logger Logger) (err error) {
 	return
 }
 
-func (a *Application) SetPropPing(ping PropPing) (err error) {
+func (a *Application) SetPropPinger(ping PropPinger) (err error) {
 	a.propping = ping
 	return
 }
@@ -224,7 +224,7 @@ func (a *Application) Logger() *SimpleLogger {
 }
 
 //TODO: move these to handler so we can deal with multiple prop.ping formats
-func (a *Application) PropPing() PropPing {
+func (a *Application) PropPinger() PropPinger {
 	return a.propping
 }
 

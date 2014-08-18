@@ -33,7 +33,7 @@ type Handler struct {
 	metrics         *Metrics
 	max_connections int
 	token_key       []byte
-	propping        PropPing
+	propping        PropPinger
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -48,7 +48,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.router = app.Router()
 	self.max_connections = app.MaxConnections()
 	self.token_key = app.TokenKey()
-	self.SetPropPing(app.PropPing())
+	self.SetPropPinger(app.PropPinger())
 	return nil
 }
 
@@ -265,7 +265,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	// Is this ours or should we punt to a different server?
 	if !self.app.ClientExists(uaid) {
-		// TODO: Move PropPing here? otherwise it's connected?
+		// TODO: Move PropPinger here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
 		resp.Header().Set("Content-Type", "application/json")
 		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
@@ -474,12 +474,12 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func (r *Handler) SetPropPing(ping PropPing) (err error) {
+func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
 	r.propping = ping
 	return
 }
 
-func (r *Handler) PropPing() PropPing {
+func (r *Handler) PropPinger() PropPinger {
 	return r.propping
 }
 
