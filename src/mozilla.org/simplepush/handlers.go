@@ -33,6 +33,7 @@ type Handler struct {
 	metrics         *Metrics
 	max_connections int
 	token_key       []byte
+	propping        PropPinger
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -47,6 +48,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.router = app.Router()
 	self.max_connections = app.MaxConnections()
 	self.token_key = app.TokenKey()
+	self.SetPropPinger(app.PropPinger())
 	return nil
 }
 
@@ -149,7 +151,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// Handle the version updates.
 	var err error
 	var version int64
-	var pping *PropPing
 
 	if self.app.ClientCount() > int(self.max_connections) {
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
@@ -264,7 +265,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	// Is this ours or should we punt to a different server?
 	if !self.app.ClientExists(uaid) {
-		// TODO: Move PropPing here? otherwise it's connected?
+		// TODO: Move PropPinger here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
 		resp.Header().Set("Content-Type", "application/json")
 		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
@@ -276,15 +277,25 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	// is there a Proprietary Ping for this?
+	//TODO: This should return JsMap, err
 	connect, err := self.storage.GetPropConnect(uaid)
 	if err == nil && len(connect) > 0 {
 		// TODO: store the prop ping?
-		pping, err = NewPropPing(connect, uaid, self.app)
+		c_js := make(JsMap)
+		err = json.Unmarshal([]byte(connect), &c_js)
 		if err != nil {
 			self.logger.Warn("update",
-				"Could not generate Proprietary Ping",
+				"Could not resolve Proprietary Ping connection string",
 				LogFields{"error": err.Error(),
 					"connect": connect})
+		} else {
+			err = self.propping.Register(c_js, uaid)
+			if err != nil {
+				self.logger.Warn("update",
+					"Could not generate Proprietary Ping",
+					LogFields{"error": err.Error(),
+						"connect": connect})
+			}
 		}
 	}
 
@@ -293,8 +304,8 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
-	if pping != nil && pping.CanBypassWebsocket() {
-		err = pping.Send(version)
+	if self.propping != nil && self.propping.CanBypassWebsocket() {
+		err = self.propping.Send(version)
 		if err != nil {
 			self.logger.Error("update",
 				"Could not force to proprietary ping",
@@ -461,6 +472,15 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	http.Error(resp, "Ok", http.StatusOK)
 	return
+}
+
+func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
+	r.propping = ping
+	return
+}
+
+func (r *Handler) PropPinger() PropPinger {
+	return r.propping
 }
 
 // o4fs

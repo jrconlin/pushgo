@@ -63,7 +63,7 @@ type Application struct {
 	storage            *Storage
 	router             *Router
 	handlers           *Handler
-	gcm                *GCMConfig
+	propping           PropPinger
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -76,13 +76,6 @@ func (a *Application) ConfigStruct() interface{} {
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
-		Gcm: GCMConfig{
-			TTL:         259200,
-			CollapseKey: "simplepush",
-			ProjectId:   "simplepush-gcm",
-			DryRun:      false,
-			Url:         "https://android.googleapis.com/gcm/send",
-		},
 	}
 }
 
@@ -118,7 +111,6 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 		a.fullHostname = fmt.Sprintf("http://%s:%d", a.hostname, conf.Port)
 	}
 
-	a.gcm = &conf.Gcm
 	a.host = conf.Host
 	a.port = conf.Port
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
@@ -145,6 +137,11 @@ func (a *Application) Init(app *Application, config interface{}) (err error) {
 // Set a logger
 func (a *Application) SetLogger(logger Logger) (err error) {
 	a.log, err = NewLogger(logger)
+	return
+}
+
+func (a *Application) SetPropPinger(ping PropPinger) (err error) {
+	a.propping = ping
 	return
 }
 
@@ -224,6 +221,11 @@ func (a *Application) MaxConnections() int {
 
 func (a *Application) Logger() *SimpleLogger {
 	return a.log
+}
+
+//TODO: move these to handler so we can deal with multiple prop.ping formats
+func (a *Application) PropPinger() PropPinger {
+	return a.propping
 }
 
 func (a *Application) Storage() *Storage {

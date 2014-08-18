@@ -5,9 +5,7 @@
 package simplepush
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -21,9 +19,9 @@ import (
 type Client struct {
 	// client descriptor info.
 	Worker *Worker
-	PushWS PushWS    `json:"-"`
-	UAID   string    `json:"uaid"`
-	Prop   *PropPing `json:"-"`
+	PushWS PushWS   `json:"-"`
+	UAID   string   `json:"uaid"`
+	Prop   PropPinger `json:"-"`
 }
 
 // Basic global server options
@@ -41,6 +39,7 @@ type Serv struct {
 	storage      *Storage
 	key          []byte
 	pushEndpoint string
+	prop         PropPinger
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -63,7 +62,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop *PropPing
+	var prop PropPinger
 	var err error
 
 	args := cmd.Arguments.(JsMap)
@@ -101,32 +100,14 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		delete(args, "uaid")
 	}
 
-	// build the connect string from legacy elements
-	if _, ok := args["connect"]; !ok {
-		ip, iok := args["ip"]
-		port, pok := args["port"]
-		if iok && pok {
-			args["connect"] = JsMap{
-				"type": "udp",
-				"port": port,
-				"ip":   ip,
-			}
-		}
-	}
-
 	if connect, ok := args["connect"]; ok && connect != nil {
-		// Currently marshalling to deal with the interface{} issues.
-		cs, _ := json.Marshal(connect)
-		fmt.Printf("Prop Ping %s\n\n", connect)
-		prop, err = NewPropPing(string(cs), uaid, self.app)
-
-		if err != nil {
+		ppingCopy := self.app.PropPinger()
+		if err = ppingCopy.Register(connect.(map[string]interface{}), uaid); err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
 				LogFields{"error": err.Error(),
-					"connect": string(cs)})
-		} else if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server", "Proprietary Info",
-				LogFields{"connect": string(cs)})
+					"connect": connect.(string)})
+		} else {
+			self.prop = ppingCopy
 		}
 	}
 
@@ -233,7 +214,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 				LogFields{"error": r.(error).Error(),
 					"uaid": client.UAID})
 			debug.PrintStack()
-			if client != nil {
+			if client != nil && client.Prop != nil {
 				client.Prop.Send(version)
 			}
 		}
