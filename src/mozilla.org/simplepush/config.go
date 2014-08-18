@@ -155,7 +155,7 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	if obj, err = LoadExtensibleSection(app, "propping", AvailablePings, configFile); err != nil {
 		return
 	}
-	propping, _ := obj.(IPropPing)
+	propping, _ := obj.(PropPing)
 	if err = app.SetPropPing(propping); err != nil {
 		return
 	}

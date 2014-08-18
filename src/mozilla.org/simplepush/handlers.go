@@ -33,7 +33,7 @@ type Handler struct {
 	metrics         *Metrics
 	max_connections int
 	token_key       []byte
-	propping        IPropPing
+	propping        PropPing
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -474,12 +474,12 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func (r *Handler) SetPropPing(ping IPropPing) (err error) {
+func (r *Handler) SetPropPing(ping PropPing) (err error) {
 	r.propping = ping
 	return
 }
 
-func (r *Handler) PropPing() IPropPing {
+func (r *Handler) PropPing() PropPing {
 	return r.propping
 }
 

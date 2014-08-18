@@ -19,9 +19,9 @@ import (
 type Client struct {
 	// client descriptor info.
 	Worker *Worker
-	PushWS PushWS    `json:"-"`
-	UAID   string    `json:"uaid"`
-	Prop   IPropPing `json:"-"`
+	PushWS PushWS   `json:"-"`
+	UAID   string   `json:"uaid"`
+	Prop   PropPing `json:"-"`
 }
 
 // Basic global server options
@@ -39,7 +39,7 @@ type Serv struct {
 	storage      *Storage
 	key          []byte
 	pushEndpoint string
-	prop         IPropPing
+	prop         PropPing
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -62,7 +62,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop IPropPing
+	var prop PropPing
 	var err error
 
 	args := cmd.Arguments.(JsMap)

@@ -11,7 +11,7 @@ import (
 	"net/http"
 )
 
-type IPropPing interface {
+type PropPing interface {
 	HasConfigStruct
 	Register(connect JsMap, uaid string) error
 	Send(vers int64) error
@@ -24,10 +24,6 @@ var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
 var AvailablePings = make(AvailableExtensions)
 
-type PropPing struct {
-	IPropPing
-}
-
 func init() {
 	AvailablePings["noop"] = func() HasConfigStruct { return new(NoopPing) }
 	AvailablePings["udp"] = func() HasConfigStruct { return new(UDPPing) }
@@ -38,7 +34,7 @@ func init() {
 // NoOp ping
 
 type NoopPing struct {
-	IPropPing
+	PropPing
 	app    *Application
 	config *NoopPingConfig
 }
@@ -78,7 +74,7 @@ func (r *NoopPing) Send(vers int64) error {
 // based "ping" to the device. This UDP ping is contained within
 // the carrier's network.
 type UDPPing struct {
-	IPropPing
+	PropPing
 	config *UDPPingConfig
 	app    *Application
 }
@@ -137,7 +133,7 @@ func (r *UDPPing) Send(vers int64) error {
 // Google Cloud Messaging Proprietary Ping interface
 // NOTE: This is still experimental.
 type GCMPing struct {
-	IPropPing
+	PropPing
 	config *GCMPingConfig
 	app    *Application
 }
