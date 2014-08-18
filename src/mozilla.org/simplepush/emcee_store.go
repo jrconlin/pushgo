@@ -762,6 +762,9 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 // ID.
 func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
 	result, err = s.fetchChannelIDs(uaid)
+	if err != nil {
+		return nil, err
+	}
 	// pare out duplicates.
 	for i, chid := range result {
 		if dup := result[i+1:].IndexOf(chid); dup > -1 {
