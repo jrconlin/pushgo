@@ -33,9 +33,9 @@ func validIdRuneAt(id string, index int) bool {
 		return r == '-'
 	}
 	if r >= 'A' && r <= 'F' {
-		r += 'a'-'A'
+		r += 'a' - 'A'
 	}
-	return r >= 'A' && r <= 'F' || r >= '0' && r <= '9'
+	return r >= 'a' && r <= 'f' || r >= '0' && r <= '9'
 }
 
 func ValidId(id string) bool {
