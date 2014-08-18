@@ -54,32 +54,31 @@ type cr struct {
 	L int64  // Last touched
 }
 
-// ia is a list of decoded channel IDs, so named because the binary Gob encoder
-// stores type names.
-type ia [][]byte
+// ChannelIDs is a list of decoded channel IDs.
+type ChannelIDs [][]byte
 
 // Len returns the length of the channel ID slice. Implements
 // `sort.Interface.Len()`.
-func (channelIDs ia) Len() int {
-	return len(channelIDs)
+func (l ChannelIDs) Len() int {
+	return len(l)
 }
 
 // Swap swaps two channel ID slices at the corresponding indices. Implements
 // `sort.Interface.Swap()`.
-func (channelIDs ia) Swap(i, j int) {
-	channelIDs[i], channelIDs[j] = channelIDs[j], channelIDs[i]
+func (l ChannelIDs) Swap(i, j int) {
+	l[i], l[j] = l[j], l[i]
 }
 
 // Less indicates whether one channel ID slice lexicographically precedes the
 // other. Implements `sort.Interface.Less()`.
-func (channelIDs ia) Less(i, j int) bool {
-	return bytes.Compare(channelIDs[i], channelIDs[j]) < 0
+func (l ChannelIDs) Less(i, j int) bool {
+	return bytes.Compare(l[i], l[j]) < 0
 }
 
 // IndexOf returns the location of a channel ID slice in the slice of channel
 // IDs, or -1 if the ID isn't present in the containing slice.
-func (channelIDs ia) IndexOf(val []byte) int {
-	for index, v := range channelIDs {
+func (l ChannelIDs) IndexOf(val []byte) int {
+	for index, v := range l {
 		if bytes.Equal(v, val) {
 			return index
 		}
@@ -748,7 +747,7 @@ func (s *EmceeStore) DropPing(suaid string) error {
 
 // Queries memcached for a list of current subscriptions associated with the
 // given device ID.
-func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ia, err error) {
+func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error) {
 	if len(uaid) == 0 {
 		return nil, nil
 	}
@@ -767,6 +766,13 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ia, err error) {
 		}
 		return nil, err
 	}
+	return
+}
+
+// Returns a duplicate-free list of subscriptions associated with the device
+// ID.
+func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
+	result, err = s.fetchChannelIDs(uaid)
 	// pare out duplicates.
 	for i, chid := range result {
 		if dup := result[i+1:].IndexOf(chid); dup > -1 {
@@ -777,8 +783,8 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ia, err error) {
 }
 
 // Writes an updated subscription list for the given device ID to memcached.
-// `arr` is sorted in-place.
-func (s *EmceeStore) storeAppIDArray(uaid []byte, arr ia) error {
+// The channel IDs are sorted in-place.
+func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
 		return sperrors.MissingDataError
 	}
@@ -788,12 +794,8 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, arr ia) error {
 	}
 	defer s.releaseClient(client)
 	// sort the array
-	sort.Sort(arr)
-	err = client.Set(encodeKey(uaid), arr, 0)
-	if err != nil {
-		return err
-	}
-	return nil
+	sort.Sort(chids)
+	return client.Set(encodeKey(uaid), chids, 0)
 }
 
 // Retrieves a channel record from memcached.
