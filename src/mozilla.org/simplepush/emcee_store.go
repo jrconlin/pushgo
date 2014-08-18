@@ -130,19 +130,12 @@ func encodeKey(key []byte) string {
 	return base64.StdEncoding.EncodeToString(key)
 }
 
-// FreeClient wraps a memcached connection with pool information.
-type FreeClient struct {
-	mc.Client
-	releases chan *FreeClient
-}
-
 // NewEmcee creates an unconfigured memcached adapter.
 func NewEmcee() *EmceeStore {
 	s := &EmceeStore{
 		closeSignal:  make(chan bool),
-		clients:      make(chan mc.Client),
-		releases:     make(chan *FreeClient),
-		acquisitions: make(chan chan *FreeClient),
+		releases:     make(chan mc.Client),
+		acquisitions: make(chan chan mc.Client),
 	}
 	s.closeWait.Add(1)
 	go s.run()
@@ -153,9 +146,6 @@ func NewEmcee() *EmceeStore {
 type EmceeDriverConf struct {
 	// Hosts is a list of memcached nodes.
 	Hosts []string `toml:"server"`
-
-	// MinConns is the desired number of initial connections. Defaults to 100.
-	MinConns int `toml:"pool_size"`
 
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
@@ -182,7 +172,6 @@ type EmceeDriverConf struct {
 // EmceeStore is a memcached adapter.
 type EmceeStore struct {
 	Hosts         []string
-	MinConns      int
 	MaxConns      int
 	PingPrefix    string
 	recvTimeout   uint64
@@ -200,9 +189,8 @@ type EmceeStore struct {
 	closeSignal   chan bool
 	closeLock     sync.Mutex
 	isClosing     bool
-	clients       chan mc.Client
-	releases      chan *FreeClient
-	acquisitions  chan chan *FreeClient
+	releases      chan mc.Client
+	acquisitions  chan chan mc.Client
 	lastErr       error
 }
 
@@ -219,7 +207,6 @@ func (*EmceeStore) ConfigStruct() interface{} {
 	return &EmceeConf{
 		Driver: EmceeDriverConf{
 			Hosts:        []string{"127.0.0.1:11211"},
-			MinConns:     100,
 			MaxConns:     400,
 			RecvTimeout:  "1s",
 			SendTimeout:  "1s",
@@ -237,9 +224,8 @@ func (*EmceeStore) ConfigStruct() interface{} {
 	}
 }
 
-// Init initializes the memcached adapter with the given configuration and
-// seeds the pool with `MinConns` connections. Implements
-// `HasConfigStruct.Init()`.
+// Init initializes the memcached adapter with the given configuration.
+// Implements `HasConfigStruct.Init()`.
 func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EmceeConf)
 	s.logger = app.Logger()
@@ -256,7 +242,6 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 		s.Hosts = endpoints
 	}
 
-	s.MinConns = conf.Driver.MinConns
 	s.MaxConns = conf.Driver.MaxConns
 	s.maxChannels = conf.Db.MaxChannels
 	s.PingPrefix = conf.Db.PingPrefix
@@ -298,14 +283,15 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
 	s.TimeoutDel = time.Duration(conf.Db.TimeoutReg) * time.Second
 
-	for index := 0; index < s.MinConns; index++ {
-		client, err := s.newClient()
-		if err != nil {
-			s.fatal(err)
-			return err
-		}
-		s.clients <- client
+	// Open a connection to ensure the settings are valid. If the connection
+	// succeeds, add it to the pool.
+	client, err := s.newClient()
+	if err != nil {
+		s.fatal(err)
+		return err
 	}
+	defer s.releaseClient(client)
+
 	return nil
 }
 
@@ -862,25 +848,22 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	return nil
 }
 
-// Releases an acquired memcached connection. TODO: The run loop should
-// ensure that the `FreeClient` is in a valid state. If a connection error
-// occurs, the client should be closed and a new connection opened as needed.
-// Otherwise, `getClient()` may return a bad client connection.
-func (s *EmceeStore) releaseClient(client *FreeClient) {
+// Releases an acquired memcached connection.
+func (s *EmceeStore) releaseClient(client mc.Client) {
 	if client == nil {
 		return
 	}
-	client.releases <- client
+	s.releases <- client
 }
 
 // Acquires a memcached connection from the connection pool.
-func (s *EmceeStore) getClient() (*FreeClient, error) {
-	freeClients := make(chan *FreeClient)
+func (s *EmceeStore) getClient() (mc.Client, error) {
+	clients := make(chan mc.Client)
 	select {
 	case <-s.closeSignal:
 		return nil, io.EOF
-	case s.acquisitions <- freeClients:
-		if client := <-freeClients; client != nil {
+	case s.acquisitions <- clients:
+		if client := <-clients; client != nil {
 			return client, nil
 		}
 	case <-time.After(s.HandleTimeout):
@@ -936,26 +919,21 @@ func (s *EmceeStore) run() {
 	for ok := true; ok; {
 		select {
 		case ok = <-s.closeSignal:
-		case client := <-s.clients:
+		case client := <-s.releases:
 			if capacity >= s.MaxConns {
+				// Maximum pool size exceeded (e.g., connection manually added to the pool
+				// via `newClient()` and `releaseClient()`).
 				client.Close()
 				break
 			}
-			clients.PushBack(&FreeClient{client, s.releases})
-			capacity++
-
-		case freeClient := <-s.releases:
-			if capacity >= s.MaxConns {
-				// Maximum pool size exceeded; close the connection.
-				freeClient.Close()
-				break
-			}
-			clients.PushBack(freeClient)
+			// TODO: Ensure that the `mc.Client` instance is in a valid state to avoid
+			// releasing bad client connections to the pool.
+			clients.PushBack(client)
 
 		case acquisition := <-s.acquisitions:
 			if clients.Len() > 0 {
 				// Return the first available connection from the pool.
-				if client, ok := clients.Remove(clients.Front()).(*FreeClient); ok {
+				if client, ok := clients.Remove(clients.Front()).(mc.Client); ok {
 					acquisition <- client
 				}
 				close(acquisition)
@@ -963,16 +941,14 @@ func (s *EmceeStore) run() {
 			}
 			if capacity < s.MaxConns {
 				// All connections are in use, but the pool has not reached its maximum
-				// capacity. The caller should call `s.releaseClient()` to return the
-				// connection to the pool. TODO: Spawning a separate Goroutine to handle
-				// connections would avoid blocking the run loop.
+				// capacity.
 				client, err := s.newClient()
 				if err != nil {
 					s.fatal(err)
 					close(acquisition)
 					break
 				}
-				acquisition <- &FreeClient{client, s.releases}
+				acquisition <- client
 				capacity++
 				close(acquisition)
 				break
@@ -983,7 +959,7 @@ func (s *EmceeStore) run() {
 	}
 	// Shut down all connections in the pool.
 	for element := clients.Front(); element != nil; element = element.Next() {
-		if client, ok := element.Value.(*FreeClient); ok {
+		if client, ok := element.Value.(mc.Client); ok {
 			client.Close()
 		}
 	}
