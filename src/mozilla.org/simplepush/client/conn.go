@@ -1,13 +1,14 @@
 package client
 
 import (
-	ws "code.google.com/p/go.net/websocket"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"time"
-	"fmt"
+
+	ws "code.google.com/p/go.net/websocket"
 )
 
 const (
@@ -53,7 +54,7 @@ type Conn struct {
 type (
 	Channels map[string]bool
 	Decoders map[string]Decoder
-	Requests map[string]Request
+	Requests map[interface{}]Request
 	Fields   map[string]interface{}
 )
 
@@ -260,10 +261,10 @@ func (c *Conn) Send() {
 			var (
 				outbox    Requests
 				hasOutbox bool
-				id        string
+				id        interface{}
+				err       error
 			)
 			if request.CanReply() {
-				var err error
 				id, err = request.Id()
 				if err != nil {
 					cancel(request)
@@ -297,7 +298,16 @@ func (c *Conn) Send() {
 					}
 				}
 			}
-			if err := ws.JSON.Send(c.Socket, request); err != nil {
+			var data []byte
+			if withMarshal, ok := request.(requestWithMarshal); ok {
+				data, err = withMarshal.MarshalJSON()
+			} else {
+				data, err = json.Marshal(request)
+			}
+			if err == nil {
+				err = ws.Message.Send(c.Socket, data)
+			}
+			if err != nil {
 				request.Error(err)
 				request.Close()
 				break

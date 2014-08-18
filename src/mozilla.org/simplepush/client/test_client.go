@@ -17,7 +17,7 @@ var (
 )
 
 type Endpoint struct {
-	URI string
+	URI     string
 	Version int64
 }
 
@@ -50,12 +50,12 @@ func DoTest(origin string, channels, updates int) (err error) {
 
 func PushThrough(conn *Conn, channels, updates int) error {
 	t := &TestClient{
-		Timeout: 1 * time.Minute,
-		Channels: channels,
-		Updates: updates,
+		Timeout:      1 * time.Minute,
+		Channels:     channels,
+		Updates:      updates,
 		MaxRegisters: 1,
-		conn: conn,
-		endpoints: make(Endpoints, channels),
+		conn:         conn,
+		endpoints:    make(Endpoints, channels),
 	}
 	return t.Do()
 }
@@ -83,14 +83,14 @@ func Notify(endpoint string, version int64) (err error) {
 
 type TestClient struct {
 	sync.RWMutex
-	Timeout         time.Duration // The deadline for receiving all notifications.
-	Channels        int           // The number of channels to create.
-	Updates         int           // The number of notifications to send on each channel.
-	MaxRegisters    int           // The number of times to retry failed registrations.
-	accept bool
+	Timeout        time.Duration // The deadline for receiving all notifications.
+	Channels       int           // The number of channels to create.
+	Updates        int           // The number of notifications to send on each channel.
+	MaxRegisters   int           // The number of times to retry failed registrations.
+	accept         bool
 	pendingTimeout time.Duration
-	conn *Conn
-	endpoints Endpoints
+	conn           *Conn
+	endpoints      Endpoints
 }
 
 func (t *TestClient) Do() error {

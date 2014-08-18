@@ -36,17 +36,21 @@ func (t PacketType) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-type requestWithErrors interface {
+type requestWithMarshal interface {
 	Request
+	json.Marshaler
+}
+
+type requestWithErrors interface {
+	requestWithMarshal
 	getErrors() chan error
 }
 
 type Request interface {
-	json.Marshaler
 	Type() PacketType
 	CanReply() bool
 	Sync() bool
-	Id() (string, error)
+	Id() (interface{}, error)
 	Reply(Reply)
 	Error(error)
 	Do() (Reply, error)
@@ -57,7 +61,7 @@ type Reply interface {
 	Type() PacketType
 	HasRequest() bool
 	Sync() bool
-	Id() (string, error)
+	Id() (interface{}, error)
 	Status() int
 }
 
@@ -68,13 +72,13 @@ type ClientHelo struct {
 	errors     chan error
 }
 
-func (*ClientHelo) Type() PacketType        { return Helo }
-func (*ClientHelo) CanReply() bool          { return true }
-func (*ClientHelo) Sync() bool              { return true }
-func (h *ClientHelo) Id() (string, error)   { return h.DeviceId, nil }
-func (h *ClientHelo) Reply(reply Reply)     { h.replies <- reply }
-func (h *ClientHelo) Error(err error)       { h.errors <- err }
-func (h *ClientHelo) getErrors() chan error { return h.errors }
+func (*ClientHelo) Type() PacketType           { return Helo }
+func (*ClientHelo) CanReply() bool             { return true }
+func (*ClientHelo) Sync() bool                 { return true }
+func (h *ClientHelo) Id() (interface{}, error) { return h.DeviceId, nil }
+func (h *ClientHelo) Reply(reply Reply)        { h.replies <- reply }
+func (h *ClientHelo) Error(err error)          { h.errors <- err }
+func (h *ClientHelo) getErrors() chan error    { return h.errors }
 
 func (h *ClientHelo) Close() {
 	close(h.replies)
@@ -104,11 +108,11 @@ type ServerHelo struct {
 	Redirect   string
 }
 
-func (*ServerHelo) Type() PacketType      { return Helo }
-func (*ServerHelo) HasRequest() bool      { return true }
-func (*ServerHelo) Sync() bool            { return true }
-func (h *ServerHelo) Id() (string, error) { return h.DeviceId, nil }
-func (h *ServerHelo) Status() int         { return h.StatusCode }
+func (*ServerHelo) Type() PacketType           { return Helo }
+func (*ServerHelo) HasRequest() bool           { return true }
+func (*ServerHelo) Sync() bool                 { return true }
+func (h *ServerHelo) Id() (interface{}, error) { return h.DeviceId, nil }
+func (h *ServerHelo) Status() int              { return h.StatusCode }
 
 type ClientRegister struct {
 	ChannelId string
@@ -116,13 +120,13 @@ type ClientRegister struct {
 	errors    chan error
 }
 
-func (*ClientRegister) Type() PacketType        { return Register }
-func (*ClientRegister) CanReply() bool          { return true }
-func (*ClientRegister) Sync() bool              { return false }
-func (r *ClientRegister) Id() (string, error)   { return r.ChannelId, nil }
-func (r *ClientRegister) Reply(reply Reply)     { r.replies <- reply }
-func (r *ClientRegister) Error(err error)       { r.errors <- err }
-func (r *ClientRegister) getErrors() chan error { return r.errors }
+func (*ClientRegister) Type() PacketType           { return Register }
+func (*ClientRegister) CanReply() bool             { return true }
+func (*ClientRegister) Sync() bool                 { return false }
+func (r *ClientRegister) Id() (interface{}, error) { return r.ChannelId, nil }
+func (r *ClientRegister) Reply(reply Reply)        { r.replies <- reply }
+func (r *ClientRegister) Error(err error)          { r.errors <- err }
+func (r *ClientRegister) getErrors() chan error    { return r.errors }
 
 func (r *ClientRegister) Close() {
 	close(r.replies)
@@ -151,26 +155,26 @@ type ServerRegister struct {
 	Endpoint   string
 }
 
-func (*ServerRegister) Type() PacketType      { return Register }
-func (*ServerRegister) HasRequest() bool      { return true }
-func (*ServerRegister) Sync() bool            { return false }
-func (r *ServerRegister) Id() (string, error) { return r.ChannelId, nil }
-func (r *ServerRegister) Status() int         { return r.StatusCode }
+func (*ServerRegister) Type() PacketType           { return Register }
+func (*ServerRegister) HasRequest() bool           { return true }
+func (*ServerRegister) Sync() bool                 { return false }
+func (r *ServerRegister) Id() (interface{}, error) { return r.ChannelId, nil }
+func (r *ServerRegister) Status() int              { return r.StatusCode }
 
 type ClientUnregister struct {
 	ChannelId string
 	errors    chan error
 }
 
-func (*ClientUnregister) Type() PacketType        { return Unregister }
-func (*ClientUnregister) CanReply() bool          { return false }
-func (*ClientUnregister) Sync() bool              { return false }
-func (u *ClientUnregister) Id() (string, error)   { return u.ChannelId, nil }
-func (u *ClientUnregister) Reply(Reply)           {}
-func (u *ClientUnregister) Error(err error)       { u.errors <- err }
-func (u *ClientUnregister) Close()                { close(u.errors) }
-func (u *ClientUnregister) Do() (Reply, error)    { return nil, <-u.errors }
-func (u *ClientUnregister) getErrors() chan error { return u.errors }
+func (*ClientUnregister) Type() PacketType           { return Unregister }
+func (*ClientUnregister) CanReply() bool             { return false }
+func (*ClientUnregister) Sync() bool                 { return false }
+func (u *ClientUnregister) Id() (interface{}, error) { return u.ChannelId, nil }
+func (u *ClientUnregister) Reply(Reply)              {}
+func (u *ClientUnregister) Error(err error)          { u.errors <- err }
+func (u *ClientUnregister) Close()                   { close(u.errors) }
+func (u *ClientUnregister) Do() (Reply, error)       { return nil, <-u.errors }
+func (u *ClientUnregister) getErrors() chan error    { return u.errors }
 
 func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 	value := struct {
@@ -183,7 +187,7 @@ func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 type ClientPing chan error
 
 func (ClientPing) Type() PacketType             { return Ping }
-func (ClientPing) Id() (string, error)          { return "", ErrNoId }
+func (ClientPing) Id() (interface{}, error)     { return "", ErrNoId }
 func (ClientPing) Reply(Reply)                  {}
 func (p ClientPing) Error(err error)            { p <- err }
 func (p ClientPing) Close()                     { close(p) }
@@ -196,7 +200,7 @@ type ClientPurge chan error
 func (ClientPurge) Type() PacketType             { return Purge }
 func (ClientPurge) CanReply() bool               { return false }
 func (ClientPurge) Sync() bool                   { return false }
-func (ClientPurge) Id() (string, error)          { return "", ErrNoId }
+func (ClientPurge) Id() (interface{}, error)     { return "", ErrNoId }
 func (ClientPurge) Reply(Reply)                  {}
 func (p ClientPurge) Error(err error)            { p <- err }
 func (p ClientPurge) Close()                     { close(p) }
@@ -209,15 +213,15 @@ type ClientACK struct {
 	errors  chan error
 }
 
-func (*ClientACK) Type() PacketType        { return ACK }
-func (*ClientACK) CanReply() bool          { return false }
-func (*ClientACK) Sync() bool              { return false }
-func (*ClientACK) Id() (string, error)     { return "", ErrNoId }
-func (*ClientACK) Reply(Reply)             {}
-func (a *ClientACK) Error(err error)       { a.errors <- err }
-func (a *ClientACK) Close()                { close(a.errors) }
-func (a *ClientACK) Do() (Reply, error)    { return nil, <-a.errors }
-func (a *ClientACK) getErrors() chan error { return a.errors }
+func (*ClientACK) Type() PacketType         { return ACK }
+func (*ClientACK) CanReply() bool           { return false }
+func (*ClientACK) Sync() bool               { return false }
+func (*ClientACK) Id() (interface{}, error) { return "", ErrNoId }
+func (*ClientACK) Reply(Reply)              {}
+func (a *ClientACK) Error(err error)        { a.errors <- err }
+func (a *ClientACK) Close()                 { close(a.errors) }
+func (a *ClientACK) Do() (Reply, error)     { return nil, <-a.errors }
+func (a *ClientACK) getErrors() chan error  { return a.errors }
 
 func (a *ClientACK) MarshalJSON() ([]byte, error) {
 	value := struct {
