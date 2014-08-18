@@ -5,11 +5,9 @@
 package simplepush
 
 import (
-	"code.google.com/p/go.net/websocket"
-	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
-
 	"time"
+
+	"code.google.com/p/go.net/websocket"
 )
 
 const (
@@ -35,16 +33,17 @@ var cmdLabels = map[int]string{
 
 type PushCommand struct {
 	// Use mutable int value
-	Command   int         //command type (UNREG, REGIS, ACK, etc)
-	Arguments interface{} //command arguments
+	Command   int   //command type (UNREG, REGIS, ACK, etc)
+	Arguments JsMap //command arguments
 }
 
 type PushWS struct {
-	Uaid    string          // id
-	Socket  *websocket.Conn // Remote connection
-	Storage *storage.Storage
-	Logger  *util.MzLogger
-	Metrics *util.Metrics
+	Uaid     string          // Hex-encoded client ID; not normalized
+	deviceID []byte          // Raw client ID bytes
+	Socket   *websocket.Conn // Remote connection
+	Store
+	Logger  *SimpleLogger
+	Metrics *Metrics
 	Born    time.Time
 }
 

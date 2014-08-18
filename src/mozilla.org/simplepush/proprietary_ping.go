@@ -5,159 +5,258 @@
 package simplepush
 
 import (
-	storage "mozilla.org/simplepush/storage/mcstorage"
-	"mozilla.org/util"
-
 	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 )
 
-type PropPing struct {
-	connect util.JsMap
-	config  *util.MzConfig
-	logger  *util.MzLogger
-	store   *storage.Storage
-	metrics *util.Metrics
+type PropPinger interface {
+	HasConfigStruct
+	Register(connect JsMap, uaid string) error
+	Send(vers int64) error
+	CanBypassWebsocket() bool
 }
 
 var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
 var ConfigurationErr = errors.New("Configuration Error")
 var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
 
-func NewPropPing(connect string, uaid string, config *util.MzConfig, logger *util.MzLogger, store *storage.Storage, metrics *util.Metrics) (*PropPing, error) {
+var AvailablePings = make(AvailableExtensions)
 
-	var err error
-	var c_js util.JsMap = make(util.JsMap)
-	var kind string
-
-	if len(connect) == 0 {
-		return nil, nil
-	}
-
-	err = json.Unmarshal([]byte(connect), &c_js)
-	if err != nil {
-		return nil, err
-	}
-
-	if val, ok := c_js["type"]; ok {
-		kind = val.(string)
-	} else {
-		c_js["type"] = "udp"
-		kind = "udp"
-	}
-
-	switch kind {
-	case "gcm":
-		init_gcm(&c_js, config, logger)
-	}
-
-	if err = store.SetPropConnect(uaid, connect); err != nil {
-		logger.Error("propping", "Could not store connect",
-			util.Fields{"error": err.Error()})
-	}
-
-	return &PropPing{
-		connect: c_js,
-		config:  config,
-		logger:  logger,
-		store:   store,
-		metrics: metrics,
-	}, nil
+func init() {
+	AvailablePings["noop"] = func() HasConfigStruct { return new(NoopPing) }
+	AvailablePings["udp"] = func() HasConfigStruct { return new(UDPPing) }
+	AvailablePings["gcm"] = func() HasConfigStruct { return new(GCMPing) }
+	AvailablePings["default"] = AvailablePings["noop"]
 }
 
-func init_gcm(connect *util.JsMap, config *util.MzConfig, logger *util.MzLogger) error {
-	ttl, err := strconv.ParseInt(config.Get("gcm.ttl", config.Get("db.timeout_live", "259200")), 10, 0)
-	if err != nil {
-		ttl = 259200
-		logger.Warn("propping",
-			"Could not parse config option time, using 259200",
-			util.Fields{"error": err.Error()})
+// NoOp ping
+
+type NoopPing struct {
+	PropPinger
+	app    *Application
+	config *NoopPingConfig
+}
+
+type NoopPingConfig struct {
+	config *NoopPingConfig
+}
+
+func (ml *NoopPing) ConfigStruct() interface{} {
+	return &NoopPingConfig{}
+}
+
+// Generic configuration for an Ping
+func (r *NoopPing) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*NoopPingConfig)
+	r.config = conf
+	return nil
+}
+
+// Register the ping to a user
+func (r *NoopPing) Register(connect JsMap, uaid string) (err error) {
+	return nil
+}
+
+// Can the ping bypass telling the device on the websocket?
+func (r *NoopPing) CanBypassWebsocket() bool {
+	return false
+}
+
+// try to send the ping.
+func (r *NoopPing) Send(vers int64) error {
+	return UnsupportedProtocolErr
+}
+
+//===
+// "UDP" ping uses remote Carrier provided URL to establish a UDP
+// based "ping" to the device. This UDP ping is contained within
+// the carrier's network.
+type UDPPing struct {
+	PropPinger
+	config *UDPPingConfig
+	app    *Application
+}
+
+type UDPPingConfig struct {
+	URL string `toml:"udp_url"` //carrier UDP Proxy URL
+	// Additional Carrier required elements here.
+}
+
+func (ml *UDPPing) ConfigStruct() interface{} {
+	return &UDPPingConfig{
+		URL: "https://example.com",
 	}
-	collapse_key := config.Get("gcm.collapse_key", "simplepush")
-	project_id := config.Get("gcm.project_id", "simplepush-gcm")
-	dry_run := config.GetFlag("gcm.dry_run")
-	api_key := config.Get("gcm.api_key", "")
-	gcm_url := config.Get("gcm.url", "https://android.googleapis.com/gcm/send")
-	if api_key == "" {
-		logger.Error("propping",
+}
+
+func (r *UDPPing) Init(app *Application, config interface{}) error {
+	r.app = app
+	r.config = config.(*UDPPingConfig)
+	return nil
+}
+
+func (r *UDPPing) Register(connect JsMap, uaid string) (err error) {
+
+	cstr, err := json.Marshal(connect)
+	if err != nil {
+		r.app.Logger().Error("udpping", "Could not marshal connection string for storage",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	// TODO: Convert this to take either []byte or JsMap
+	if err = r.app.Store().PutPing(uaid, string(cstr)); err != nil {
+		r.app.Logger().Error("propping", "Could not store connect",
+			LogFields{"error": err.Error()})
+	}
+	return nil
+}
+
+func (r *UDPPing) CanBypassWebsocket() bool {
+	// If the Ping does not require communication to the client via
+	// websocket, return true. If the ping should still attempt to
+	// try using the client's websocket connection, return false.
+	return false
+}
+
+// Send the version info to the Proprietary ping URL provided
+// by the carrier.
+func (r *UDPPing) Send(vers int64) error {
+	// Obviously, this needs to be filled out with the appropriate
+	// setup and calls to communicate to the remote server.
+	// Since UDP is not actually defined, we're returning this
+	// error.
+	return UnsupportedProtocolErr
+}
+
+// ===
+// Google Cloud Messaging Proprietary Ping interface
+// NOTE: This is still experimental.
+type GCMPing struct {
+	PropPinger
+	config *GCMPingConfig
+	app    *Application
+}
+
+type GCMPingConfig struct {
+	APIKey      string `toml:"gcm_apikey"` //GCM Dev API Key
+	CollapseKey string `toml:"gcm_collapsekey"`
+	DryRun      bool   `toml:"gcm_dryrun"`
+	ProjectID   string `toml:"gcm_projectid"`
+	TTL         uint64 `toml:"gcm_ttl"`
+	URL         string `toml:"gcm_url"` //GCM URL
+	RegID       string
+	UAID        string
+}
+
+func (r *GCMPing) ConfigStruct() interface{} {
+	return &GCMPingConfig{
+		URL:         "https://android.googleapis.com/gcm/send",
+		APIKey:      "YOUR_API_KEY",
+		CollapseKey: "simplepush",
+		ProjectID:   "simplepush_project",
+		DryRun:      false,
+		TTL:         259200,
+	}
+}
+
+func (r *GCMPing) Init(app *Application, config interface{}) error {
+	r.app = app
+	r.config = config.(*GCMPingConfig)
+	return nil
+}
+
+func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
+	// already specified, no need to redo.
+	if r.config.UAID == uaid {
+		return nil
+	}
+
+	if r.config.APIKey == "" {
+		r.app.Logger().Error("gcmping",
 			"No gcm.api_key defined in config file. Cannot send message.",
 			nil)
 		return ConfigurationErr
 	}
 
-	(*connect)["collapse_key"] = collapse_key
-	(*connect)["dry_run"] = dry_run
-	(*connect)["api_key"] = api_key
-	(*connect)["gcm_url"] = gcm_url
-	(*connect)["ttl"] = ttl
-	(*connect)["project_id"] = project_id
+	regid, ok := connect["regid"]
+	if !ok {
+		r.app.Logger().Error("gcmping",
+			"No user registration ID present. Cannot send message",
+			nil)
+		return ConfigurationErr
+	}
+
+	connect["collapse_key"] = r.config.CollapseKey
+	connect["dry_run"] = r.config.DryRun
+	connect["api_key"] = r.config.APIKey
+	connect["gcm_url"] = r.config.URL
+	connect["ttl"] = r.config.TTL
+	connect["project_id"] = r.config.ProjectID
+	r.config.RegID = regid.(string)
+	r.config.UAID = uaid
+	full_connect, err := json.Marshal(connect)
+	if err != nil {
+		r.app.Logger().Error("gcmping", "Could not marshal connection string for storage",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	// TODO: convert this to take either []byte or JsMap
+	if err = r.app.Store().PutPing(uaid, string(full_connect)); err != nil {
+		r.app.Logger().Error("gcmping", "Could not store connect",
+			LogFields{"error": err.Error()})
+		return err
+	}
 	return nil
 }
 
-func (self *PropPing) Send(vers int64) error {
-
-	switch self.connect["type"].(string) {
-	case "gcm":
-		self.metrics.Increment("propretary.ping.gcm")
-		return self.send_gcm(vers)
-	default:
-		return UnsupportedProtocolErr
-	}
-
+func (r *GCMPing) CanBypassWebsocket() bool {
+	// GCM can work even if the client's websocket connection
+	// has timed out or closed. We do not need to try to send the
+	// message on both channels.
+	return true
 }
 
-func (self *PropPing) send_gcm(vers int64) error {
-	// google docs lie. You MUST send the regid as an array, even if it's one.
-	regs := [1]string{self.connect["regid"].(string)}
-	data, err := json.Marshal(util.JsMap{
+func (r *GCMPing) Send(vers int64) error {
+	// google docs lie. You MUST send the regid as an array, even if it's one
+	// element.
+	regs := [1]string{r.config.RegID}
+	data, err := json.Marshal(JsMap{
 		"registration_ids": regs,
-		"collapse_key":     self.connect["collapse_key"],
-		"time_to_live":     self.connect["ttl"],
-		"dry_run":          self.connect["dry_run"],
+		"collapse_key":     r.config.CollapseKey,
+		"time_to_live":     r.config.TTL,
+		"dry_run":          r.config.DryRun,
 	})
 	if err != nil {
-		self.logger.Error("propping",
+		r.app.Logger().Error("propping",
 			"Could not marshal request for GCM post",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
-	req, err := http.NewRequest("POST",
-		self.connect["gcm_url"].(string),
-		bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", r.config.URL, bytes.NewBuffer(data))
 	if err != nil {
-		self.logger.Error("propping",
+		r.app.Logger().Error("propping",
 			"Could not create request for GCM Post",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
-	req.Header.Add("Authorization", "key="+self.connect["api_key"].(string))
-	req.Header.Add("Project_id", self.connect["project_id"].(string))
+	req.Header.Add("Authorization", "key="+r.config.APIKey)
+	req.Header.Add("Project_id", r.config.ProjectID)
 	req.Header.Add("Content-Type", "application/json")
+	r.app.Metrics().Increment("propretary.ping.gcm")
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		self.logger.Error("propping",
+		r.app.Logger().Error("propping",
 			"Failed to send GCM message",
-			util.Fields{"error": err.Error()})
+			LogFields{"error": err.Error()})
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		self.logger.Error("propping",
+		r.app.Logger().Error("propping",
 			"GCM returned non success message",
-			util.Fields{"error": resp.Status})
+			LogFields{"error": resp.Status})
 		return ProtocolErr
 	}
 	return nil
-}
-
-func (self *PropPing) CanBypassWebsocket() bool {
-	switch self.connect["type"] {
-	case "gcm":
-		return true
-	}
-
-	return false
 }
