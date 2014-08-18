@@ -157,4 +157,5 @@ func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields 
 
 func init() {
 	AvailableLoggers["stdout"] = func() HasConfigStruct { return new(StdOutLogger) }
+	AvailableLoggers["default"] = AvailableLoggers["stdout"]
 }

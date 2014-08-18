@@ -103,8 +103,12 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	}
 	ext, ok := extensions[confSection.Typ]
 	if !ok {
-		return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
-			confSection.Typ, sectionName)
+		ext, ok = extensions["default"]
+		if !ok {
+			return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
+				confSection.Typ, sectionName)
+		}
+		//TODO: Add log info to indicate using "default"
 	}
 
 	obj := ext()
@@ -144,6 +148,15 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 	}
 	logger := obj.(Logger)
 	if err = app.SetLogger(logger); err != nil {
+		return
+	}
+
+	// Load the Proprietary Ping element. Deps: Logger
+	if obj, err = LoadExtensibleSection(app, "propping", AvailablePings, configFile); err != nil {
+		return
+	}
+	propping, _ := obj.(PropPinger)
+	if err = app.SetPropPinger(propping); err != nil {
 		return
 	}
 
