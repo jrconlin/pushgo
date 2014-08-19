@@ -306,7 +306,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if self.propping != nil && self.propping.CanBypassWebsocket() {
 		err = self.propping.Send(version)
 		if err != nil {
-			self.logger.Error("update",
+			self.logger.Warn("update",
 				"Could not force to proprietary ping",
 				LogFields{"error": err.Error()})
 		} else {
@@ -428,8 +428,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if v, ok := jdata["chid"]; !ok {
-		self.logger.Error("router",
-			"Missing chid", nil)
+		self.logger.Error("router", "Missing chid", LogFields{"uaid": uaid})
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 		return
 	} else {

@@ -199,7 +199,7 @@ func (self *Worker) Run(sock *PushWS) {
 	time.AfterFunc(self.helloTimeout,
 		func() {
 			if sock.Uaid == "" {
-				self.logger.Error("dash",
+				self.logger.Debug("dash",
 					"Worker Idle connection. Closing socket", nil)
 				sock.Socket.Close()
 			}

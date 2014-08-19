@@ -95,11 +95,17 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	}
 	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
 	if err != nil {
-		return fmt.Errorf("Unable to parse router ctimeout: %s", err.Error())
+		r.logger.Error("router", "Could not parse ctimeout",
+			LogFields{"error": err.Error(),
+				"ctimeout": conf.Ctimeout})
+		return err
 	}
 	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
 	if err != nil {
-		return fmt.Errorf("Unable to parse router rwtimeout: %s", err.Error())
+		r.logger.Error("router", "Could not parse rwtimeout",
+			LogFields{"error": err.Error(),
+				"rwtimeout": conf.Rwtimeout})
+		return err
 	}
 	r.scheme = conf.Scheme
 	r.port = conf.Port
