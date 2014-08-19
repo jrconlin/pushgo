@@ -123,7 +123,7 @@ func LoadExtensibleSection(app *Application, sectionName string,
 
 // Handles reading a TOML based configuration file, and loading an
 // initialized Application, ready to Run
-func LoadApplicationFromFileName(filename string) (app *Application, err error) {
+func LoadApplicationFromFileName(filename string, logging int) (app *Application, err error) {
 	var (
 		obj        interface{}
 		configFile ConfigFile
@@ -147,6 +147,11 @@ func LoadApplicationFromFileName(filename string) (app *Application, err error) 
 		return
 	}
 	logger := obj.(Logger)
+	if logging > 0 {
+		logger.SetFilter(LogLevel(logging))
+		logger.Log(LogLevel(logging), "config", "Setting minimum logging level from CLI",
+			LogFields{"level": fmt.Sprintf("%d", LogLevel(logging))})
+	}
 	if err = app.SetLogger(logger); err != nil {
 		return
 	}

@@ -20,7 +20,7 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
 
-	"mozilla.org/simplepush/sperrors"
+	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 type HandlerConfig struct{}

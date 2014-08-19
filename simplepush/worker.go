@@ -17,7 +17,7 @@ import (
 
 	"code.google.com/p/go.net/websocket"
 
-	"mozilla.org/simplepush/sperrors"
+	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 var MissingChannelErr = errors.New("Missing channelID")

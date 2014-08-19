@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"net/http"

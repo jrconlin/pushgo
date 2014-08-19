@@ -29,6 +29,7 @@ type LogFields map[string]string
 type Logger interface {
 	HasConfigStruct
 	Log(level LogLevel, messageType, payload string, fields LogFields)
+	SetFilter(level LogLevel)
 	ShouldLog(level LogLevel) bool
 }
 
@@ -116,7 +117,11 @@ func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 }
 
 func (ml *StdOutLogger) ShouldLog(level LogLevel) bool {
-	return level < ml.filter
+	return level <= ml.filter
+}
+
+func (ml *StdOutLogger) SetFilter(level LogLevel) {
+	ml.filter = level
 }
 
 func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields LogFields) {

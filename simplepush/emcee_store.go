@@ -19,7 +19,7 @@ import (
 
 	mc "github.com/ianoshen/gomc"
 
-	"mozilla.org/simplepush/sperrors"
+	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 // ChannelState represents the state of a channel record.

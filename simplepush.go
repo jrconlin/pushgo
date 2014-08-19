@@ -13,7 +13,7 @@ import (
 	"runtime/pprof"
 	"syscall"
 
-	"mozilla.org/simplepush"
+	"github.com/mozilla-services/pushgo/simplepush"
 )
 
 var (
@@ -58,7 +58,7 @@ func main() {
 	}
 
 	// Load the app from the config file
-	app, err := simplepush.LoadApplicationFromFileName(*configFile)
+	app, err := simplepush.LoadApplicationFromFileName(*configFile, *logging)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
