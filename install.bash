@@ -1,12 +1,10 @@
 #! /bin/bash
 set -e
 echo "Installing required go libraries..."
+GOPATH="$(pwd):$GOPATH"
+go get
 git submodule update --init
-for req in `grep -v "^#" go_deps.lst`; do
-    GOPATH="$(pwd):$GOPATH" go get -d -v $req
-done
 echo "Libraries installed"
-
 if [ ! -e config.ini ]; then
     echo "Copying sample ini file to config.ini"
     cp config.sample.ini config.ini
