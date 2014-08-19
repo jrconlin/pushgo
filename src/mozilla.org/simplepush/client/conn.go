@@ -554,29 +554,35 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 	if err = ws.Message.Receive(c.Socket, &data); err != nil {
 		return nil, err
 	}
+	var (
+		messageType, errorText       string
+		hasMessageType, hasErrorText bool
+	)
+	fields := make(Fields)
+	statusCode := NoStatus
 	if len(data) == 2 && data[0] == '{' && data[1] == '}' {
 		// Avoid processing pings.
-		return nil, nil
+		messageType, hasMessageType, statusCode = "ping", true, 200
+		goto Decode
 	}
-	fields := make(Fields)
 	if err = json.Unmarshal(data, &fields); err != nil {
 		return nil, err
 	}
 	if len(fields) == 0 {
-		return nil, nil
+		messageType, hasMessageType, statusCode = "ping", true, 200
+		goto Decode
 	}
 	// Extract the `status`, `error`, and `messageType` fields. Per RFC 7159,
 	// Go's JSON library represents numbers as 64-bit floats when decoding into
 	// an untyped map.
-	statusCode := NoStatus
 	if asFloat, ok := fields["status"].(float64); ok && asFloat >= 0 {
 		statusCode = int(asFloat)
 	}
-	errorText, hasErrorText := fields["error"].(string)
+	errorText, hasErrorText = fields["error"].(string)
 	if len(errorText) == 0 {
 		hasErrorText = false
 	}
-	messageType, hasMessageType := fields["messageType"].(string)
+	messageType, hasMessageType = fields["messageType"].(string)
 	if len(messageType) == 0 {
 		hasMessageType = false
 	}
@@ -591,6 +597,7 @@ func (c *Conn) readMessage() (reply Reply, err error) {
 		}
 		return nil, &ServerError{"internal", c.Origin(), message, statusCode}
 	}
+Decode:
 	if decoder := c.Decoder(messageType); decoder != nil {
 		return decoder.Decode(c, fields, statusCode, errorText)
 	}
