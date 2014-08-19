@@ -19,7 +19,7 @@ var packetNames = map[PacketType]string{
 type PacketType int
 
 const (
-	Helo PacketType = iota
+	Helo PacketType = iota + 1
 	Register
 	Unregister
 	Notification
@@ -188,7 +188,9 @@ func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
 type ClientPing chan error
 
 func (ClientPing) Type() PacketType             { return Ping }
-func (ClientPing) Id() (interface{}, error)     { return "", ErrNoId }
+func (ClientPing) CanReply() bool               { return false }
+func (ClientPing) Sync() bool                   { return false }
+func (ClientPing) Id() (interface{}, error)     { return nil, ErrNoId }
 func (ClientPing) Reply(Reply)                  {}
 func (p ClientPing) Error(err error)            { p <- err }
 func (p ClientPing) Close()                     { close(p) }
@@ -201,7 +203,7 @@ type ClientPurge chan error
 func (ClientPurge) Type() PacketType             { return Purge }
 func (ClientPurge) CanReply() bool               { return false }
 func (ClientPurge) Sync() bool                   { return false }
-func (ClientPurge) Id() (interface{}, error)     { return "", ErrNoId }
+func (ClientPurge) Id() (interface{}, error)     { return nil, ErrNoId }
 func (ClientPurge) Reply(Reply)                  {}
 func (p ClientPurge) Error(err error)            { p <- err }
 func (p ClientPurge) Close()                     { close(p) }
@@ -217,7 +219,7 @@ type ClientACK struct {
 func (*ClientACK) Type() PacketType         { return ACK }
 func (*ClientACK) CanReply() bool           { return false }
 func (*ClientACK) Sync() bool               { return false }
-func (*ClientACK) Id() (interface{}, error) { return "", ErrNoId }
+func (*ClientACK) Id() (interface{}, error) { return nil, ErrNoId }
 func (*ClientACK) Reply(Reply)              {}
 func (a *ClientACK) Error(err error)        { a.errors <- err }
 func (a *ClientACK) Close()                 { close(a.errors) }
