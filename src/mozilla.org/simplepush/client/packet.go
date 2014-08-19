@@ -4,16 +4,6 @@ import (
 	"encoding/json"
 )
 
-var packetNames = map[PacketType]string{
-	Helo:         "hello",
-	Register:     "register",
-	Unregister:   "unregister",
-	Notification: "notification",
-	ACK:          "ack",
-	Purge:        "purge",
-	Ping:         "ping",
-}
-
 type (
 	PacketType int
 	PacketId   int
@@ -23,11 +13,32 @@ const (
 	Helo PacketType = iota + 1
 	Register
 	Unregister
-	Notification
 	ACK
 	Purge
 	Ping
 )
+
+func (t PacketType) String() string {
+	switch t {
+	case Helo:
+		return "hello"
+	case Register:
+		return "register"
+	case Unregister:
+		return "unregister"
+	case ACK:
+		return "ack"
+	case Purge:
+		return "purge"
+	case Ping:
+		return "ping"
+	}
+	return ""
+}
+
+func (t PacketType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
 
 const (
 	ACKId PacketId = iota + 1
@@ -39,14 +50,6 @@ const (
 	// `getId()` coerces `nilId` to `nil` during serialization.
 	nilId
 )
-
-func (t PacketType) String() string {
-	return packetNames[t]
-}
-
-func (t PacketType) MarshalText() ([]byte, error) {
-	return []byte(t.String()), nil
-}
 
 type requestWithMarshal interface {
 	Request
