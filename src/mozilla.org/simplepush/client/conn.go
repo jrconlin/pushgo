@@ -79,19 +79,19 @@ func Dial(origin string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := DialId(origin, &deviceId, []string{})
+	conn, err := DialId(origin, &deviceId)
 	if err != nil {
 		return nil, err
 	}
 	return conn, nil
 }
 
-func DialId(origin string, deviceId *string, channelIds []string) (*Conn, error) {
+func DialId(origin string, deviceId *string, channelIds ...string) (*Conn, error) {
 	conn, err := DialOrigin(origin)
 	if err != nil {
 		return nil, err
 	}
-	actualId, err := conn.WriteHelo(*deviceId, channelIds)
+	actualId, err := conn.WriteHelo(*deviceId, channelIds...)
 	if err != nil {
 		if err := conn.Close(); err != nil {
 			return nil, err
@@ -394,7 +394,7 @@ func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
 // WriteHelo initiates a handshake with the server. Duplicate handshakes are
 // permitted if the device ID is identical to the prior ID, or left empty;
 // otherwise, the server will close the connection.
-func (c *Conn) WriteHelo(deviceId string, channelIds []string) (actualId string, err error) {
+func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string, err error) {
 	request := &ClientHelo{
 		DeviceId:   deviceId,
 		ChannelIds: channelIds,

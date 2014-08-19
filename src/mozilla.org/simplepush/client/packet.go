@@ -94,12 +94,15 @@ func (h *ClientHelo) Do() (reply Reply, err error) {
 }
 
 func (h *ClientHelo) MarshalJSON() ([]byte, error) {
-	value := struct {
+	channelIds := h.ChannelIds
+	if channelIds == nil {
+		channelIds = []string{}
+	}
+	return json.Marshal(struct {
 		MessageType PacketType `json:"messageType"`
 		DeviceId    string     `json:"uaid"`
 		ChannelIds  []string   `json:"channelIDs"`
-	}{h.Type(), h.DeviceId, h.ChannelIds}
-	return json.Marshal(value)
+	}{h.Type(), h.DeviceId, channelIds})
 }
 
 type ServerHelo struct {
@@ -142,11 +145,10 @@ func (r *ClientRegister) Do() (reply Reply, err error) {
 }
 
 func (r *ClientRegister) MarshalJSON() ([]byte, error) {
-	value := struct {
+	return json.Marshal(struct {
 		MessageType PacketType `json:"messageType"`
 		ChannelId   string     `json:"channelID"`
-	}{r.Type(), r.ChannelId}
-	return json.Marshal(value)
+	}{r.Type(), r.ChannelId})
 }
 
 type ServerRegister struct {
@@ -177,11 +179,10 @@ func (u *ClientUnregister) Do() (Reply, error)       { return nil, <-u.errors }
 func (u *ClientUnregister) getErrors() chan error    { return u.errors }
 
 func (u *ClientUnregister) MarshalJSON() ([]byte, error) {
-	value := struct {
+	return json.Marshal(struct {
 		MessageType PacketType `json:"messageType"`
 		ChannelId   string     `json:"channelID"`
-	}{u.Type(), u.ChannelId}
-	return json.Marshal(value)
+	}{u.Type(), u.ChannelId})
 }
 
 type ClientPing chan error
@@ -224,12 +225,10 @@ func (a *ClientACK) Do() (Reply, error)     { return nil, <-a.errors }
 func (a *ClientACK) getErrors() chan error  { return a.errors }
 
 func (a *ClientACK) MarshalJSON() ([]byte, error) {
-	value := struct {
+	return json.Marshal(struct {
 		MessageType PacketType `json:"messageType"`
 		Updates     []Update   `json:"updates"`
-	}{a.Type(), a.Updates}
-	v, err := json.Marshal(value)
-	return v, err
+	}{a.Type(), a.Updates})
 }
 
 type Update struct {

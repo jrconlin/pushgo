@@ -31,7 +31,7 @@ func DoTest(origin string, channels, updates int) (err error) {
 		if err != nil {
 			return
 		}
-		_, err := conn.WriteHelo("", []string{})
+		_, err := conn.WriteHelo("")
 		if err == nil {
 			break
 		}
