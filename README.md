@@ -10,27 +10,15 @@ approaches showed better overall performance, many showed worse. Your
 milage may vary.
 
 Please note: PushGo is not a reference implementation of the SimplePush
-protocol. It was created in order to support large numbers (1,000,000+ 
+protocol. It was created in order to support large numbers (1,000,000+
 simultaneously connected users) in a cost effective manner. As such, some
 features of the protocol are not present, (e.g. message retry, client state
 recording, closed channel responses for third party servers, etc.)
 
 ## System requirements.
 
-libmemcached 1.2 *note* remove older, system installed versions of
-libmemcached, or you're going to have a bad time.
-
-To build memcached from source:
-
-1. Install following: bzr, automake, flex, bison, libtool, cloog-ppl
-    * bison must be >= 2.5. You can pull the latest compy from
-      http://ftp.gnu.org/gnu/bison/
-2. $ wget
-https://launchpad.net/libmemcached/1.0/1.0.17/+download/libmemcached-1.0.17.tar.gz
-3. $ cd libmemcached-1.0.17
-    * $ configure --prefix=/usr
-    * $ make
-    * $ sudo make install
+If you require offline storage (e.g. for mobile device usage), we
+currently recommend memcache storage.
 
 ## Installation
 To install this server:
@@ -38,15 +26,13 @@ To install this server:
 1. extract this directory into target directory
 2. Run install.bash
 3. You'll need the following servers running:
-    * memcached
-    * Hekad (optional)
 4. Modify the config.ini
 
 If you're not planning on doing development work (see previous notes
-about how this is beta), you may want to build the executable with
-''' go build simplepush.go '''
+about how this is beta), you may want to build and run the executable
+with the ''' run ''' command
 
-This will build "simplepush" as an executable.
+This will build "pushgo" as an executable.
 
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
