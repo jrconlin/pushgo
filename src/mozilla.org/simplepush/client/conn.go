@@ -20,6 +20,7 @@ var (
 	ErrUnknownType      = &ClientError{"Unknown request type."}
 	ErrDuplicateRequest = &ClientError{"Duplicate request."}
 	ErrInvalidState     = &ClientError{"Invalid client state."}
+	ErrNoId             = &ClientError{"Anonymous packet type."}
 )
 
 // TODO: Extract the spooling logic (`pending{Lock}, messages, SpoolAll`) into
@@ -265,25 +266,18 @@ func (c *Conn) Send() {
 				err       error
 			)
 			if request.CanReply() {
-				id, err = request.Id()
-				if err != nil {
+				if id = request.Id(); id == nil {
 					cancel(request)
-					c.fatal(err)
+					c.fatal(ErrNoId)
 					break
 				}
 				if request.Sync() {
 					pending, isPending := requests[request.Type()]
-					// Multiple synchronous requests (e.g., `Helo` handshakes) with the same
-					// ID should be idempotent. Synchronous requests with different IDs are
-					// not supported.
+					// Multiple synchronous requests (e.g., `Helo` handshakes and pings) with
+					// the same ID should be idempotent. Synchronous requests with different
+					// IDs are not supported.
 					if isPending {
-						pendingId, err := pending.Id()
-						if err != nil {
-							cancel(request)
-							c.fatal(err)
-							break
-						}
-						if pendingId != id {
+						if pending.Id() != id {
 							request.Error(ErrMismatchedIds)
 						}
 						request.Close()
@@ -328,12 +322,9 @@ func (c *Conn) Send() {
 			outbox[id] = request
 
 		case reply := <-c.replies:
-			if !reply.HasRequest() {
-				break
-			}
-			id, err := reply.Id()
-			if err != nil {
-				c.fatal(err)
+			var id interface{}
+			if id = reply.Id(); id == nil {
+				c.fatal(ErrNoId)
 				break
 			}
 			var (
