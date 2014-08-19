@@ -4,5 +4,5 @@ if [ ! -e config.ini ]; then
     cp config.sample.ini config.ini
 fi
 XX=simplepush
-GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH" go build -o $XX github.com/mozilla-services/pushgo
+GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH" godep go build -o $XX
 GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH" ./$XX $*
