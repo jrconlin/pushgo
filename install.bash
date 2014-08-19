@@ -2,7 +2,10 @@
 set -e
 echo "Installing required go libraries..."
 GOPATH="$(pwd):$GOPATH"
-go get
+if [ ! -e $GOBIN/godep ]; then
+    go get github.com/tools/godep
+fi
+godep restore
 git submodule update --init
 echo "Libraries installed"
 if [ ! -e config.ini ]; then
