@@ -33,7 +33,7 @@ type Worker struct {
 	stopped      bool
 	maxChannels  int
 	lastPing     time.Time
-	pingInt      int
+	pingInt      time.Duration
 	wg           *sync.WaitGroup
 	metrics      *Metrics
 	helloTimeout time.Duration
@@ -57,8 +57,7 @@ func NewWorker(app *Application) *Worker {
 		metrics:      app.Metrics(),
 		state:        INACTIVE,
 		stopped:      false,
-		lastPing:     time.Now(),
-		pingInt:      int(app.clientMinPing.Seconds()),
+		pingInt:      app.clientMinPing,
 		maxChannels:  app.Store().MaxChannels(),
 		wg:           new(sync.WaitGroup),
 		helloTimeout: app.clientHelloTimeout,
@@ -600,7 +599,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 }
 
 func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
-	if self.pingInt > 0 && int(self.lastPing.Sub(time.Now()).Seconds()) < self.pingInt {
+	if self.pingInt > 0 && !self.lastPing.IsZero() && time.Now().Sub(self.lastPing) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		self.logger.Error("dash", "Client sending too many pings",
 			LogFields{"source": source.String()})
@@ -608,6 +607,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		self.metrics.Increment("updates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
+	self.lastPing = time.Now()
 	data, _ := buffer.(JsMap)
 	if self.app.pushLongPongs {
 		websocket.JSON.Send(sock.Socket, JsMap{
