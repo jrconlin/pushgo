@@ -1,7 +1,7 @@
 #! /bin/bash
 set -e
 echo "Installing required go libraries..."
-GOPATH="$(pwd):$GOPATH"
+GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH"
 if [ ! -e $GOBIN/godep ]; then
     go get github.com/tools/godep
 fi
