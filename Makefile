@@ -63,7 +63,7 @@ build: $(DEPS) $(SIMPLETEST)
 simplepush:
 	rm -f simplepush
 	@echo "Building simplepush"
-	$(GODEPCMD) go build github.com/mozilla-services/pushgo
+	$(GODEPCMD) go build -o simplepush github.com/mozilla-services/pushgo
 
 clean:
 	rm -rf bin $(DEPS)
