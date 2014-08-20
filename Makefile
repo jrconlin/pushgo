@@ -70,6 +70,7 @@ build: $(DEPS) $(SIMPLETEST)
 libmemcached-1.0.18:
 	curl -O https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
 	tar xzvf libmemcached-1.0.18.tar.gz
+	cd libmemcached-1.0.18 && \
 	./configure --prefix=/usr && \
 	sed -i '/ax_pthread_flags="pthreads none -Kthread -kthread lthread -pthread -pthreads -mthreads pthread --thread-safe -mt pthread-config"/c\ax_pthread_flags="pthreads none -Kthread -kthread lthread -lpthread -lpthreads -mthreads pthread --thread-safe -mt pthread-config"' m4/ax_pthread.m4
 
