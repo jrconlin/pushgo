@@ -1,0 +1,12 @@
+language: go
+go:
+    - 1.3
+
+before_install:
+    -sudo apt-get install libmemcached
+
+install:
+    - make
+
+script:
+    - make simplepush
