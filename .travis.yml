@@ -3,7 +3,7 @@ go:
     - 1.3
 
 before_install:
-    -sudo apt-get install libmemcached
+    - sudo apt-get install libmemcached-dev
 
 install:
     - make
