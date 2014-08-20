@@ -36,7 +36,7 @@ If you would like to use an existing go on your system:
 2. Symlink your go binary into the bin directory you made
 3. Run the make commands starting at step 2 from above
 
-This will build "pushgo" as an executable.
+This will build "simplepush" as an executable.
 
 
 ## Execution
