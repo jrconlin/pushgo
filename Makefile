@@ -50,6 +50,9 @@ $(BIN):
 $(GODEP): $(BIN) $(GO)
 	@echo "Installing godep"
 	$(GOCMD) get github.com/tools/godep
+	if [ -e $(DEPS)/bin/godep ] ; then \
+		mv $(DEPS)/bin/godep $(BIN)/godep; \
+	fi;
 
 $(DEPS): $(GODEP)
 	@echo "Installing dependencies"
