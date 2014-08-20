@@ -1,8 +1,0 @@
-#! /bin/bash
-if [ ! -e config.ini ]; then
-    echo "Copying sample ini to config.ini"
-    cp config.sample.ini config.ini
-fi
-XX=simplepush
-GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH" go build -o $XX github.com/mozilla-services/pushgo
-GOPATH="$(pwd)/Godeps/_workspace:$(pwd):$GOPATH" ./$XX $*
