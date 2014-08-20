@@ -17,16 +17,17 @@ ifeq ("$(wildcard $(SYSTEMGO))", "")
 GO = $(HERE)/go/bin/go
 GODEPCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GODEP)
 GOCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GO)
-PATH := $(HERE)/go/bin:$(PATH)
+PATH := $(HERE)/go/bin:$(HERE)/bin:$(PATH)
 USESYSTEM = 0
 else
 GO = $(SYSTEMGO)
 GODEPCMD = $(GODEP)
 GOCMD = $(GO)
+PATH := $(HERE)/bin:$(PATH)
 USESYSTEM = 1
 endif
 
-.PHONY: all build clean test simplepush
+.PHONY: all build clean test simplepush memcached
 
 all: build
 
@@ -65,6 +66,15 @@ $(SIMPLETEST):
 	git submodule update --init
 
 build: $(DEPS) $(SIMPLETEST)
+
+libmemcached-1.0.18:
+	curl -O https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
+	tar xzvf libmemcached-1.0.18.tar.gz
+	./configure --prefix=/usr && \
+	sed -i '/ax_pthread_flags="pthreads none -Kthread -kthread lthread -pthread -pthreads -mthreads pthread --thread-safe -mt pthread-config"/c\ax_pthread_flags="pthreads none -Kthread -kthread lthread -lpthread -lpthreads -mthreads pthread --thread-safe -mt pthread-config"' m4/ax_pthread.m4
+
+memcached: libmemcached-1.0.18
+	cd libmemcached-1.0.18 && sudo make install
 
 simplepush:
 	rm -f simplepush

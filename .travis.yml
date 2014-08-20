@@ -5,11 +5,14 @@ go:
 cache:
   directories:
   - go
+  - libmemcached-1.0.18
 
 before_install:
-    - sudo apt-get install libmemcached-dev
+    - sudo apt-get update
+    - sudo apt-get install -y automake
 
 install:
+    - make memcached
     - make
 
 script:
