@@ -1,2 +1,5 @@
 .hg
 /pkg/
+go/
+Godeps/_workspace/
+bin/
