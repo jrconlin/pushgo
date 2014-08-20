@@ -574,10 +574,10 @@ func (t idTest) TestRegister() error {
 	reply, err := conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
-			return fmt.Errorf("On test %v, error writing registration request: %#v", err)
+			return fmt.Errorf("On test %v, error writing registration request: %#v", t.name, err)
 		}
 		if reply.Status() != t.statusCode {
-			return fmt.Errorf("On test %v, unexpected status code: got %#v; want %#v", reply.Status(), t.statusCode)
+			return fmt.Errorf("On test %v, unexpected status code: got %#v; want %#v", t.name, reply.Status(), t.statusCode)
 		}
 		return nil
 	}
