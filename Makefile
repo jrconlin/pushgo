@@ -16,6 +16,7 @@ ifeq ("$(wildcard $(SYSTEMGO))", "")
 GO = $(HERE)/go/bin/go
 GODEPCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GODEP)
 GOCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GO)
+PATH += $(HERE)/go/bin
 USESYSTEM = 0
 else
 GO = $(SYSTEMGO)
