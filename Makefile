@@ -4,6 +4,7 @@ GODIR = $(HERE)/go
 GODEP = $(BIN)/godep
 DEPS = $(HERE)/Godeps/_workspace
 GOPATH = $(DEPS):$(HERE):$GOPATH
+GOBIN = $(BIN)
 
 SYSTEMGO = $(BIN)/go
 
