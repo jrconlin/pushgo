@@ -68,11 +68,17 @@ $(SIMPLETEST):
 build: $(DEPS) $(SIMPLETEST)
 
 libmemcached-1.0.18:
-	curl -O https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
+	wget https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
 	tar xzvf libmemcached-1.0.18.tar.gz
 	cd libmemcached-1.0.18 && \
-	./configure --prefix=/usr && \
+	./configure --prefix=/usr
+ifeq ($(PLATFORM),Darwin)
+	cd libmemcached-1.0.18 && \
+	sed -i '' $$'/ax_pthread_flags="pthreads none -Kthread -kthread lthread -pthread -pthreads -mthreads pthread --thread-safe -mt pthread-config"/c\\\nax_pthread_flags=\"pthreads none -Kthread -kthread lthread -lpthread -lpthreads -mthreads pthread --thread-safe -mt pthread-config"\n' m4/ax_pthread.m4
+else
+	cd libmemcached-1.0.18 && \
 	sed -i '/ax_pthread_flags="pthreads none -Kthread -kthread lthread -pthread -pthreads -mthreads pthread --thread-safe -mt pthread-config"/c\ax_pthread_flags="pthreads none -Kthread -kthread lthread -lpthread -lpthreads -mthreads pthread --thread-safe -mt pthread-config"' m4/ax_pthread.m4
+endif
 
 memcached: libmemcached-1.0.18
 	cd libmemcached-1.0.18 && sudo make install
