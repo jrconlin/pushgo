@@ -21,18 +21,23 @@ If you require offline storage (e.g. for mobile device usage), we
 currently recommend memcache storage.
 
 ## Installation
-To install this server:
+To install this server and the latest go:
 
 1. extract this directory into target directory
-2. Run install.bash
-3. You'll need the following servers running:
-4. Modify the config.ini
+2. Run: make
+3. Run: make simplepush
+4. Copy config.sample.ini to config.ini, and edit appropriately
 
-If you're not planning on doing development work (see previous notes
-about how this is beta), you may want to build and run the executable
-with the ''' run ''' command
+Step 3 should be re-run whenever code has been changed and the server
+should be recompiled.
 
-This will build "pushgo" as an executable.
+If you would like to use an existing go on your system:
+1. Create a bin directory in the target directory
+2. Symlink your go binary into the bin directory you made
+3. Run the make commands starting at step 2 from above
+
+This will build "simplepush" as an executable.
+
 
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
