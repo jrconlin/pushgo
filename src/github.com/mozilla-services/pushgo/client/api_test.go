@@ -170,10 +170,6 @@ func (r *MultipleRegister) MarshalJSON() ([]byte, error) {
 	}{r.Type(), []string{r.ChannelId}})
 }
 
-func decodeCustomHelo(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
-	return decodeHelo(c, fields, statusCode, errorText)
-}
-
 func decodeUnregisterReply(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"unregister", c.Origin(), errorText, statusCode}
@@ -233,7 +229,6 @@ func TestHeloReset(t *testing.T) {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("hello", DecoderFunc(decodeCustomHelo))
 	request := &CustomHelo{
 		MessageType: "hello",
 		DeviceId:    deviceId,
