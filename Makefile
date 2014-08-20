@@ -1,14 +1,16 @@
 HERE = $(shell pwd)
-GOBIN = $(HERE)/bin
-GODEP = $(GOBIN)/godep
-DEPS = $(HERE)/Godeps/_workspace
-GOPATH=$(DEPS):$(HERE):$GOPATH
-GO = $(GOBIN)/go
+BIN = $(HERE)/bin
 GODIR = $(HERE)/go
-GOCMD = GOROOT=$(GOROOT) GOPATH=$(GOPATH) $(GO)
+GODEP = $(BIN)/godep
+DEPS = $(HERE)/Godeps/_workspace
+GOPATH = $(DEPS):$(HERE):$GOPATH
+GO = $(BIN)/go
+
+GODEPCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GODEP)
+GOCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GO)
+
 SIMPLETEST = $(HERE)/simplepush_test/run_all.py
 PLATFORM=$(shell uname)
-GOROOT ?= $(HERE)/go
 
 .PHONY: all build clean test
 
@@ -24,18 +26,21 @@ endif
 	rm go1.3.1*.tar.gz
 
 $(GO): $(GODIR)
-	ln -s $(HERE)/go/bin/go $(GO)
+	if ! [ -e $(GO) ]; \
+	then \
+		ln -s $(HERE)/go/bin/go $(GO); \
+	fi;
 
-$(GOBIN):
-	mkdir -p $(GOBIN)
+$(BIN):
+	mkdir -p $(BIN)
 
-$(GODEP): $(GOBIN) $(GO)
+$(GODEP): $(BIN) $(GO)
 	@echo "Installing godep"
 	$(GOCMD) get github.com/tools/godep
 
 $(DEPS): $(GODEP)
-	@echo "Installing dependencies"
-	$(GODEP) restore
+	@echo "Installing dependencies"; \
+	$(GODEPCMD) restore; \
 
 $(SIMPLETEST):
 	@echo "Update git submodules"
@@ -44,7 +49,8 @@ $(SIMPLETEST):
 build: $(DEPS) $(SIMPLETEST)
 	rm -f simplepush
 	@echo "Building simplepush"
-	$(GOCMD) build -o simplepush github.com/mozilla-services/pushgo
+	$(GODEPCMD) go build github.com/mozilla-services/pushgo
 
 clean:
 	rm -rf bin $(DEPS)
+	rm -f simplepush
