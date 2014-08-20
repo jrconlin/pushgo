@@ -1,9 +1,10 @@
+SHELL = /bin/sh
 HERE = $(shell pwd)
 BIN = $(HERE)/bin
 GODIR = $(HERE)/go
 GODEP = $(BIN)/godep
 DEPS = $(HERE)/Godeps/_workspace
-GOPATH = $(DEPS):$(HERE):$GOPATH
+GOPATH = $(DEPS):$(HERE)
 GOBIN = $(BIN)
 
 SYSTEMGO = $(BIN)/go
@@ -16,7 +17,7 @@ ifeq ("$(wildcard $(SYSTEMGO))", "")
 GO = $(HERE)/go/bin/go
 GODEPCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GODEP)
 GOCMD = GOROOT=$(HERE)/go GOPATH=$(GOPATH) $(GO)
-PATH += $(HERE)/go/bin
+PATH := $(HERE)/go/bin:$(PATH)
 USESYSTEM = 0
 else
 GO = $(SYSTEMGO)
