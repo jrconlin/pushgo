@@ -5,7 +5,7 @@ DEPS = $(HERE)/Godeps/_workspace
 GOPATH=$(DEPS):$(HERE):$GOPATH
 GO = $(GOBIN)/go
 GODIR = $(HERE)/go
-GOCMD = GOROOT=$(GOROOT) $(GO)
+GOCMD = GOROOT=$(GOROOT) GOPATH=$(GOPATH) $(GO)
 SIMPLETEST = $(HERE)/simplepush_test/run_all.py
 PLATFORM=$(shell uname)
 GOROOT ?= $(HERE)/go
