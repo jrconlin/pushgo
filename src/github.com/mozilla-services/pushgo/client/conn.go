@@ -59,7 +59,9 @@ type Conn struct {
 type (
 	Channels map[string]bool
 	Decoders map[string]Decoder
-	Requests map[interface{}]Request
+	Outbox   map[interface{}]Request
+	Requests map[PacketType]Request
+	Outboxes map[PacketType]Outbox
 	Fields   map[string]interface{}
 )
 
@@ -256,103 +258,124 @@ func cancel(request Request) {
 	request.Close()
 }
 
+func (*Conn) processReply(requests Requests, outboxes Outboxes, reply Reply) error {
+	var id interface{}
+	if id = reply.Id(); id == nil {
+		return ErrNoId
+	}
+	var (
+		request   Request
+		isPending bool
+	)
+	if reply.Sync() {
+		request, isPending = requests[reply.Type()]
+		if isPending {
+			delete(requests, reply.Type())
+		}
+	} else if outbox, ok := outboxes[reply.Type()]; ok {
+		request, isPending = outbox[id]
+		if isPending {
+			delete(outbox, id)
+		}
+	}
+	if !isPending {
+		// Unsolicited reply.
+		return ErrInvalidState
+	}
+	request.Reply(reply)
+	request.Close()
+	return nil
+}
+
+func (c *Conn) processRequest(requests Requests, outboxes Outboxes, request Request) error {
+	var (
+		outbox    Outbox
+		hasOutbox bool
+		id        interface{}
+		err       error
+	)
+	if !request.CanReply() {
+		goto Send
+	}
+	if id = request.Id(); id == nil {
+		request.Error(ErrNoId)
+		request.Close()
+		return nil
+	}
+	if request.Sync() {
+		pending, isPending := requests[request.Type()]
+		if !isPending {
+			goto Send
+		}
+		// Multiple synchronous requests (e.g., `Helo` handshakes and pings) with
+		// the same ID should be idempotent. Synchronous requests with different
+		// IDs are not supported.
+		if pending.Id() != id {
+			request.Error(ErrMismatchedIds)
+		}
+		request.Close()
+		return nil
+	}
+	if outbox, hasOutbox = outboxes[request.Type()]; hasOutbox {
+		if _, isPending := outbox[id]; !isPending {
+			goto Send
+		}
+		// Reject duplicate pending requests.
+		request.Error(ErrDuplicateRequest)
+		request.Close()
+		return nil
+	}
+Send:
+	if err = c.writeMessage(request); err != nil {
+		request.Error(err)
+		request.Close()
+		return nil
+	}
+	if !request.CanReply() {
+		request.Close()
+		return nil
+	}
+	// Track replies.
+	if request.Sync() {
+		requests[request.Type()] = request
+		return nil
+	}
+	if !hasOutbox {
+		outboxes[request.Type()] = make(Outbox)
+		outbox = outboxes[request.Type()]
+	}
+	outbox[id] = request
+	return nil
+}
+
+func (c *Conn) writeMessage(request Request) (err error) {
+	var data []byte
+	if withMarshal, ok := request.(requestWithMarshal); ok {
+		data, err = withMarshal.MarshalJSON()
+	} else {
+		data, err = json.Marshal(request)
+	}
+	if err != nil {
+		return
+	}
+	return ws.Message.Send(c.Socket, data)
+}
+
 func (c *Conn) Send() {
 	defer c.closeWait.Done()
-	requests, outboxes := make(map[PacketType]Request), make(map[PacketType]Requests)
+	requests, outboxes := make(Requests), make(Outboxes)
 	for ok := true; ok; {
+		var err error
 		select {
 		case ok = <-c.signalChan:
 		case request := <-c.requests:
-			var (
-				outbox    Requests
-				hasOutbox bool
-				id        interface{}
-				err       error
-			)
-			if request.CanReply() {
-				if id = request.Id(); id == nil {
-					cancel(request)
-					c.fatal(ErrNoId)
-					break
-				}
-				if request.Sync() {
-					pending, isPending := requests[request.Type()]
-					// Multiple synchronous requests (e.g., `Helo` handshakes and pings) with
-					// the same ID should be idempotent. Synchronous requests with different
-					// IDs are not supported.
-					if isPending {
-						if pending.Id() != id {
-							request.Error(ErrMismatchedIds)
-						}
-						request.Close()
-						break
-					}
-				} else if outbox, hasOutbox = outboxes[request.Type()]; hasOutbox {
-					// Reject duplicate pending requests.
-					if _, isPending := outbox[id]; isPending {
-						request.Error(ErrDuplicateRequest)
-						request.Close()
-						break
-					}
-				}
-			}
-			var data []byte
-			if withMarshal, ok := request.(requestWithMarshal); ok {
-				data, err = withMarshal.MarshalJSON()
-			} else {
-				data, err = json.Marshal(request)
-			}
-			if err == nil {
-				err = ws.Message.Send(c.Socket, data)
-			}
-			if err != nil {
-				request.Error(err)
-				request.Close()
-				break
-			}
-			if !request.CanReply() {
-				request.Close()
-				break
-			}
-			// Track replies.
-			if request.Sync() {
-				requests[request.Type()] = request
-				break
-			}
-			if !hasOutbox {
-				outboxes[request.Type()] = make(Requests)
-				outbox = outboxes[request.Type()]
-			}
-			outbox[id] = request
+			err = c.processRequest(requests, outboxes, request)
 
 		case reply := <-c.replies:
-			var id interface{}
-			if id = reply.Id(); id == nil {
-				c.fatal(ErrNoId)
-				break
-			}
-			var (
-				request   Request
-				isPending bool
-			)
-			if reply.Sync() {
-				request, isPending = requests[reply.Type()]
-				if isPending {
-					delete(requests, reply.Type())
-				}
-			} else if outbox, ok := outboxes[reply.Type()]; ok {
-				request, isPending = outbox[id]
-				if isPending {
-					delete(outbox, id)
-				}
-			}
-			if !isPending {
-				// Unsolicited reply.
-				c.fatal(ErrInvalidState)
-				break
-			}
-			request.Reply(reply)
-			request.Close()
+			err = c.processReply(requests, outboxes, reply)
+		}
+		if err != nil {
+			c.fatal(err)
 		}
 	}
 	// Unblock pending requests.
