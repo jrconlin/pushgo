@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 var ErrInvalid = errors.New("Invalid ID")
@@ -64,6 +65,8 @@ func Decode(id string, destination []byte) (err error) {
 	}
 	source := make([]byte, 32)
 	sourceIndex := 0
+	// strip optional "-" from uuids
+	id = strings.Replace(id, "-", "", -1)
 	for index := 0; index < len(id); index++ {
 		if !validRuneAt(id, index) {
 			return ErrInvalid
