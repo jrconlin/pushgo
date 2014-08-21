@@ -29,10 +29,6 @@ var (
 	ErrNoId             = &ClientError{"Anonymous packet type."}
 )
 
-// TODO: Extract the spooling logic (`pending{Lock}, messages, SpoolAll`) into
-// a higher-level client that supports streaming notifications, automatic
-// reconnects, etc.
-
 // TODO: Separate command (`hello`, `register`, `unregister`) and
 // message (`notification`) decoders. Add typed error decoders.
 
@@ -44,9 +40,7 @@ type Conn struct {
 	SpoolAll      bool          // Spool incoming notifications sent on deregistered channels.
 	requests      chan Request
 	replies       chan Reply
-	pending       []Update
-	pendingLock   sync.Mutex
-	messages      chan Update
+	packets       chan HasType
 	channels      Channels
 	channelLock   sync.RWMutex
 	decoders      Decoders
@@ -67,12 +61,12 @@ type (
 )
 
 type Decoder interface {
-	Decode(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error)
+	Decode(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error)
 }
 
-type DecoderFunc func(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error)
+type DecoderFunc func(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error)
 
-func (d DecoderFunc) Decode(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func (d DecoderFunc) Decode(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	return d(c, fields, statusCode, errorText)
 }
 
@@ -127,7 +121,7 @@ func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
 		SpoolAll:      spoolAll,
 		requests:      make(chan Request),
 		replies:       make(chan Reply),
-		messages:      make(chan Update),
+		packets:       make(chan HasType),
 		channels:      make(Channels),
 		decoders:      make(Decoders),
 		signalChan:    make(chan bool),
@@ -174,7 +168,6 @@ func (c *Conn) Close() (err error) {
 	}
 	c.closeWait.Wait()
 	c.removeAllChannels()
-	c.removeAllPending()
 	return
 }
 
@@ -216,35 +209,30 @@ func (c *Conn) signalClose() (err error) {
 func (c *Conn) Receive() {
 	defer c.closeWait.Done()
 	for ok := true; ok; {
-		reply, err := c.readMessage()
+		packet, err := c.readPacket()
 		if err != nil {
 			c.fatal(err)
 			break
 		}
 		var (
-			replies  chan Reply
-			update   Update
-			messages chan Update
+			reply   Reply
+			ok      bool
+			replies chan Reply
+			packets chan HasType
 		)
-		if reply != nil && reply.HasRequest() {
+		if reply, ok = packet.(Reply); ok {
 			// This is a reply to a client request.
 			replies = c.replies
-		}
-		c.pendingLock.Lock()
-		if len(c.pending) > 0 {
-			update = c.pending[0]
-			messages = c.messages
+		} else {
+			packets = c.packets
 		}
 		select {
 		case ok = <-c.signalChan:
-		case messages <- update:
-			c.pending = c.pending[1:]
-
+		case packets <- packet:
 		case replies <- reply:
 		}
-		c.pendingLock.Unlock()
 	}
-	close(c.messages)
+	close(c.packets)
 }
 
 // Cancels a pending request.
@@ -387,12 +375,6 @@ func (c *Conn) Send() {
 	}
 }
 
-func (c *Conn) removeAllPending() {
-	defer c.pendingLock.Unlock()
-	c.pendingLock.Lock()
-	c.pending = c.pending[:0:0]
-}
-
 // Attempts to send an outgoing request, returning an error if the connection
 // has been closed.
 func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
@@ -528,20 +510,15 @@ func (c *Conn) Purge() (err error) {
 	return
 }
 
-// Messages returns the client's update channel.
-func (c *Conn) Messages() <-chan Update {
-	return c.messages
-}
-
-// ReadMessage consumes a pending message sent by the push server. Returns
+// ReadBatch consumes a batch of messages sent by the push server. Returns
 // `io.EOF` if the client is closed.
-func (c *Conn) ReadMessage() (update Update, err error) {
-	select {
-	case update := <-c.messages:
-		return update, nil
-	case <-c.signalChan:
+func (c *Conn) ReadBatch() ([]Update, error) {
+	for packet := range c.packets {
+		if updates, ok := packet.(ServerUpdates); ok {
+			return updates, nil
+		}
 	}
-	return Update{}, io.EOF
+	return nil, io.EOF
 }
 
 // AcceptBatch accepts multiple updates sent to the client. Clients should
@@ -562,7 +539,7 @@ func (c *Conn) AcceptUpdate(update Update) (err error) {
 	return c.AcceptBatch([]Update{update})
 }
 
-func (c *Conn) readMessage() (reply Reply, err error) {
+func (c *Conn) readPacket() (packet HasType, err error) {
 	var data []byte
 	if err = ws.Message.Receive(c.Socket, &data); err != nil {
 		return nil, err
@@ -622,29 +599,32 @@ Decode:
 	return nil, nil
 }
 
-func (c *Conn) decodeUpdate(field interface{}) (result *Update, err error) {
+func (c *Conn) decodeUpdate(field interface{}) (result Update, err error) {
 	update, ok := field.(map[string]interface{})
 	if !ok {
-		return nil, &IncompleteError{"notification", c.Origin(), "update"}
+		err = &IncompleteError{"notification", c.Origin(), "update"}
+		return
 	}
 	channelId, ok := update["channelID"].(string)
 	if !ok {
-		return nil, &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
+		err = &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
+		return
 	}
 	var version int64
 	if asFloat, ok := update["version"].(float64); ok {
 		version = int64(asFloat)
 	} else {
-		return nil, &IncompleteError{"notification", c.Origin(), "version"}
+		err = &IncompleteError{"notification", c.Origin(), "version"}
+		return
 	}
-	result = &Update{
+	result = Update{
 		ChannelId: channelId,
 		Version:   version,
 	}
 	return
 }
 
-func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"hello", c.Origin(), errorText, statusCode}
 	}
@@ -661,7 +641,7 @@ func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Reply
 	return reply, nil
 }
 
-func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"register", c.Origin(), errorText, statusCode}
 	}
@@ -681,7 +661,7 @@ func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (R
 	return reply, nil
 }
 
-func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if statusCode != NoStatus || len(errorText) > 0 {
 		return nil, &ServerError{"notification", c.Origin(), errorText, statusCode}
 	}
@@ -689,8 +669,7 @@ func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string
 	if !hasUpdates {
 		return nil, &IncompleteError{"notification", c.Origin(), "updates"}
 	}
-	defer c.pendingLock.Unlock()
-	c.pendingLock.Lock()
+	var packet ServerUpdates
 	for _, field := range updates {
 		update, err := c.decodeUpdate(field)
 		if err != nil {
@@ -699,7 +678,7 @@ func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string
 		if !c.SpoolAll && !c.Registered(update.ChannelId) {
 			continue
 		}
-		c.pending = append(c.pending, *update)
+		packet = append(packet, update)
 	}
-	return nil, nil
+	return packet, nil
 }

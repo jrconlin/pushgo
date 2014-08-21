@@ -48,14 +48,14 @@ func (t CaseTestType) String() string {
 	return ""
 }
 
-func decodePing(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodePing(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"ping", c.Origin(), errorText, statusCode}
 	}
 	return &ServerPing{statusCode}, nil
 }
 
-func decodeCaseACK(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeCaseACK(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"ack", c.Origin(), errorText, statusCode}
 	}

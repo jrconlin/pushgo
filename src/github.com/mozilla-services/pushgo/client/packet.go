@@ -18,6 +18,7 @@ const (
 	Register
 	Unregister
 	ACK
+	Updates
 	Purge
 	Ping
 )
@@ -32,6 +33,8 @@ func (t PacketType) String() string {
 		return "unregister"
 	case ACK:
 		return "ack"
+	case Updates:
+		return "updates"
 	case Purge:
 		return "purge"
 	case Ping:
@@ -72,8 +75,12 @@ func getId(r Request) (id interface{}) {
 	return
 }
 
-type Request interface {
+type HasType interface {
 	Type() PacketType
+}
+
+type Request interface {
+	HasType
 	CanReply() bool
 	Sync() bool
 	Id() interface{}
@@ -84,8 +91,7 @@ type Request interface {
 }
 
 type Reply interface {
-	Type() PacketType
-	HasRequest() bool
+	HasType
 	Sync() bool
 	Id() interface{}
 	Status() int
@@ -263,3 +269,7 @@ type Update struct {
 	ChannelId string `json:"channelID"`
 	Version   int64  `json:"version"`
 }
+
+type ServerUpdates []Update
+
+func (ServerUpdates) Type() PacketType { return Updates }

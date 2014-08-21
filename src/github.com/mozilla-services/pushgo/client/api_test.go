@@ -172,7 +172,7 @@ func (r *MultipleRegister) MarshalJSON() ([]byte, error) {
 	}{r.Type(), []string{r.ChannelId}})
 }
 
-func decodeUnregisterReply(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeUnregisterReply(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"unregister", c.Origin(), errorText, statusCode}
 	}
@@ -187,7 +187,7 @@ func decodeUnregisterReply(c *Conn, fields Fields, statusCode int, errorText str
 	return reply, nil
 }
 
-func decodeServerInvalidACK(c *Conn, fields Fields, statusCode int, errorText string) (Reply, error) {
+func decodeServerInvalidACK(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) == 0 {
 		return nil, nil
 	}
@@ -202,7 +202,7 @@ func decodeServerInvalidACK(c *Conn, fields Fields, statusCode int, errorText st
 		if err != nil {
 			return nil, err
 		}
-		reply.Updates[index] = *update
+		reply.Updates[index] = update
 	}
 	reply.StatusCode = statusCode
 	return reply, nil
@@ -725,7 +725,7 @@ func TestUnregisterRace(t *testing.T) {
 			pendingTimer <-chan time.Time
 		)
 		for ok := true; ok; {
-			var update Update
+			var packet HasType
 			select {
 			case ok = <-signal:
 			case <-timeout:
@@ -736,12 +736,28 @@ func TestUnregisterRace(t *testing.T) {
 				ok = false
 
 			// Read the update, but don't call `AcceptUpdate()`.
-			case update, ok = <-conn.Messages():
+			case packet, ok = <-conn.packets:
 				if !ok {
 					err = ErrChanClosed
 					break
 				}
-				if update.ChannelId != channelId {
+				var (
+					updates    ServerUpdates
+					hasUpdates bool
+				)
+				if updates, hasUpdates = packet.(ServerUpdates); !hasUpdates {
+					break
+				}
+				var (
+					update    Update
+					hasUpdate bool
+				)
+				for _, update = range updates {
+					if hasUpdate = update.ChannelId == channelId; hasUpdate {
+						break
+					}
+				}
+				if !hasUpdate {
 					break
 				}
 				var err error

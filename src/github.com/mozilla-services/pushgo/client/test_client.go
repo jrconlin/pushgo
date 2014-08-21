@@ -180,12 +180,12 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 	defer t.RUnlock()
 	t.RLock()
 	timer := time.After(t.Timeout)
-	updates := make([]Update, 0, len(t.endpoints))
+	outgoing := make([]Update, 0, len(t.endpoints))
 	// Wait for all updates, but only acknowledge the latest version. This can
 	// be changed to exit as soon as the latest version is received.
 	expected, actual := len(t.endpoints)*t.Updates, 0
 	for ok := true; ok; {
-		var update Update
+		var packet HasType
 		if actual >= expected {
 			break
 		}
@@ -195,23 +195,34 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 			ok = false
 			err = ErrTimedOut
 
-		case update, ok = <-t.conn.Messages():
+		case packet, ok = <-t.conn.packets:
 			if !ok {
 				break
 			}
-			if endpoint, ok := t.endpoints[update.ChannelId]; ok {
+			var (
+				incoming    ServerUpdates
+				hasIncoming bool
+			)
+			if incoming, hasIncoming = packet.(ServerUpdates); !hasIncoming {
+				break
+			}
+			for _, update := range incoming {
+				endpoint, ok := t.endpoints[update.ChannelId]
+				if !ok {
+					continue
+				}
 				actual++
 				// Only acknowledge the latest version.
 				if update.Version >= endpoint.Version {
-					updates = append(updates, update)
+					outgoing = append(outgoing, update)
 				}
 			}
 		}
 	}
-	if err := t.conn.AcceptBatch(updates); err != nil {
+	if err := t.conn.AcceptBatch(outgoing); err != nil {
 		return err
 	}
-	if len(updates) != len(t.endpoints) {
+	if len(outgoing) != len(t.endpoints) {
 		return ErrChanClosed
 	}
 	return
