@@ -25,4 +25,3 @@ deploy:
   upload-dir: simplepush-server
   on:
     branch: dev
-    branch: master
