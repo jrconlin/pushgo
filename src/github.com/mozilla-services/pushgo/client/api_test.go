@@ -325,9 +325,9 @@ var typeTests = []typeTest{
 	typeTest{"special characters in message type", `!@#$%^&*()-+`, validId, 401},
 
 	// Integer strings.
-	typeTest{`device ID = "0"`, "hello", "0", 200},
+	typeTest{`device ID = "0"`, "hello", "0", 503},
 	typeTest{`message type = "0"`, "0", validId, 401},
-	typeTest{`device ID = "1"`, "hello", "1", 200},
+	typeTest{`device ID = "1"`, "hello", "1", 503},
 	typeTest{`message type = "1"`, "1", validId, 401},
 
 	// Integers.
@@ -337,7 +337,7 @@ var typeTests = []typeTest{
 	typeTest{"message type = 1", 1, validId, 401},
 
 	// Negative integers.
-	typeTest{"negative integer string as device ID", "hello", "-66000", 200},
+	typeTest{"negative integer string as device ID", "hello", "-66000", 503},
 	typeTest{"negative integer string as message type", "-66000", validId, 401},
 	typeTest{"negative integer as device ID", "hello", -66000, 401},
 	typeTest{"negative integer as message type", -66000, validId, 401},
@@ -378,7 +378,7 @@ func TestMessageTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	if err = (typeTest{"long device ID", "hello", longId, 401}).Run(); err != nil {
+	if err = (typeTest{"long device ID", "hello", longId, 503}).Run(); err != nil {
 		t.Error(err)
 	}
 	if err = (typeTest{"long message type", longId, validId, 401}).Run(); err != nil {
@@ -596,8 +596,8 @@ var idTests = []idTest{
 	idTest{"invalid ID", "invalid_uaid", 401},
 	idTest{"leading and trailing whitespace", " fooey barrey ", 401},
 	idTest{"special characters", `!@#$%^&*()-+`, 401},
-	idTest{`"0"`, "0", 200},
-	idTest{`"1"`, "1", 200},
+	idTest{`"0"`, "0", 401},
+	idTest{`"1"`, "1", 401},
 	idTest{"negative integer string", "-66000", 401},
 	idTest{"negative integer", -66000, 401},
 	idTest{`"True"`, "True", 401},

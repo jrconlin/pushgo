@@ -6,7 +6,6 @@ package client
 
 import (
 	"io"
-	"strings"
 	"sync"
 	"testing"
 
@@ -14,10 +13,6 @@ import (
 )
 
 const (
-	// maxChannelLength is the maximum allowed channel ID length. Subscribing to
-	// a channel ID that exceeds this limit will result in a 401.
-	maxChannelLength = 100
-
 	// maxChannels is the maximum number of channels allowed in the opening
 	// handshake. Clients that specify more channels will receive a new device
 	// ID. Can be obtained via `app.Store.MaxChannels()`.
@@ -67,30 +62,6 @@ func TestDuplicateHandshake(t *testing.T) {
 	}
 }
 
-func TestRegister(t *testing.T) {
-	// IDs must be 16 bytes (32 hex-encoded characters), but cannot exceed the
-	// maximum channel length. Use a string of leading hyphens to pad the ID,
-	// since the registration request handler does not enforce a limit on the
-	// number of hyphens.
-	channelId, err := GenerateIdSize(strings.Repeat("-", maxChannelLength-32), 16)
-	if err != nil {
-		t.Fatalf("Error generating channel ID: %#v", err)
-	}
-	conn, err := Dial(Origin)
-	if err != nil {
-		t.Fatalf("Error dialing origin: %#v", err)
-	}
-	defer conn.Close()
-	defer conn.Purge()
-	endpoint, err := conn.Register(channelId)
-	if err != nil {
-		t.Fatalf("Error writing registration request: %#v", err)
-	}
-	if !isValidEndpoint(endpoint) {
-		t.Errorf("Invalid push endpoint: %#v", endpoint)
-	}
-}
-
 func TestMultiRegister(t *testing.T) {
 	channelId, err := id.Generate()
 	if err != nil {
@@ -122,7 +93,7 @@ func TestMultiRegister(t *testing.T) {
 }
 
 func TestChannelTooLong(t *testing.T) {
-	channelId, err := GenerateIdSize(strings.Repeat("-", maxChannelLength-31), 16)
+	channelId, err := GenerateIdSize("", 32)
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
