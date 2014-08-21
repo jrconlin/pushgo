@@ -82,7 +82,7 @@ memcached: libmemcached-1.0.18
 simplepush:
 	rm -f simplepush
 	@echo "Building simplepush"
-	$(GODEPCMD) go build -o simplepush github.com/mozilla-services/pushgo
+	$(GODEPCMD) go build --ldflags '-extldflags "-static"' -o simplepush github.com/mozilla-services/pushgo
 
 test:
 	$(GODEPCMD) go test github.com/mozilla-services/pushgo/client github.com/mozilla-services/pushgo/id
