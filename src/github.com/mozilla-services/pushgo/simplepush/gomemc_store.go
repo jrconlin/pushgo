@@ -34,7 +34,6 @@ type GomemcDriverConf struct {
 // GomemcStore is a memcached adapter.
 type GomemcStore struct {
 	Hosts         []string
-	MaxConns      int
 	PingPrefix    string
 	TimeoutLive   time.Duration
 	TimeoutReg    time.Duration
@@ -177,8 +176,8 @@ func (s *GomemcStore) Exists(suaid string) bool {
 	if err != nil {
 		return false
 	}
-	_, err = s.fetchAppIDArray(uaid)
-	return err == nil
+	_, err = s.client.Get(encodeKey(uaid))
+	return err != mc.ErrCacheMiss
 }
 
 // Stores a new channel record in memcached.
@@ -527,33 +526,25 @@ func (s *GomemcStore) DropPing(suaid string) error {
 	return s.client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
 }
 
-// Queries memcached for a list of current subscriptions associated with the
-// given device ID.
-func (s *GomemcStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error) {
+// Returns a duplicate-free list of subscriptions associated with the device
+// ID.
+func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
 	if len(uaid) == 0 {
 		return nil, nil
 	}
 	raw, err := s.client.Get(encodeKey(uaid))
 	if err != nil {
-		// TODO: Returning successful responses for missing keys causes `Exists()` to
-		// return `true` for all device IDs. Verify if correcting this behavior
-		// breaks existing clients.
 		if err == mc.ErrCacheMiss {
-			return nil, nil
+			s.logger.Warn("gomemc",
+				"No channels found for UAID, dropping.",
+				LogFields{"uaid": string(uaid)})
 		}
 		return nil, err
 	}
 	result = *new(ChannelIDs)
 	err = json.Unmarshal(raw.Value, &result)
-	return result, err
-}
-
-// Returns a duplicate-free list of subscriptions associated with the device
-// ID.
-func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
-	result, err = s.fetchChannelIDs(uaid)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	// pare out duplicates.
 	for i, chid := range result {
