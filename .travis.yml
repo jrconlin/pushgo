@@ -24,4 +24,5 @@ deploy:
   local-dir: build/server
   upload-dir: simplepush-server
   on:
-    all_branches: true
+    branch: dev
+    branch: master
