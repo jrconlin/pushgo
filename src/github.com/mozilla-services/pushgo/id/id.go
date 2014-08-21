@@ -9,15 +9,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 )
 
 var ErrInvalid = errors.New("Invalid ID")
 
 // GenerateBytes generates a decoded UUID byte slice.
-func GenerateBytes() ([]byte, error) {
-	bytes := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, bytes); err != nil {
+func GenerateBytes() (bytes []byte, err error) {
+	bytes = make([]byte, 16)
+	if _, err = rand.Read(bytes); err != nil {
 		return nil, err
 	}
 	bytes[6] = (bytes[6] & 0x0f) | 0x40
