@@ -20,11 +20,35 @@ import (
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
+// Wraps a memcached client with a flag to signal whether the connection is
+// bad and should not be returned to the pool.
+type release struct {
+	mc.Client
+	isFailed bool
+}
+
+// Determines whether the given error is a connection-level error. Connections
+// that emit these errors will not be released to the pool.
+func isFatalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Error strings taken from `libmemcached/strerror.cc`.
+	switch err.Error() {
+	case "NOT STORED":
+	case "NOT FOUND":
+	case "A KEY LENGTH OF ZERO WAS PROVIDED":
+	case "A BAD KEY WAS PROVIDED/CHARACTERS OUT OF RANGE":
+		return false
+	}
+	return true
+}
+
 // NewEmcee creates an unconfigured memcached adapter.
 func NewEmcee() *EmceeStore {
 	s := &EmceeStore{
 		closeSignal:  make(chan bool),
-		releases:     make(chan mc.Client),
+		releases:     make(chan release),
 		acquisitions: make(chan chan mc.Client),
 	}
 	s.closeWait.Add(1)
@@ -79,7 +103,7 @@ type EmceeStore struct {
 	closeSignal   chan bool
 	closeLock     sync.Mutex
 	isClosing     bool
-	releases      chan mc.Client
+	releases      chan release
 	acquisitions  chan chan mc.Client
 	lastErr       error
 }
@@ -180,7 +204,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 		s.fatal(err)
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 
 	return nil
 }
@@ -234,7 +258,7 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	err = client.Set(key, "test", 6*time.Second)
 	if err != nil {
 		return false, err
@@ -440,7 +464,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
 		return err
@@ -484,7 +508,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
@@ -564,7 +588,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
@@ -589,7 +613,7 @@ func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 	if err != nil {
 		return
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &connect)
 	return
 }
@@ -605,7 +629,7 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), connect, 0)
 }
 
@@ -620,7 +644,7 @@ func (s *EmceeStore) DropPing(suaid string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	return client.Delete(s.PingPrefix+hex.EncodeToString(uaid), 0)
 }
 
@@ -634,7 +658,7 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	err = client.Get(encodeKey(uaid), &result)
 	if err != nil {
 		// TODO: Returning successful responses for missing keys causes `Exists()` to
@@ -674,7 +698,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	// sort the array
 	sort.Sort(chids)
 	return client.Set(encodeKey(uaid), chids, 0)
@@ -690,7 +714,7 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	result := new(ChannelRecord)
 	err = client.Get(keyString, result)
 	if err != nil && !isMissing(err) {
@@ -729,7 +753,7 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	keyString := encodeKey(pk)
 	err = client.Set(keyString, rec, ttl)
 	if err != nil {
@@ -742,11 +766,11 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 }
 
 // Releases an acquired memcached connection.
-func (s *EmceeStore) releaseClient(client mc.Client) {
+func (s *EmceeStore) releaseWithout(client mc.Client, err *error) {
 	if client == nil {
 		return
 	}
-	s.releases <- client
+	s.releases <- release{client, err != nil && isFatalError(*err)}
 }
 
 // Acquires a memcached connection from the connection pool.
@@ -812,16 +836,17 @@ func (s *EmceeStore) run() {
 	for ok := true; ok; {
 		select {
 		case ok = <-s.closeSignal:
-		case client := <-s.releases:
-			if capacity >= s.MaxConns {
+		case release := <-s.releases:
+			if release.isFailed || capacity >= s.MaxConns {
 				// Maximum pool size exceeded (e.g., connection manually added to the pool
 				// via `newClient()` and `releaseClient()`).
-				client.Close()
+				release.Close()
+				if release.isFailed {
+					capacity--
+				}
 				break
 			}
-			// TODO: Ensure that the `mc.Client` instance is in a valid state to avoid
-			// releasing bad client connections to the pool.
-			clients.PushBack(client)
+			clients.PushBack(release.Client)
 
 		case acquisition := <-s.acquisitions:
 			if clients.Len() > 0 {
