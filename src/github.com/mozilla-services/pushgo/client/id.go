@@ -30,10 +30,13 @@ func GenerateIdSize(prefix string, size int) (result string, err error) {
 // IDs, panicking if an error occurs. This simplifies generating random data
 // for running smoke tests.
 func MustGenerateIds(size int) []string {
-	var err error
 	results := make([]string, size)
 	for index := range results {
-		if results[index], err = id.Generate(); err != nil {
+		bytes, err := id.GenerateBytes()
+		if err == nil {
+			results[index], err = id.Encode(bytes)
+		}
+		if err != nil {
 			panic(fmt.Sprintf("GenerateIds: Error generating ID: %s", err))
 		}
 	}
