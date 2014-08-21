@@ -33,12 +33,10 @@ func MustGenerateIds(size int) []string {
 	results := make([]string, size)
 	for index := range results {
 		bytes, err := id.GenerateBytes()
-		if err == nil {
-			results[index], err = id.Encode(bytes)
-		}
 		if err != nil {
-			panic(fmt.Sprintf("GenerateIds: Error generating ID: %s", err))
+			panic(fmt.Sprintf("MustGenerateIds: Error generating ID: %s", err))
 		}
+		results[index], _ = id.Encode(bytes)
 	}
 	return results
 }
