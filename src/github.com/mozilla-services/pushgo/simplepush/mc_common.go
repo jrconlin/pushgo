@@ -7,7 +7,6 @@ package simplepush
 import (
 	"bytes"
 	"encoding/base64"
-	"strings"
 )
 
 // ChannelState represents the state of a channel record.
@@ -86,11 +85,6 @@ func remove(list [][]byte, pos int) (res [][]byte) {
 		return list
 	}
 	return append(list[:pos], list[pos+1:]...)
-}
-
-// Determines whether the given error is a memcached "missing key" error.
-func isMissing(err error) bool {
-	return strings.Contains("NOT FOUND", err.Error())
 }
 
 // Converts a `(uaid, chid)` tuple to a binary primary key.

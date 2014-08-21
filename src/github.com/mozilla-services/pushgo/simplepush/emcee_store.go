@@ -44,6 +44,11 @@ func isFatalError(err error) bool {
 	return true
 }
 
+// Determines whether the given error is a memcached "missing key" error.
+func isMissing(err error) bool {
+	return strings.Contains("NOT FOUND", err.Error())
+}
+
 // NewEmcee creates an unconfigured memcached adapter.
 func NewEmcee() *EmceeStore {
 	s := &EmceeStore{

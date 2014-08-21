@@ -5,13 +5,13 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	mc "github.com/bradfitz/gomemcache/memcache"
@@ -22,7 +22,6 @@ import (
 // NewGomemc creates an unconfigured memcached adapter.
 func NewGomemc() *GomemcStore {
 	s := &GomemcStore{}
-	s.closeWait.Add(1)
 	return s
 }
 
@@ -44,12 +43,7 @@ type GomemcStore struct {
 	maxChannels   int
 	defaultHost   string
 	logger        *SimpleLogger
-	closeWait     sync.WaitGroup
-	closeSignal   chan bool
-	closeLock     sync.Mutex
-	isClosing     bool
-	lastErr       error
-	serverList    *mc.ServerList
+	client        *mc.Client
 }
 
 // GomemcConf specifies memcached adapter options.
@@ -95,8 +89,8 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 		s.Hosts = endpoints
 	}
 
-	s.serverList = new(mc.ServerList)
-	if err = s.serverList.SetServers(strings.Join(s.Hosts, ",")); err != nil {
+	serverList := new(mc.ServerList)
+	if err = serverList.SetServers(strings.Join(s.Hosts, ",")); err != nil {
 		s.logger.Error("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
 		return err
 	}
@@ -110,6 +104,9 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	s.TimeoutLive = time.Duration(conf.Db.TimeoutLive) * time.Second
 	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
 	s.TimeoutDel = time.Duration(conf.Db.TimeoutReg) * time.Second
+
+	s.client = mc.NewFromSelector(serverList)
+	s.client.Timeout = s.HandleTimeout
 
 	return nil
 }
@@ -156,11 +153,7 @@ func (s *GomemcStore) Status() (success bool, err error) {
 		return false, err
 	}
 	key := "status_" + fakeID
-	client, err := s.getClient()
-	if err != nil {
-		return false, err
-	}
-	err = client.Set(
+	err = s.client.Set(
 		&mc.Item{
 			Key:        key,
 			Value:      test,
@@ -169,11 +162,11 @@ func (s *GomemcStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	raw, err := client.Get(key)
-	if err != nil || string(raw.Value) != string(test) {
+	raw, err := s.client.Get(key)
+	if err != nil || !bytes.Equal(raw.Value, test) {
 		return false, ErrStatusFailed
 	}
-	client.Delete(key)
+	s.client.Delete(key)
 	return true, nil
 }
 
@@ -190,6 +183,10 @@ func (s *GomemcStore) Exists(suaid string) bool {
 
 // Stores a new channel record in memcached.
 func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
+	key, err := toBinaryKey(uaid, chid)
+	if err != nil {
+		return sperrors.InvalidPrimaryKeyError
+	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
 		return err
@@ -207,10 +204,6 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 	if version != 0 {
 		rec.State = StateLive
 		rec.Version = uint64(version)
-	}
-	key, err := toBinaryKey(uaid, chid)
-	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
 	}
 	err = s.storeRec(key, rec)
 	if err != nil {
@@ -302,6 +295,10 @@ func (s *GomemcStore) Update(key string, version int64) (err error) {
 
 // Marks a memcached channel record as expired.
 func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
+	key, err := toBinaryKey(uaid, chid)
+	if err != nil {
+		return err
+	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
 		return err
@@ -309,10 +306,6 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
 		return sperrors.InvalidChannelError
-	}
-	key, err := toBinaryKey(uaid, chid)
-	if err != nil {
-		return err
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -365,15 +358,11 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
 		return err
 	}
-	err = client.Delete(encodeKey(key))
+	err = s.client.Delete(encodeKey(key))
 	if err == nil || err != mc.ErrCacheMiss {
 		return nil
 	}
@@ -408,15 +397,11 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 		"uaid":  deviceString,
 		"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
 	})
-	client, err := s.getClient()
-	if err != nil {
-		return nil, nil, err
-	}
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
 		channel := new(ChannelRecord)
-		raw, err := client.Get(key)
+		raw, err := s.client.Get(key)
 		if err != nil {
 			continue
 		}
@@ -492,18 +477,14 @@ func (s *GomemcStore) DropAll(suaid string) error {
 	if err != nil {
 		return err
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
 			return err
 		}
-		client.Delete(encodeKey(key))
+		s.client.Delete(encodeKey(key))
 	}
-	if err = client.Delete(encodeKey(uaid)); err != nil && err != mc.ErrCacheMiss {
+	if err = s.client.Delete(encodeKey(uaid)); err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
 	return nil
@@ -516,11 +497,7 @@ func (s *GomemcStore) FetchPing(suaid string) (connect string, err error) {
 	if err != nil {
 		return "", sperrors.InvalidDataError
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return
-	}
-	raw, err := client.Get(s.PingPrefix + hex.EncodeToString(uaid))
+	raw, err := s.client.Get(s.PingPrefix + hex.EncodeToString(uaid))
 	if err != nil {
 		return "", err
 	}
@@ -534,11 +511,7 @@ func (s *GomemcStore) PutPing(suaid string, connect string) error {
 	if err != nil {
 		return err
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	return client.Set(&mc.Item{
+	return s.client.Set(&mc.Item{
 		Key:        s.PingPrefix + hex.EncodeToString(uaid),
 		Value:      []byte(connect),
 		Expiration: 0})
@@ -551,11 +524,7 @@ func (s *GomemcStore) DropPing(suaid string) error {
 	if err != nil {
 		return sperrors.InvalidDataError
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	return client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
+	return s.client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
 }
 
 // Queries memcached for a list of current subscriptions associated with the
@@ -564,11 +533,7 @@ func (s *GomemcStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error
 	if len(uaid) == 0 {
 		return nil, nil
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return nil, err
-	}
-	raw, err := client.Get(encodeKey(uaid))
+	raw, err := s.client.Get(encodeKey(uaid))
 	if err != nil {
 		// TODO: Returning successful responses for missing keys causes `Exists()` to
 		// return `true` for all device IDs. Verify if correcting this behavior
@@ -605,10 +570,6 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
 		return sperrors.MissingDataError
 	}
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
 	// sort the array
 	sort.Sort(chids)
 	raw, err := json.Marshal(chids)
@@ -616,7 +577,7 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 		s.logger.Error("gomemc", "Could not marshal AppIDArray", LogFields{"error": err.Error()})
 		return err
 	}
-	return client.Set(&mc.Item{Key: encodeKey(uaid), Value: raw, Expiration: 0})
+	return s.client.Set(&mc.Item{Key: encodeKey(uaid), Value: raw, Expiration: 0})
 }
 
 // Retrieves a channel record from memcached.
@@ -625,12 +586,8 @@ func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 		return nil, sperrors.InvalidPrimaryKeyError
 	}
 	keyString := encodeKey(pk)
-	client, err := s.getClient()
-	if err != nil {
-		return nil, err
-	}
 	result := new(ChannelRecord)
-	raw, err := client.Get(keyString)
+	raw, err := s.client.Get(keyString)
 	if err != nil && err != mc.ErrCacheMiss {
 		s.logger.Error("gomemc", "Get Failed", LogFields{
 			"primarykey": keyString,
@@ -671,10 +628,6 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 		ttl = s.TimeoutLive
 	}
 	rec.LastTouched = time.Now().UTC().Unix()
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
 	keyString := encodeKey(pk)
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -684,7 +637,7 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 		})
 		return err
 	}
-	err = client.Set(&mc.Item{
+	err = s.client.Set(&mc.Item{
 		Key:        keyString,
 		Value:      raw,
 		Expiration: int32(ttl.Seconds()),
@@ -695,32 +648,6 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 			"error":      err.Error(),
 		})
 	}
-	return nil
-}
-
-// Acquires a memcached connection from the connection pool.
-func (s *GomemcStore) getClient() (*mc.Client, error) {
-	return s.newClient()
-}
-
-// Creates and configures a memcached client connection.
-func (s *GomemcStore) newClient() (*mc.Client, error) {
-	client := mc.NewFromSelector(s.serverList)
-	client.Timeout = s.HandleTimeout
-	return client, nil
-}
-
-// Acquires `s.closeLock`, closes the connection pool, and releases the lock,
-// storing the given error in the `lastErr` field.
-func (s *GomemcStore) fatal(err error) {
-	if s.lastErr == nil {
-		s.lastErr = err
-	}
-}
-
-// Closes the pool and exits the run loop. Assumes the caller holds
-// `s.closeLock`.
-func (s *GomemcStore) signalClose() (err error) {
 	return nil
 }
 
