@@ -543,10 +543,10 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 			s.logger.Warn("gomemc",
 				"No channels found for UAID, dropping.",
 				LogFields{"uaid": string(uaid)})
+			return nil, nil
 		}
 		return nil, err
 	}
-	result = *new(ChannelIDs)
 	err = json.Unmarshal(raw.Value, &result)
 	if err != nil {
 		return result, err
