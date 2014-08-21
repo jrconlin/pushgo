@@ -7,9 +7,9 @@ install:
 script:
 - make simplepush
 before_deploy:
-- mkdir -p build
+- mkdir -p build/server
 - gzip simplepush
-- cp simplepush.gz build/simplepush-linux-$TRAVIS_BRANCH-$TRAVIS_COMMIT.gz
+- cp simplepush.gz build/server/simplepush-linux-$TRAVIS_BUILD_NUMBER-$TRAVIS_COMMIT.gz
 deploy:
   provider: s3
   access_key_id: AKIAJPJ3YT7MAF55UGDA
@@ -17,6 +17,7 @@ deploy:
     secure: Iyc3eLG0H/pFot1eNdsgulF0A8SB2ih4gc+FjhxQNE/cOX5Vy7r0ARNkUHLkqi/HkUkP2Dz27OqTmhpcRQ/71rQp/k9IXJaB3EF3VNDnNo7vw6S+wIXG19a0KQC9YGsjDWvCefFkKvOlkviHU/eS7p09Q2dRMNUNL5jUKd/SoKM=
   bucket: travis-binary-uploading
   skip_cleanup: true
-  local-dir: build
+  local-dir: build/server
+  upload-dir: simplepush-server
   on:
     all_branches: true
