@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
@@ -32,7 +34,7 @@ func TestPush(t *testing.T) {
 }
 
 func TestDuplicateHandshake(t *testing.T) {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
@@ -90,7 +92,7 @@ func TestRegister(t *testing.T) {
 }
 
 func TestMultiRegister(t *testing.T) {
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
@@ -143,7 +145,7 @@ func TestChannelTooLong(t *testing.T) {
 }
 
 func TestTooManyChannels(t *testing.T) {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}

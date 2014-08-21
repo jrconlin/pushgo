@@ -2,11 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package client
+package id
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -29,49 +28,34 @@ var validTests = map[string]bool{
 	"e281b9498a92-4443-b0c85465ba439a76":   false,
 }
 
-func TestValidId(t *testing.T) {
+func TestValid(t *testing.T) {
 	for id, isValid := range validTests {
-		result := ValidId(id)
+		result := Valid(id)
 		if result != isValid {
-			t.Errorf("ValidId(%#v): got %#v, want %#v", id, result, isValid)
+			t.Errorf("Valid(%#v): got %#v, want %#v", id, result, isValid)
 		}
 	}
 }
 
-func TestDecodeId(t *testing.T) {
+func TestDecode(t *testing.T) {
 	idBytes := make([]byte, 16)
-	if err := DecodeId(hyphenatedId, idBytes); err != nil {
+	if err := Decode(hyphenatedId, idBytes); err != nil {
 		t.Fatalf("Error decoding ID %#v: %#v", hyphenatedId, err)
 	}
 	if !bytes.Equal(decodedId, idBytes) {
-		t.Errorf("DecodeId() decoded ID incorrectly: want %#v; got %#v", decodedId, idBytes)
+		t.Errorf("Decode() decoded ID incorrectly: want %#v; got %#v", decodedId, idBytes)
 	}
 }
 
-func TestGenerateId(t *testing.T) {
-	id, err := GenerateIdSize("", 16)
+func TestGenerate(t *testing.T) {
+	id, err := Generate()
 	if err != nil {
 		t.Fatalf("Failed to generate ID string: %#v", err)
 	}
 	if len(id) != 32 {
 		t.Errorf("Mismatched ID length for %#v: want 32; got %#v", id, len(id))
 	}
-	if !ValidId(id) {
-		t.Errorf("")
-	}
-	prefix := "prefix"
-	prefixedId, err := GenerateIdSize(prefix, 16)
-	if err != nil {
-		t.Fatalf("Failed to generate prefixed ID string: %#v", err)
-	}
-	if len(prefixedId) != 32+len(prefix) {
-		t.Errorf("Mismatched prefixed ID length for %#v: want %#v; got %#v", prefixedId, 32+len(prefix), len(id))
-	}
-	if !strings.HasPrefix(prefixedId, prefix) {
-		t.Errorf("Missing prefix %#v for ID %#v", prefix, prefixedId)
-	}
-	id = prefixedId[len(prefix):]
-	if !ValidId(id) {
-		t.Errorf("GenerateIdSize() returned invalid ID after prefix: %#v", id)
+	if !Valid(id) {
+		t.Errorf("Generate() returned invalid ID: %#v", id)
 	}
 }

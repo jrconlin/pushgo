@@ -10,6 +10,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 var ErrInvalidCaseTest = &ClientError{"Invalid case test type."}
@@ -125,11 +127,11 @@ func (t caseTest) TestACK() error {
 }
 
 func (t caseTest) TestHelo() error {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.CaseTestType, err)
 	}
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
 	}

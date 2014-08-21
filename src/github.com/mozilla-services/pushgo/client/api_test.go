@@ -15,6 +15,8 @@ import (
 	"time"
 
 	ws "code.google.com/p/go.net/websocket"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
@@ -219,7 +221,7 @@ func isValidEndpoint(endpoint string) bool {
 
 // Sending channel IDs with an unknown device ID should return a new device ID.
 func TestHeloReset(t *testing.T) {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
@@ -290,7 +292,7 @@ func (t typeTest) Run() error {
 			return fmt.Errorf("On test %v, unexpected reply status: got %#v; want %#v", t.name, helo.StatusCode, t.statusCode)
 		}
 		deviceId, _ := t.deviceId.(string)
-		if len(deviceId) == 0 && !ValidId(helo.DeviceId) {
+		if len(deviceId) == 0 && !id.Valid(helo.DeviceId) {
 			return fmt.Errorf("On test %v, got invalid device ID: %#v", t.name, helo.DeviceId)
 		} else if deviceId != helo.DeviceId {
 			return fmt.Errorf("On test %v, mismatched device ID: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
@@ -417,7 +419,7 @@ func TestDuplicateRegister(t *testing.T) {
 }
 
 func TestPrematureRegister(t *testing.T) {
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
@@ -447,11 +449,11 @@ func TestPrematureRegister(t *testing.T) {
 }
 
 func TestDuplicateRegisterHandshake(t *testing.T) {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
@@ -481,7 +483,7 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 }
 
 func TestMultipleRegister(t *testing.T) {
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
@@ -517,7 +519,7 @@ type idTest struct {
 }
 
 func (t idTest) TestHelo() error {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.name, err)
 	}
@@ -630,7 +632,7 @@ func TestHeloInvalidIds(t *testing.T) {
 }
 
 func TestPrematureUnregister(t *testing.T) {
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
@@ -821,7 +823,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestPrematureACK(t *testing.T) {
-	channelId, err := GenerateId()
+	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}

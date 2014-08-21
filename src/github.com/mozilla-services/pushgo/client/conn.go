@@ -13,6 +13,8 @@ import (
 	"time"
 
 	ws "code.google.com/p/go.net/websocket"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
@@ -81,7 +83,7 @@ var DefaultDecoders = Decoders{
 }
 
 func Dial(origin string) (*Conn, error) {
-	deviceId, err := GenerateId()
+	deviceId, err := id.Generate()
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +437,7 @@ func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string
 
 // Subscribe subscribes a client to a new channel.
 func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
-	channelId, err = GenerateId()
+	channelId, err = id.Generate()
 	if err != nil {
 		return "", "", err
 	}
