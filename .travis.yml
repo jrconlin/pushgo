@@ -2,7 +2,7 @@ language: go
 go:
 - 1.3
 before_install:
-- sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu/ raring main universe"
+- sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu/ utopic main universe"
 - sudo apt-get -qq update
 - sudo apt-get install -y libmemcached-dev
 install:
