@@ -9,7 +9,6 @@ GOBIN = $(BIN)
 
 SYSTEMGO = $(BIN)/go
 
-SIMPLETEST = $(HERE)/simplepush_test/run_all.py
 PLATFORM=$(shell uname)
 
 # Setup commands and env vars if there is no system go linked into bin/go
@@ -61,11 +60,7 @@ $(DEPS): $(GODEP)
 	@echo "Installing dependencies"
 	$(GODEPCMD) restore
 
-$(SIMPLETEST):
-	@echo "Update git submodules"
-	git submodule update --init
-
-build: $(DEPS) $(SIMPLETEST)
+build: $(DEPS)
 
 libmemcached-1.0.18:
 	wget https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
@@ -88,6 +83,9 @@ simplepush:
 	rm -f simplepush
 	@echo "Building simplepush"
 	$(GODEPCMD) go build -o simplepush github.com/mozilla-services/pushgo
+
+test:
+	$(GODEPCMD) go test github.com/mozilla-services/pushgo/client github.com/mozilla-services/pushgo/id
 
 clean:
 	rm -rf bin $(DEPS)
