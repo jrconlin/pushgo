@@ -20,8 +20,10 @@ import (
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
-var MissingChannelErr = errors.New("Missing channelID")
-var BadUAIDErr = errors.New("Bad UAID")
+var (
+	MissingChannelErr = errors.New("Missing channelID")
+	BadUAIDErr        = errors.New("Bad UAID")
+)
 
 //    -- Workers
 //      these write back to the websocket.
@@ -29,7 +31,7 @@ var BadUAIDErr = errors.New("Bad UAID")
 type Worker struct {
 	app          *Application
 	logger       *SimpleLogger
-	state        int
+	state        WorkerState
 	stopped      bool
 	maxChannels  int
 	lastPing     time.Time
@@ -39,9 +41,11 @@ type Worker struct {
 	helloTimeout time.Duration
 }
 
+type WorkerState int
+
 const (
-	INACTIVE = 0
-	ACTIVE   = 1
+	WorkerInactive WorkerState = 0
+	WorkerActive               = 1
 )
 
 const (
@@ -55,7 +59,7 @@ func NewWorker(app *Application) *Worker {
 		app:          app,
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
-		state:        INACTIVE,
+		state:        WorkerActive,
 		stopped:      false,
 		lastPing:     time.Now(),
 		pingInt:      int(app.clientMinPing.Seconds()),
@@ -357,7 +361,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	_, err = sock.Socket.Write(msg)
 	self.metrics.Increment("updates.client.hello")
 	self.logger.Info("dash", "Client successfully connected", nil)
-	self.state = ACTIVE
+	self.state = WorkerActive
 	if err == nil {
 		// Get the lastAccessed time from wherever
 		return self.Flush(sock, 0, "", 0)
