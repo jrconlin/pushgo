@@ -8,7 +8,8 @@ script:
 - make simplepush
 before_deploy:
 - mkdir -p build
-- cp simplepush build/simplepush-$TRAVIS_COMMIT
+- gzip simplepush
+- cp simplepush.gz build/simplepush.$TRAVIS_OS_NAME.$TRAVIS_COMMIT.gz
 deploy:
   provider: s3
   access_key_id: AKIAJPJ3YT7MAF55UGDA
@@ -17,8 +18,5 @@ deploy:
   bucket: travis-binary-uploading
   skip_cleanup: true
   local-dir: build
-
-
-#  on:
-#    repo: mozilla-services/pushgo
-#    branch: dev
+  on:
+    all_branches: true
