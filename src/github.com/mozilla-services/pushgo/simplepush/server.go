@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -84,7 +86,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	// New connects overwrite previous connections.
 	// Raw client
 	if args["uaid"] == "" {
-		uaid, _ = GenUUID4()
+		uaid, _ = id.Generate()
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server",
 				"Generating new UAID",

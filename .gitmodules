@@ -1,6 +1,3 @@
-[submodule "simplepush_test"]
-	path = simplepush_test
-	url = git://github.com/jrconlin/simplepush_test.git
 [submodule "src/github.com/mozilla-services/heka"]
 	path = src/github.com/mozilla-services/heka
 	url = https://github.com/mozilla-services/heka
