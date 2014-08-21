@@ -37,7 +37,7 @@ func (t PacketType) String() string {
 	case Ping:
 		return "ping"
 	}
-	return ""
+	return "unknown packet type"
 }
 
 func (t PacketType) MarshalText() ([]byte, error) {
