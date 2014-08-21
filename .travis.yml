@@ -9,7 +9,7 @@ script:
 before_deploy:
 - mkdir -p build
 - gzip simplepush
-- cp simplepush.gz build/simplepush.$TRAVIS_OS_NAME.$TRAVIS_COMMIT.gz
+- cp simplepush.gz build/simplepush-linux-$TRAVIS_BRANCH-$TRAVIS_COMMIT.gz
 deploy:
   provider: s3
   access_key_id: AKIAJPJ3YT7MAF55UGDA
