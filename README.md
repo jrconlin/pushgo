@@ -54,6 +54,20 @@ proprietary function (which, unsurprisingly, works remarkably poorly
 with non-local networks). There is currently no "dashboard" for
 element management.
 
+This server currently uses one of two methods to connect to memcache.
+memcache_gomc uses the store_emcee.go file, and ties to libmemcache.
+This library provides a great deal of control over how the server
+communicates and uses memcache, however it does require compiling
+a local version of libmemcache, which can add difficulty. The
+alternate method "memcache_memcachego", uses store_gomemc.go, and uses
+a golang based memcache client. While fully functional, we've not
+tested this under full load.
+
+If you wish, you can prevent either of these libraries from being
+compiled into your executable by changing the extension for either of
+these files from ".go" to ".go.skip". This may help you get a demo
+server running quickly.
+
 ## Use
 That's neat and all, but what does this do?
 
