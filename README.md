@@ -20,8 +20,11 @@ recording, closed channel responses for third party servers, etc.)
 If you require offline storage (e.g. for mobile device usage), we
 currently recommend memcache storage.
 
-## Installation
-To install this server and the latest go:
+You will need to have Go installed on your system, and the GOROOT and
+PATH should be set appropriately for 'go' to be found.
+
+## Compiling
+To compile this server:
 
 1. extract this directory into target directory
 2. Run: make
