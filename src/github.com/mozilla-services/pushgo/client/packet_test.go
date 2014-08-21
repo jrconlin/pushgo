@@ -16,6 +16,11 @@ import (
 
 var ErrInvalidCaseTest = &ClientError{"Invalid case test type."}
 
+// CaseTestType is used by `Case{ClientPing, ACK}.MarshalJSON()` to generate
+// different JSON representations of the underlying ping or ACK packet. If
+// a packet doesn't support a particular representation (e.g., `CaseACK`
+// doesn't support any of the `FieldType*` test types), its `MarshalJSON()`
+// method will return ``ErrInvalidCaseTest`.
 type CaseTestType int
 
 const (
@@ -45,7 +50,7 @@ func (t CaseTestType) String() string {
 	case ValueTypeEmpty:
 		return "empty message type value"
 	}
-	return ""
+	return "unknown case test type"
 }
 
 func decodePing(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
