@@ -19,6 +19,7 @@ import (
 
 	mc "github.com/ianoshen/gomc"
 
+	"github.com/mozilla-services/pushgo/id"
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
@@ -335,7 +336,7 @@ func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
 // Status queries whether memcached is available for reading and writing.
 // Implements `Store.Status()`.
 func (s *EmceeStore) Status() (success bool, err error) {
-	fakeID, err := GenUUID4()
+	fakeID, err := id.Generate()
 	if err != nil {
 		return false, err
 	}
@@ -361,7 +362,7 @@ func (s *EmceeStore) Status() (success bool, err error) {
 // Exists returns a Boolean indicating whether a device has previously
 // registered with the Simple Push server. Implements `Store.Exists()`.
 func (s *EmceeStore) Exists(suaid string) bool {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return false
 	}
@@ -408,10 +409,10 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeRegister(uaid, chid, version)
@@ -472,10 +473,10 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeUpdate(uaid, chid, version)
@@ -523,10 +524,10 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeUnregister(uaid, chid)
@@ -540,10 +541,10 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	client, err := s.getClient()
@@ -568,7 +569,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 	if len(suaid) == 0 {
 		return nil, nil, sperrors.InvalidDataError
 	}
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -638,7 +639,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 				"uaid": deviceString,
 				"chid": channelString,
 			})
-			schid, err := EncodeID(chid)
+			schid, err := id.Encode(chid)
 			if err != nil {
 				s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
 					"uaid": deviceString,
@@ -662,7 +663,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 // DropAll removes all channel records for the given device ID. Implements
 // `Store.DropAll()`.
 func (s *EmceeStore) DropAll(suaid string) error {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
 	}
@@ -691,7 +692,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements `Store.FetchPing()`.
 func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return "", sperrors.InvalidDataError
 	}
@@ -707,7 +708,7 @@ func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 // PutPing stores the proprietary ping info blob for the given device ID in
 // memcached. Implements `Store.PutPing()`.
 func (s *EmceeStore) PutPing(suaid string, connect string) error {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
 	}
@@ -722,7 +723,7 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements `Store.DropPing()`.
 func (s *EmceeStore) DropPing(suaid string) error {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return sperrors.InvalidDataError
 	}

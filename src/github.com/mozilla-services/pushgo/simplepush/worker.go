@@ -17,6 +17,7 @@ import (
 
 	"code.google.com/p/go.net/websocket"
 
+	"github.com/mozilla-services/pushgo/id"
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
@@ -48,11 +49,7 @@ const (
 	WorkerActive               = 1
 )
 
-const (
-	UAID_MAX_LEN         = 100
-	CHID_MAX_LEN         = 100
-	CHID_DEFAULT_MAX_NUM = 200
-)
+const CHID_DEFAULT_MAX_NUM = 200
 
 func NewWorker(app *Application) *Worker {
 	return &Worker{
@@ -293,17 +290,13 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		self.logger.Debug("worker", "Conflicting UAIDs", nil)
 		return sperrors.InvalidChannelError
 	}
-	if len(suggestedUAID) > 0 && !ValidUAID(suggestedUAID) {
+	if len(suggestedUAID) > 0 && !id.Valid(suggestedUAID) {
 		self.logger.Debug("worker", "Invalid character in UAID", nil)
 		return sperrors.InvalidChannelError
 	}
 	if len(sock.Uaid) == 0 {
 		// if there's no UAID for the socket, accept or create a new one.
 		sock.Uaid = suggestedUAID
-		if len(sock.Uaid) > UAID_MAX_LEN {
-			self.logger.Debug("worker", "UAID is too long", nil)
-			return sperrors.InvalidDataError
-		}
 		forceReset = len(sock.Uaid) == 0
 		if !forceReset {
 			forceReset = self.app.ClientExists(sock.Uaid)
@@ -327,7 +320,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		if len(sock.Uaid) > 0 {
 			sock.Store.DropAll(sock.Uaid)
 		}
-		sock.Uaid, _ = GenUUID4()
+		sock.Uaid, _ = id.Generate()
 	}
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
@@ -447,10 +440,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	}
 	data, _ := buffer.(JsMap)
 	appid, _ := data["channelID"].(string)
-	if length := len(appid); length == 0 || length > CHID_MAX_LEN {
-		return sperrors.InvalidDataError
-	}
-	if !ValidUAID(appid) {
+	if !id.Valid(appid) {
 		return sperrors.InvalidDataError
 	}
 	err = sock.Store.Register(sock.Uaid, appid, 0)
