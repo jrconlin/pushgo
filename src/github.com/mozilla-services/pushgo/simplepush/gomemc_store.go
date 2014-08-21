@@ -5,69 +5,38 @@
 package simplepush
 
 import (
-	"container/list"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	mc "github.com/ianoshen/gomc"
+	mc "github.com/bradfitz/gomemcache/memcache"
 
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
-// NewEmcee creates an unconfigured memcached adapter.
-func NewEmcee() *EmceeStore {
-	s := &EmceeStore{
-		closeSignal:  make(chan bool),
-		releases:     make(chan mc.Client),
-		acquisitions: make(chan chan mc.Client),
-	}
+// NewGomemc creates an unconfigured memcached adapter.
+func NewGomemc() *GomemcStore {
+	s := &GomemcStore{}
 	s.closeWait.Add(1)
-	go s.run()
 	return s
 }
 
-// EmceeDriverConf specifies memcached driver options.
-type EmceeDriverConf struct {
+// GomemcDriverConf specifies memcached driver options.
+type GomemcDriverConf struct {
 	// Hosts is a list of memcached nodes.
 	Hosts []string `toml:"server"`
-
-	// MaxConns is the maximum number of open connections managed by the pool.
-	// All returned connections that exceed this limit will be closed. Defaults
-	// to 400.
-	MaxConns int `toml:"max_pool"`
-
-	// RecvTimeout is the socket receive timeout (`SO_RCVTIMEO`) used by the
-	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	RecvTimeout string `toml:"recv_timeout"`
-
-	// SendTimeout is the socket send timeout (`SO_SNDTIMEO`) used by the
-	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	SendTimeout string `toml:"send_timeout"`
-
-	// PollTimeout is the `poll()` timeout used by the memcached driver. Supports
-	// millisecond granularity; defaults to 5 seconds.
-	PollTimeout string `toml:"poll_timeout"`
-
-	// RetryTimeout is the time to wait before retrying a request on an unhealthy
-	// memcached node. Supports second granularity; defaults to 5 seconds.
-	RetryTimeout string `toml:"retry_timeout"`
 }
 
-// EmceeStore is a memcached adapter.
-type EmceeStore struct {
+// GomemcStore is a memcached adapter.
+type GomemcStore struct {
 	Hosts         []string
 	MaxConns      int
 	PingPrefix    string
-	recvTimeout   uint64
-	sendTimeout   uint64
-	pollTimeout   uint64
-	retryTimeout  uint64
 	TimeoutLive   time.Duration
 	TimeoutReg    time.Duration
 	TimeoutDel    time.Duration
@@ -79,29 +48,23 @@ type EmceeStore struct {
 	closeSignal   chan bool
 	closeLock     sync.Mutex
 	isClosing     bool
-	releases      chan mc.Client
-	acquisitions  chan chan mc.Client
 	lastErr       error
+	serverList    *mc.ServerList
 }
 
-// EmceeConf specifies memcached adapter options.
-type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
-	Driver                    EmceeDriverConf `toml:"memcache"`
+// GomemcConf specifies memcached adapter options.
+type GomemcConf struct {
+	ElastiCacheConfigEndpoint string           `toml:"elasticache_config_endpoint"`
+	Driver                    GomemcDriverConf `toml:"memcache"`
 	Db                        DbConf
 }
 
 // ConfigStruct returns a configuration object with defaults. Implements
 // `HasConfigStruct.ConfigStruct()`.
-func (*EmceeStore) ConfigStruct() interface{} {
-	return &EmceeConf{
-		Driver: EmceeDriverConf{
-			Hosts:        []string{"127.0.0.1:11211"},
-			MaxConns:     400,
-			RecvTimeout:  "1s",
-			SendTimeout:  "1s",
-			PollTimeout:  "10ms",
-			RetryTimeout: "1s",
+func (*GomemcStore) ConfigStruct() interface{} {
+	return &GomemcConf{
+		Driver: GomemcDriverConf{
+			Hosts: []string{"127.0.0.1:11211"},
 		},
 		Db: DbConf{
 			TimeoutLive:   3 * 24 * 60 * 60,
@@ -116,8 +79,8 @@ func (*EmceeStore) ConfigStruct() interface{} {
 
 // Init initializes the memcached adapter with the given configuration.
 // Implements `HasConfigStruct.Init()`.
-func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*EmceeConf)
+func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*GomemcConf)
 	s.logger = app.Logger()
 	s.defaultHost = app.Hostname()
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
@@ -132,79 +95,41 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 		s.Hosts = endpoints
 	}
 
-	s.MaxConns = conf.Driver.MaxConns
-	s.maxChannels = conf.Db.MaxChannels
+	s.serverList = new(mc.ServerList)
+	if err = s.serverList.SetServers(strings.Join(s.Hosts, ",")); err != nil {
+		s.logger.Error("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
+		return err
+	}
+
 	s.PingPrefix = conf.Db.PingPrefix
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Error("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Error("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
 	}
-
-	// The send and receive timeouts are expressed in microseconds.
-	var recvTimeout, sendTimeout time.Duration
-	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
-		return err
-	}
-	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
-		return err
-	}
-	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
-	s.sendTimeout = uint64(sendTimeout / time.Microsecond)
-
-	// `poll(2)` accepts a millisecond timeout.
-	var pollTimeout time.Duration
-	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
-		return err
-	}
-	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
-
-	// The memcached retry timeout is expressed in seconds.
-	var retryTimeout time.Duration
-	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
-		return err
-	}
-	s.retryTimeout = uint64(retryTimeout / time.Second)
 
 	s.TimeoutLive = time.Duration(conf.Db.TimeoutLive) * time.Second
 	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
 	s.TimeoutDel = time.Duration(conf.Db.TimeoutReg) * time.Second
-
-	// Open a connection to ensure the settings are valid. If the connection
-	// succeeds, add it to the pool.
-	client, err := s.newClient()
-	if err != nil {
-		s.fatal(err)
-		return err
-	}
-	defer s.releaseClient(client)
 
 	return nil
 }
 
 // MaxChannels returns the maximum number of channel registrations allowed per
 // client. Implements `Store.MaxChannels()`.
-func (s *EmceeStore) MaxChannels() int {
-	return s.maxChannels
+func (s *GomemcStore) MaxChannels() int {
+	// this is a stub.
+	return 400
 }
 
 // Close closes the connection pool and unblocks all pending operations with
 // errors. Safe to call multiple times. Implements `Store.Close()`.
-func (s *EmceeStore) Close() (err error) {
-	err, ok := s.stop()
-	if !ok {
-		return err
-	}
-	s.closeWait.Wait()
+func (s *GomemcStore) Close() (err error) {
 	return
 }
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements `Store.KeyToIDs()`.
-func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
+func (*GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
 		return "", "", false
@@ -215,7 +140,7 @@ func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // `Store.IDsToKey()`.
-func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
+func (*GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
 		return "", false
 	}
@@ -224,7 +149,8 @@ func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
 
 // Status queries whether memcached is available for reading and writing.
 // Implements `Store.Status()`.
-func (s *EmceeStore) Status() (success bool, err error) {
+func (s *GomemcStore) Status() (success bool, err error) {
+	test := []byte("test")
 	fakeID, err := GenUUID4()
 	if err != nil {
 		return false, err
@@ -234,23 +160,26 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	defer s.releaseClient(client)
-	err = client.Set(key, "test", 6*time.Second)
+	err = client.Set(
+		&mc.Item{
+			Key:        key,
+			Value:      test,
+			Expiration: 6,
+		})
 	if err != nil {
 		return false, err
 	}
-	var val string
-	err = client.Get(key, &val)
-	if err != nil || val != "test" {
+	raw, err := client.Get(key)
+	if err != nil || string(raw.Value) != string(test) {
 		return false, ErrStatusFailed
 	}
-	client.Delete(key, 0)
+	client.Delete(key)
 	return true, nil
 }
 
 // Exists returns a Boolean indicating whether a device has previously
 // registered with the Simple Push server. Implements `Store.Exists()`.
-func (s *EmceeStore) Exists(suaid string) bool {
+func (s *GomemcStore) Exists(suaid string) bool {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
 		return false
@@ -260,7 +189,7 @@ func (s *EmceeStore) Exists(suaid string) bool {
 }
 
 // Stores a new channel record in memcached.
-func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
+func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
 		return err
@@ -293,7 +222,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 // Register creates and stores a channel record for the given device ID and
 // channel ID. If the channel `version` is > 0, the record will be marked as
 // active. Implements `Store.Register()`.
-func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
+func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
@@ -308,22 +237,22 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 }
 
 // Updates a channel record in memcached.
-func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
+func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
 		return sperrors.InvalidPrimaryKeyError
 	}
 	keyString := hex.EncodeToString(key)
 	cRec, err := s.fetchRec(key)
-	if err != nil && !isMissing(err) {
-		s.logger.Error("emcee", "Update error", LogFields{
+	if err != nil && err != mc.ErrCacheMiss {
+		s.logger.Error("gomemc", "Update error", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
 		})
 		return err
 	}
 	if cRec != nil {
-		s.logger.Debug("emcee", "Replacing record", LogFields{"primarykey": keyString})
+		s.logger.Debug("gomemc", "Replacing record", LogFields{"primarykey": keyString})
 		if cRec.State != StateDeleted {
 			newRecord := &ChannelRecord{
 				State:       StateLive,
@@ -338,7 +267,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 		}
 	}
 	// No record found or the record setting was DELETED
-	s.logger.Debug("emcee", "Registering channel", LogFields{
+	s.logger.Debug("gomemc", "Registering channel", LogFields{
 		"uaid":      hex.EncodeToString(uaid),
 		"channelID": hex.EncodeToString(chid),
 		"version":   strconv.FormatInt(version, 10),
@@ -352,7 +281,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 
 // Update updates the version for the given device ID and channel ID.
 // Implements `Store.Update()`.
-func (s *EmceeStore) Update(key string, version int64) (err error) {
+func (s *GomemcStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
 		return sperrors.InvalidPrimaryKeyError
@@ -372,7 +301,7 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 }
 
 // Marks a memcached channel record as expired.
-func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
+func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil {
 		return err
@@ -392,7 +321,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	for x := 0; x < 3; x++ {
 		channel, err := s.fetchRec(key)
 		if err != nil {
-			s.logger.Warn("emcee", "Could not delete Channel", LogFields{
+			s.logger.Warn("gomemc", "Could not delete Channel", LogFields{
 				"primarykey": hex.EncodeToString(key),
 				"error":      err.Error(),
 			})
@@ -408,7 +337,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 
 // Unregister marks the channel ID associated with the given device ID
 // as inactive. Implements `Store.Unregister()`.
-func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
+func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
@@ -425,7 +354,7 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 // Drop removes a channel ID associated with the given device ID from
 // memcached. Deregistration calls should use `Unregister()` instead.
 // Implements `Store.Drop()`.
-func (s *EmceeStore) Drop(suaid, schid string) (err error) {
+func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
@@ -440,13 +369,12 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
 		return err
 	}
-	err = client.Delete(encodeKey(key), 0)
-	if err == nil || isMissing(err) {
+	err = client.Delete(encodeKey(key))
+	if err == nil || err != mc.ErrCacheMiss {
 		return nil
 	}
 	return err
@@ -454,7 +382,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 
 // FetchAll returns all channel updates and expired channels for a device ID
 // since the specified cutoff time. Implements `Store.FetchAll()`.
-func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
+func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
 		return nil, nil, sperrors.InvalidDataError
 	}
@@ -476,7 +404,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		keys = append(keys, encodeKey(key))
 	}
 	deviceString := hex.EncodeToString(uaid)
-	s.logger.Debug("emcee", "Fetching items", LogFields{
+	s.logger.Debug("gomemc", "Fetching items", LogFields{
 		"uaid":  deviceString,
 		"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
 	})
@@ -484,23 +412,27 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.releaseClient(client)
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
 		channel := new(ChannelRecord)
-		if err := client.Get(key, channel); err != nil {
+		raw, err := client.Get(key)
+		if err != nil {
+			continue
+		}
+		err = json.Unmarshal(raw.Value, &channel)
+		if err != nil {
 			continue
 		}
 		chid := chids[index]
 		channelString := hex.EncodeToString(chid)
-		s.logger.Debug("emcee", "FetchAll Fetched record ", LogFields{
+		s.logger.Debug("gomemc", "FetchAll Fetched record ", LogFields{
 			"uaid":  deviceString,
 			"chid":  channelString,
 			"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
 		})
 		if channel.LastTouched < sinceUnix {
-			s.logger.Debug("emcee", "Skipping record...", LogFields{
+			s.logger.Debug("gomemc", "Skipping record...", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
 			})
@@ -513,7 +445,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			version := channel.Version
 			if version == 0 {
 				version = uint64(time.Now().UTC().Unix())
-				s.logger.Debug("emcee", "FetchAll Using Timestamp", LogFields{
+				s.logger.Debug("gomemc", "FetchAll Using Timestamp", LogFields{
 					"uaid": deviceString,
 					"chid": channelString,
 				})
@@ -524,13 +456,13 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			}
 			updates = append(updates, update)
 		case StateDeleted:
-			s.logger.Debug("emcee", "FetchAll Deleting record", LogFields{
+			s.logger.Debug("gomemc", "FetchAll Deleting record", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
 			})
 			schid, err := EncodeID(chid)
 			if err != nil {
-				s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
+				s.logger.Warn("gomemc", "FetchAll Failed to encode channel ID", LogFields{
 					"uaid": deviceString,
 					"chid": channelString,
 				})
@@ -540,7 +472,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		case StateRegistered:
 			// Item registered, but not yet active. Ignore it.
 		default:
-			s.logger.Warn("emcee", "Unknown state", LogFields{
+			s.logger.Warn("gomemc", "Unknown state", LogFields{
 				"uaid": deviceString,
 				"chid": channelString,
 			})
@@ -551,7 +483,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 
 // DropAll removes all channel records for the given device ID. Implements
 // `Store.DropAll()`.
-func (s *EmceeStore) DropAll(suaid string) error {
+func (s *GomemcStore) DropAll(suaid string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
 		return err
@@ -564,15 +496,14 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
 			return err
 		}
-		client.Delete(encodeKey(key), 0)
+		client.Delete(encodeKey(key))
 	}
-	if err = client.Delete(encodeKey(uaid), 0); err != nil && !isMissing(err) {
+	if err = client.Delete(encodeKey(uaid)); err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
 	return nil
@@ -580,7 +511,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements `Store.FetchPing()`.
-func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
+func (s *GomemcStore) FetchPing(suaid string) (connect string, err error) {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
 		return "", sperrors.InvalidDataError
@@ -589,14 +520,16 @@ func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
 	if err != nil {
 		return
 	}
-	defer s.releaseClient(client)
-	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &connect)
-	return
+	raw, err := client.Get(s.PingPrefix + hex.EncodeToString(uaid))
+	if err != nil {
+		return "", err
+	}
+	return string(raw.Value), nil
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
 // memcached. Implements `Store.PutPing()`.
-func (s *EmceeStore) PutPing(suaid string, connect string) error {
+func (s *GomemcStore) PutPing(suaid string, connect string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
 		return err
@@ -605,13 +538,15 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
-	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), connect, 0)
+	return client.Set(&mc.Item{
+		Key:        s.PingPrefix + hex.EncodeToString(uaid),
+		Value:      []byte(connect),
+		Expiration: 0})
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements `Store.DropPing()`.
-func (s *EmceeStore) DropPing(suaid string) error {
+func (s *GomemcStore) DropPing(suaid string) error {
 	uaid, err := DecodeID(suaid)
 	if err != nil {
 		return sperrors.InvalidDataError
@@ -620,13 +555,12 @@ func (s *EmceeStore) DropPing(suaid string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
-	return client.Delete(s.PingPrefix+hex.EncodeToString(uaid), 0)
+	return client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
 }
 
 // Queries memcached for a list of current subscriptions associated with the
 // given device ID.
-func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error) {
+func (s *GomemcStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error) {
 	if len(uaid) == 0 {
 		return nil, nil
 	}
@@ -634,23 +568,24 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
-	err = client.Get(encodeKey(uaid), &result)
+	raw, err := client.Get(encodeKey(uaid))
 	if err != nil {
 		// TODO: Returning successful responses for missing keys causes `Exists()` to
 		// return `true` for all device IDs. Verify if correcting this behavior
 		// breaks existing clients.
-		if isMissing(err) {
+		if err == mc.ErrCacheMiss {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return
+	result = *new(ChannelIDs)
+	err = json.Unmarshal(raw.Value, &result)
+	return result, err
 }
 
 // Returns a duplicate-free list of subscriptions associated with the device
 // ID.
-func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
+func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
 	result, err = s.fetchChannelIDs(uaid)
 	if err != nil {
 		return nil, err
@@ -666,7 +601,7 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error)
 
 // Writes an updated subscription list for the given device ID to memcached.
 // The channel IDs are sorted in-place.
-func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
+func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
 		return sperrors.MissingDataError
 	}
@@ -674,14 +609,18 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
 	// sort the array
 	sort.Sort(chids)
-	return client.Set(encodeKey(uaid), chids, 0)
+	raw, err := json.Marshal(chids)
+	if err != nil {
+		s.logger.Error("gomemc", "Could not marshal AppIDArray", LogFields{"error": err.Error()})
+		return err
+	}
+	return client.Set(&mc.Item{Key: encodeKey(uaid), Value: raw, Expiration: 0})
 }
 
 // Retrieves a channel record from memcached.
-func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
+func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
 		return nil, sperrors.InvalidPrimaryKeyError
 	}
@@ -690,17 +629,24 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
 	result := new(ChannelRecord)
-	err = client.Get(keyString, result)
-	if err != nil && !isMissing(err) {
-		s.logger.Error("emcee", "Get Failed", LogFields{
+	raw, err := client.Get(keyString)
+	if err != nil && err != mc.ErrCacheMiss {
+		s.logger.Error("gomemc", "Get Failed", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
 		})
 		return nil, err
 	}
-	s.logger.Debug("emcee", "Fetched", LogFields{
+	err = json.Unmarshal(raw.Value, result)
+	if err != nil {
+		s.logger.Error("gomemc", "Could not unmarshal rec", LogFields{
+			"primarykey": keyString,
+			"error":      err.Error(),
+		})
+		return nil, err
+	}
+	s.logger.Debug("gomemc", "Fetched", LogFields{
 		"primarykey": keyString,
 		"result":     fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
 	})
@@ -708,7 +654,7 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 }
 
 // Stores an updated channel record in memcached.
-func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
+func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
 		return sperrors.InvalidPrimaryKeyError
 	}
@@ -729,11 +675,22 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
 	keyString := encodeKey(pk)
-	err = client.Set(keyString, rec, ttl)
+	raw, err := json.Marshal(rec)
 	if err != nil {
-		s.logger.Warn("emcee", "Failure to set item", LogFields{
+		s.logger.Error("gomemc", "Failure to marshal item", LogFields{
+			"primarykey": keyString,
+			"error":      err.Error(),
+		})
+		return err
+	}
+	err = client.Set(&mc.Item{
+		Key:        keyString,
+		Value:      raw,
+		Expiration: int32(ttl.Seconds()),
+	})
+	if err != nil {
+		s.logger.Warn("gomemc", "Failure to set item", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
 		})
@@ -741,141 +698,21 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	return nil
 }
 
-// Releases an acquired memcached connection.
-func (s *EmceeStore) releaseClient(client mc.Client) {
-	if client == nil {
-		return
-	}
-	s.releases <- client
-}
-
 // Acquires a memcached connection from the connection pool.
-func (s *EmceeStore) getClient() (mc.Client, error) {
-	clients := make(chan mc.Client)
-	select {
-	case <-s.closeSignal:
-		return nil, io.EOF
-	case s.acquisitions <- clients:
-		if client := <-clients; client != nil {
-			return client, nil
-		}
-	case <-time.After(s.HandleTimeout):
-	}
-	return nil, ErrPoolSaturated
+func (s *GomemcStore) getClient() (*mc.Client, error) {
+	return s.newClient()
 }
 
 // Creates and configures a memcached client connection.
-func (s *EmceeStore) newClient() (mc.Client, error) {
-	if len(s.Hosts) == 0 {
-		return nil, ErrNoNodes
-	}
-	client, err := mc.NewClient(s.Hosts, 1, mc.ENCODING_GOB)
-	if err != nil {
-		return nil, err
-	}
-	// internally hash key using MD5 (for key distribution)
-	if err := client.SetBehavior(mc.BEHAVIOR_KETAMA_HASH, 1); err != nil {
-		client.Close()
-		return nil, err
-	}
-	// Use the binary protocol, which allows us faster data xfer
-	// and better data storage (can use full UTF-8 char space)
-	if err := client.SetBehavior(mc.BEHAVIOR_BINARY_PROTOCOL, 1); err != nil {
-		client.Close()
-		return nil, err
-	}
-	// `SetBehavior()` wraps libmemcached's `memcached_behavior_set()` call.
-	if err := client.SetBehavior(mc.BEHAVIOR_SND_TIMEOUT, s.sendTimeout); err != nil {
-		client.Close()
-		return nil, err
-	}
-	if err := client.SetBehavior(mc.BEHAVIOR_RCV_TIMEOUT, s.recvTimeout); err != nil {
-		client.Close()
-		return nil, err
-	}
-	if err := client.SetBehavior(mc.BEHAVIOR_POLL_TIMEOUT, s.pollTimeout); err != nil {
-		client.Close()
-		return nil, err
-	}
-	if err = client.SetBehavior(mc.BEHAVIOR_RETRY_TIMEOUT, s.retryTimeout); err != nil {
-		client.Close()
-		return nil, err
-	}
+func (s *GomemcStore) newClient() (*mc.Client, error) {
+	client := mc.NewFromSelector(s.serverList)
+	client.Timeout = s.HandleTimeout
 	return client, nil
-}
-
-// The store run loop.
-func (s *EmceeStore) run() {
-	defer s.closeWait.Done()
-	clients := list.New()
-	capacity := 0
-	for ok := true; ok; {
-		select {
-		case ok = <-s.closeSignal:
-		case client := <-s.releases:
-			if capacity >= s.MaxConns {
-				// Maximum pool size exceeded (e.g., connection manually added to the pool
-				// via `newClient()` and `releaseClient()`).
-				client.Close()
-				break
-			}
-			// TODO: Ensure that the `mc.Client` instance is in a valid state to avoid
-			// releasing bad client connections to the pool.
-			clients.PushBack(client)
-
-		case acquisition := <-s.acquisitions:
-			if clients.Len() > 0 {
-				// Return the first available connection from the pool.
-				if client, ok := clients.Remove(clients.Front()).(mc.Client); ok {
-					acquisition <- client
-				}
-				close(acquisition)
-				break
-			}
-			if capacity < s.MaxConns {
-				// All connections are in use, but the pool has not reached its maximum
-				// capacity.
-				client, err := s.newClient()
-				if err != nil {
-					s.fatal(err)
-					close(acquisition)
-					break
-				}
-				acquisition <- client
-				capacity++
-				close(acquisition)
-				break
-			}
-			// Pool saturated.
-			close(acquisition)
-		}
-	}
-	// Shut down all connections in the pool.
-	for element := clients.Front(); element != nil; element = element.Next() {
-		if client, ok := element.Value.(mc.Client); ok {
-			client.Close()
-		}
-	}
-}
-
-// Acquires `s.closeLock`, closes the pool, and releases the lock, reporting
-// any errors to the caller. `ok` indicates whether the caller should wait
-// for the pool to close before returning.
-func (s *EmceeStore) stop() (err error, ok bool) {
-	defer s.closeLock.Unlock()
-	s.closeLock.Lock()
-	if s.isClosing {
-		return s.lastErr, false
-	}
-	return s.signalClose(), true
 }
 
 // Acquires `s.closeLock`, closes the connection pool, and releases the lock,
 // storing the given error in the `lastErr` field.
-func (s *EmceeStore) fatal(err error) {
-	defer s.closeLock.Unlock()
-	s.closeLock.Lock()
-	s.signalClose()
+func (s *GomemcStore) fatal(err error) {
 	if s.lastErr == nil {
 		s.lastErr = err
 	}
@@ -883,15 +720,10 @@ func (s *EmceeStore) fatal(err error) {
 
 // Closes the pool and exits the run loop. Assumes the caller holds
 // `s.closeLock`.
-func (s *EmceeStore) signalClose() (err error) {
-	if s.isClosing {
-		return
-	}
-	close(s.closeSignal)
-	s.isClosing = true
+func (s *GomemcStore) signalClose() (err error) {
 	return nil
 }
 
 func init() {
-	AvailableStores["memcache_gomc"] = func() HasConfigStruct { return NewEmcee() }
+	AvailableStores["memcache_memcachego"] = func() HasConfigStruct { return NewGomemc() }
 }

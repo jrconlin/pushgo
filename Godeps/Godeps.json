@@ -15,6 +15,10 @@
 			"Rev": "a2063ce2e5cf10e54ab24075840593d60f59b611"
 		},
 		{
+			"ImportPath": "github.com/bradfitz/gomemcache/memcache",
+			"Rev": "4faecadd4f695d18a912ba110120fcfd460aca98"
+		},
+		{
 			"ImportPath": "github.com/cactus/go-statsd-client/statsd",
 			"Rev": "f934df28073069859c4b8a26e837e0fc55e79d37"
 		},
