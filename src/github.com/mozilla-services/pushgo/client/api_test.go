@@ -249,11 +249,8 @@ func TestHeloReset(t *testing.T) {
 	if helo.StatusCode != 200 {
 		t.Errorf("Unexpected status code: got %#v; want 200", reply.Status())
 	}
-	// TODO: Specifying channel IDs for a nonexistent device ID should reset the
-	// device ID to its original value. This is not the current memcached
-	// adapter behavior.
-	if helo.DeviceId != deviceId {
-		t.Errorf("Mismatched device ID: got %#v; want %#v", helo.DeviceId, deviceId)
+	if helo.DeviceId == deviceId {
+		t.Errorf("Want new device ID; got %#v", deviceId)
 	}
 }
 
@@ -467,8 +464,8 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
 	}
-	if actualId != deviceId {
-		t.Errorf("Mismatched device ID: got %#v; want %#v", actualId, deviceId)
+	if actualId == deviceId {
+		t.Errorf("Want new device ID; got %#v", deviceId)
 	}
 	if !AllowDupes {
 		return
@@ -550,8 +547,8 @@ func (t idTest) TestHelo() error {
 	// The Simple Push server requires the `channelIDs` field to be present in
 	// the handshake, but does not validate its contents, since any queued
 	// messages will be immediately flushed to the client.
-	if helo.DeviceId != deviceId {
-		return fmt.Errorf("On test %v, mismatched device IDs: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
+	if helo.DeviceId == deviceId {
+		return fmt.Errorf("On test %v, want new device ID; got %#v", t.name, deviceId)
 	}
 	return nil
 }

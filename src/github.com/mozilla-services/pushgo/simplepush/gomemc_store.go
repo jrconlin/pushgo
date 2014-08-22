@@ -192,7 +192,7 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 		return sperrors.InvalidPrimaryKeyError
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
 	if chids.IndexOf(chid) < 0 {
@@ -304,7 +304,7 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
 	pos := chids.IndexOf(chid)
@@ -384,7 +384,7 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 		return nil, nil, err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && err != mc.ErrCacheMiss {
 		return nil, nil, err
 	}
 
@@ -478,7 +478,7 @@ func (s *GomemcStore) DropAll(suaid string) error {
 		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
 	for _, chid := range chids {
@@ -546,7 +546,6 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 		}
 		return nil, err
 	}
-	result = *new(ChannelIDs)
 	err = json.Unmarshal(raw.Value, &result)
 	if err != nil {
 		return result, err
