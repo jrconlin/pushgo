@@ -16,16 +16,9 @@ var ErrInvalid = errors.New("Invalid ID")
 // GenerateBytes generates a decoded UUID byte slice.
 func GenerateBytes() (bytes []byte, err error) {
 	bytes = make([]byte, 16)
-<<<<<<< HEAD
-    _, err = rand.Read(bytes)
-    if err != nil {
-        return nil, err
-    }
-=======
 	if _, err = rand.Read(bytes); err != nil {
 		return nil, err
 	}
->>>>>>> 5b2117ffa400b7e4799414357f01dd0fd3649138
 	bytes[6] = (bytes[6] & 0x0f) | 0x40
 	bytes[8] = (bytes[8] & 0x3f) | 0x80
 	return bytes, nil

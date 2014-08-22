@@ -555,8 +555,8 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		var expired []string
 		updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0))
 		if err != nil {
-            self.logger.Error("worker", "Failed to flush Update to client."
-                LogFields{"uaid": sock.Uaid, "error": err.Error()})
+			self.logger.Error("worker", "Failed to flush Update to client.",
+				LogFields{"uaid": sock.Uaid, "error": err.Error()})
 			return err
 		}
 		if len(updates) > 0 || len(expired) > 0 {
