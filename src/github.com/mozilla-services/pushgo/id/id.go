@@ -9,18 +9,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 )
 
 var ErrInvalid = errors.New("Invalid ID")
 
 // GenerateBytes generates a decoded UUID byte slice.
-func GenerateBytes() ([]byte, error) {
-	bytes := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, bytes); err != nil {
-		return nil, err
-	}
+func GenerateBytes() (bytes []byte, err error) {
+	bytes = make([]byte, 16)
+    _, err = rand.Read(bytes)
+    if err != nil {
+        return nil, err
+    }
 	bytes[6] = (bytes[6] & 0x0f) | 0x40
 	bytes[8] = (bytes[8] & 0x3f) | 0x80
 	return bytes, nil
@@ -50,7 +49,7 @@ func Valid(id string) bool {
 		return false
 	}
 	for index := 0; index < len(id); index++ {
-		if !validRuneAt(id, index) {
+		if id[index] != '-' && !isHex(id[index]) {
 			return false
 		}
 	}
@@ -65,10 +64,11 @@ func Decode(id string, destination []byte) (err error) {
 	}
 	source := make([]byte, 32)
 	sourceIndex := 0
-	// strip optional "-" from uuids
-	id = strings.Replace(id, "-", "", -1)
 	for index := 0; index < len(id); index++ {
-		if !validRuneAt(id, index) {
+		if id[index] == '-' {
+			continue
+		}
+		if !isHex(id[index]) {
 			return ErrInvalid
 		}
 		source[sourceIndex] = id[index]
@@ -91,13 +91,9 @@ func validLen(id string) bool {
 	return len(id) == 32 || (len(id) == 36 && id[8] == '-' && id[13] == '-' && id[18] == '-' && id[23] == '-')
 }
 
-func validRuneAt(id string, index int) bool {
-	r := id[index]
-	if len(id) == 36 && (index == 8 || index == 13 || index == 18 || index == 23) {
-		return r == '-'
+func isHex(b byte) bool {
+	if b >= 'A' && b <= 'F' {
+		b += 'a' - 'A'
 	}
-	if r >= 'A' && r <= 'F' {
-		r += 'a' - 'A'
-	}
-	return r >= 'a' && r <= 'f' || r >= '0' && r <= '9'
+	return b >= 'a' && b <= 'f' || b >= '0' && b <= '9'
 }

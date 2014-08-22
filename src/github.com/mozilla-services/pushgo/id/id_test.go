@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	hyphenatedId   = "e281b9498a924443b0c85465ba439a76"
-	encodedId      = "e281b949-8a92-4443-b0c8-5465ba439a76"
+	encodedId      = "e281b9498a924443b0c85465ba439a76"
+	hyphenatedId   = "e281b949-8a92-4443-b0c8-5465ba439a76"
 	decodedId      = []byte{0xe2, 0x81, 0xb9, 0x49, 0x8a, 0x92, 0x44, 0x43, 0xb0, 0xc8, 0x54, 0x65, 0xba, 0x43, 0x9a, 0x76}
 	encodedShortId = "e281b949"
 	shortId        = []byte{0xe2, 0x81, 0xb9, 0x49}
@@ -20,12 +20,37 @@ var (
 )
 
 var validTests = map[string]bool{
-	hyphenatedId:                           true,
 	encodedId:                              true,
+	hyphenatedId:                           true,
 	encodedShortId:                         false,
 	encodedLongId:                          false,
 	"--e281b9498a924443b0c85465ba439a76--": false,
 	"e281b9498a92-4443-b0c85465ba439a76":   false,
+}
+
+func TestDecodeString(t *testing.T) {
+	hyphenatedBytes, err := DecodeString(hyphenatedId)
+	if err != nil {
+		t.Fatalf("DecodeString() failed to decode valid hyphenated ID %#v: %#v", hyphenatedId, err)
+	}
+	if !bytes.Equal(hyphenatedBytes, decodedId) {
+		t.Errorf("DecodeString() decoded hyphenated ID incorrectly: got %#v; want %#v", hyphenatedBytes, decodedId)
+	}
+	decodedBytes, err := DecodeString(encodedId)
+	if err != nil {
+		t.Fatalf("DecodeString() failed to decode valid unhyphenated ID %#v: %#v", encodedId, err)
+	}
+	if !bytes.Equal(decodedBytes, decodedId) {
+		t.Errorf("DecodeString() decoded unhyphenated ID incorrectly: got %#v; want %#v", hyphenatedBytes)
+	}
+	_, err = DecodeString(encodedShortId)
+	if err != ErrInvalid {
+		t.Errorf("DecodeString() returned result for invalid short ID %#v: got %#v; want id.ErrInvalid", err)
+	}
+	_, err = DecodeString(encodedLongId)
+	if err != ErrInvalid {
+		t.Errorf("DecodeString() returned result for invalid long ID %#v: got %#v; want id.ErrInvalid", err)
+	}
 }
 
 func TestValid(t *testing.T) {
@@ -39,11 +64,11 @@ func TestValid(t *testing.T) {
 
 func TestDecode(t *testing.T) {
 	idBytes := make([]byte, 16)
-	if err := Decode(hyphenatedId, idBytes); err != nil {
-		t.Fatalf("Error decoding ID %#v: %#v", hyphenatedId, err)
+	if err := Decode(encodedId, idBytes); err != nil {
+		t.Fatalf("Error decoding ID %#v: %#v", encodedId, err)
 	}
 	if !bytes.Equal(decodedId, idBytes) {
-		t.Errorf("Decode() decoded ID incorrectly: want %#v; got %#v", decodedId, idBytes)
+		t.Errorf("Decode() decoded ID incorrectly: got %#v; want %#v", idBytes, decodedId)
 	}
 }
 
@@ -53,7 +78,7 @@ func TestGenerate(t *testing.T) {
 		t.Fatalf("Failed to generate ID string: %#v", err)
 	}
 	if len(id) != 32 {
-		t.Errorf("Mismatched ID length for %#v: want 32; got %#v", id, len(id))
+		t.Errorf("Mismatched ID length for %#v: got %#v; want 32", id, len(id))
 	}
 	if !Valid(id) {
 		t.Errorf("Generate() returned invalid ID: %#v", id)
