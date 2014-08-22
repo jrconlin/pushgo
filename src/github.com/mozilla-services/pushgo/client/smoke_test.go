@@ -16,7 +16,7 @@ const (
 	// maxChannels is the maximum number of channels allowed in the opening
 	// handshake. Clients that specify more channels will receive a new device
 	// ID. Can be obtained via `app.Store.MaxChannels()`.
-	maxChannels = 200
+	maxChannels = 500
 )
 
 var channelIds = MustGenerateIds(maxChannels + 1)
@@ -43,8 +43,8 @@ func TestDuplicateHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing initial handshake request: %#v", err)
 	}
-	if firstId != deviceId {
-		t.Errorf("Mismatched device ID for initial handshake: got %#v; want %#v", firstId, deviceId)
+	if firstId == deviceId {
+		t.Errorf("Want new device ID for initial handshake; got %#v", firstId)
 	}
 	secondId, err := conn.WriteHelo(firstId)
 	if err != nil {

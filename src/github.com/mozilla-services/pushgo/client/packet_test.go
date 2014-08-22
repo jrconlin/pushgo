@@ -70,6 +70,7 @@ func decodeCaseACK(c *Conn, fields Fields, statusCode int, errorText string) (Ha
 type caseTest struct {
 	CaseTestType
 	statusCode int
+	forceReset bool
 }
 
 func (t caseTest) TestPing() error {
@@ -167,7 +168,7 @@ func (t caseTest) TestHelo() error {
 		if helo.StatusCode != t.statusCode {
 			return fmt.Errorf("On test %v, unexpected reply status: got %#v; want %#v", t.CaseTestType, helo.StatusCode, t.statusCode)
 		}
-		if t.CaseTestType == FieldIdCap {
+		if t.forceReset {
 			if helo.DeviceId == deviceId {
 				return fmt.Errorf("On test %v, want new device ID; got %#v", t.CaseTestType, deviceId)
 			}
@@ -355,9 +356,9 @@ func (h *CaseHelo) MarshalJSON() ([]byte, error) {
 }
 
 var ackTests = []caseTest{
-	caseTest{ValueTypeUpper, 401},
-	caseTest{ValueTypeCap, 401},
-	caseTest{ValueTypeEmpty, 401},
+	caseTest{ValueTypeUpper, 401, false},
+	caseTest{ValueTypeCap, 401, false},
+	caseTest{ValueTypeEmpty, 401, false},
 }
 
 func TestACKCase(t *testing.T) {
@@ -369,9 +370,9 @@ func TestACKCase(t *testing.T) {
 }
 
 var pingTests = []caseTest{
-	caseTest{ValueTypeUpper, 200},
-	caseTest{ValueTypeCap, 200},
-	caseTest{ValueTypeEmpty, 200},
+	caseTest{ValueTypeUpper, 200, false},
+	caseTest{ValueTypeCap, 200, false},
+	caseTest{ValueTypeEmpty, 200, false},
 }
 
 func TestPingCase(t *testing.T) {
@@ -383,13 +384,13 @@ func TestPingCase(t *testing.T) {
 }
 
 var heloTests = []caseTest{
-	caseTest{FieldTypeLower, 401},
-	caseTest{FieldTypeSpace, 401},
-	caseTest{FieldChansCap, 401},
-	caseTest{FieldIdCap, 200},
-	caseTest{ValueTypeUpper, 200},
-	caseTest{ValueTypeCap, 200},
-	caseTest{ValueTypeEmpty, 401},
+	caseTest{FieldTypeLower, 401, false},
+	caseTest{FieldTypeSpace, 401, false},
+	caseTest{FieldChansCap, 401, false},
+	caseTest{FieldIdCap, 200, true},
+	caseTest{ValueTypeUpper, 200, true},
+	caseTest{ValueTypeCap, 200, true},
+	caseTest{ValueTypeEmpty, 401, false},
 }
 
 func TestHeloCase(t *testing.T) {

@@ -286,13 +286,17 @@ func (s *EmceeStore) Exists(suaid string) bool {
 		return false
 	}
 	_, err = s.fetchAppIDArray(uaid)
+	if err != nil && !isMissing(err) {
+		s.logger.Warn("emcee", "Exists encountered unknown error",
+			LogFields{"error": err.Error()})
+	}
 	return err == nil
 }
 
 // Stores a new channel record in memcached.
 func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	if chids.IndexOf(chid) < 0 {
@@ -404,7 +408,7 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 // Marks a memcached channel record as expired.
 func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	pos := chids.IndexOf(chid)
@@ -493,7 +497,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		return nil, nil, err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return nil, nil, err
 	}
 
@@ -587,7 +591,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	client, err := s.getClient()
@@ -667,12 +671,6 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 	defer s.releaseWithout(client, &err)
 	err = client.Get(encodeKey(uaid), &result)
 	if err != nil {
-		// TODO: Returning successful responses for missing keys causes `Exists()` to
-		// return `true` for all device IDs. Verify if correcting this behavior
-		// breaks existing clients.
-		if isMissing(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	return

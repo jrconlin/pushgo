@@ -51,7 +51,7 @@ func (n *NoStore) Init(app *Application, config interface{}) error {
 func (n *NoStore) MaxChannels() int                                     { return n.config.Db.MaxChannels }
 func (*NoStore) Close() error                                           { return nil }
 func (*NoStore) Status() (bool, error)                                  { return true, nil }
-func (*NoStore) Exists(string) bool                                     { return true }
+func (*NoStore) Exists(string) bool                                     { return false }
 func (*NoStore) Register(string, string, int64) error                   { return nil }
 func (*NoStore) Update(string, int64) error                             { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }
