@@ -44,11 +44,21 @@ func Encode(bytes []byte) (string, error) {
 // Valid ensures that the given string is a valid UUID. Both the 32-byte
 // (unhyphenated) and 36-byte (hyphenated) formats are accepted.
 func Valid(id string) bool {
-	if !validLen(id) {
+	if len(id) != 32 && !(len(id) == 36 && id[8] == '-' && id[13] == '-' && id[18] == '-' && id[23] == '-') {
 		return false
 	}
 	for index := 0; index < len(id); index++ {
-		if id[index] != '-' && !isHex(id[index]) {
+		b := id[index]
+		if len(id) == 36 && (index == 8 || index == 13 || index == 18 || index == 23) {
+			if b == '-' {
+				continue
+			}
+			return false
+		}
+		if b >= 'A' && b <= 'F' {
+			b += 'a' - 'A'
+		}
+		if (b < 'a' || b > 'f') && (b < '0' || b > '9') {
 			return false
 		}
 	}
@@ -58,7 +68,7 @@ func Valid(id string) bool {
 // Decode decodes a UUID string into the given slice, returning an error if
 // the ID is malformed, and panicking if the destination slice is too small.
 func Decode(id string, destination []byte) (err error) {
-	if !validLen(id) {
+	if !Valid(id) {
 		return ErrInvalid
 	}
 	source := make([]byte, 32)
@@ -66,9 +76,6 @@ func Decode(id string, destination []byte) (err error) {
 	for index := 0; index < len(id); index++ {
 		if id[index] == '-' {
 			continue
-		}
-		if !isHex(id[index]) {
-			return ErrInvalid
 		}
 		source[sourceIndex] = id[index]
 		sourceIndex++
@@ -84,15 +91,4 @@ func DecodeString(id string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes, nil
-}
-
-func validLen(id string) bool {
-	return len(id) == 32 || (len(id) == 36 && id[8] == '-' && id[13] == '-' && id[18] == '-' && id[23] == '-')
-}
-
-func isHex(b byte) bool {
-	if b >= 'A' && b <= 'F' {
-		b += 'a' - 'A'
-	}
-	return b >= 'a' && b <= 'f' || b >= '0' && b <= '9'
 }
