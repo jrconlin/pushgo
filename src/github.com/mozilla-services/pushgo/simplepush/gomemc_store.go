@@ -96,6 +96,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	s.PingPrefix = conf.Db.PingPrefix
+	s.maxChannels = conf.Db.MaxChannels
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
 		s.logger.Error("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
@@ -114,8 +115,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 // MaxChannels returns the maximum number of channel registrations allowed per
 // client. Implements `Store.MaxChannels()`.
 func (s *GomemcStore) MaxChannels() int {
-	// this is a stub.
-	return 400
+	return s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
@@ -126,9 +126,11 @@ func (s *GomemcStore) Close() (err error) {
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements `Store.KeyToIDs()`.
-func (*GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
+func (s *GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
+		s.logger.Warn("gomemc", "Invalid Key, returning blank IDs",
+			LogFields{"key": key})
 		return "", "", false
 	}
 	return items[0], items[1], true
@@ -137,8 +139,10 @@ func (*GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // `Store.IDsToKey()`.
-func (*GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
+func (s *GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
+		s.logger.Warn("gomemc", "Invalid IDs, returning blank Key",
+			LogFields{"uaid": suaid, "chid": schid})
 		return "", false
 	}
 	return fmt.Sprintf("%s.%s", suaid, schid), true
@@ -177,8 +181,7 @@ func (s *GomemcStore) Exists(suaid string) bool {
 	if err != nil {
 		return false
 	}
-	_, err = s.client.Get(encodeKey(uaid))
-	if err != nil && err != mc.ErrCacheMiss {
+	if _, err = s.client.Get(encodeKey(uaid)); err != nil && err != mc.ErrCacheMiss {
 		s.logger.Warn("gomemc", "Exists encountered unknown error",
 			LogFields{"error": err.Error()})
 	}
@@ -256,11 +259,7 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 				Version:     uint64(version),
 				LastTouched: time.Now().UTC().Unix(),
 			}
-			err = s.storeRec(key, newRecord)
-			if err != nil {
-				return err
-			}
-			return nil
+			return s.storeRec(key, newRecord)
 		}
 	}
 	// No record found or the record setting was DELETED
@@ -269,11 +268,7 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 		"channelID": hex.EncodeToString(chid),
 		"version":   strconv.FormatInt(version, 10),
 	})
-	err = s.storeRegister(uaid, chid, version)
-	if err != nil {
-		return err
-	}
-	return nil
+	return s.storeRegister(uaid, chid, version)
 }
 
 // Update updates the version for the given device ID and channel ID.
@@ -314,21 +309,24 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
 	}
-	// TODO: Allow `MaxRetries` to be configurable.
-	for x := 0; x < 3; x++ {
-		channel, err := s.fetchRec(key)
-		if err != nil {
-			s.logger.Warn("gomemc", "Could not delete Channel", LogFields{
+	channel, err := s.fetchRec(key)
+	if err != nil {
+		s.logger.Warn("gomemc", "Could not delete Channel",
+			LogFields{
 				"primarykey": hex.EncodeToString(key),
 				"error":      err.Error(),
 			})
-			continue
-		}
-		channel.State = StateDeleted
-		err = s.storeRec(key, channel)
-		break
+		return sperrors.InvalidChannelError
 	}
-	// TODO: Propagate errors.
+	channel.State = StateDeleted
+	if err = s.storeRec(key, channel); err != nil {
+		s.logger.Warn("gomemc", "Could not store deleted Channel",
+			LogFields{
+				"primarykey": hex.EncodeToString(key),
+				"error":      err.Error(),
+			})
+		return sperrors.InvalidChannelError
+	}
 	return nil
 }
 
@@ -367,7 +365,7 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 		return err
 	}
 	err = s.client.Delete(encodeKey(key))
-	if err == nil || err != mc.ErrCacheMiss {
+	if err == nil || err == mc.ErrCacheMiss {
 		return nil
 	}
 	return err
@@ -409,8 +407,7 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 		if err != nil {
 			continue
 		}
-		err = json.Unmarshal(raw.Value, &channel)
-		if err != nil {
+		if err = json.Unmarshal(raw.Value, &channel); err != nil {
 			continue
 		}
 		chid := chids[index]
@@ -427,8 +424,6 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 			})
 			continue
 		}
-		// Yay! Go translates numeric interface values as float64s
-		// Apparently float64(1) != int(1).
 		switch channel.State {
 		case StateLive:
 			version := channel.Version
@@ -546,15 +541,8 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 		}
 		return nil, err
 	}
-	err = json.Unmarshal(raw.Value, &result)
-	if err != nil {
+	if err = json.Unmarshal(raw.Value, &result); err != nil {
 		return result, err
-	}
-	// pare out duplicates.
-	for i, chid := range result {
-		if dup := result[i+1:].IndexOf(chid); dup > -1 {
-			result = remove(result, i+dup)
-		}
 	}
 	return
 }
@@ -567,6 +555,12 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	}
 	// sort the array
 	sort.Sort(chids)
+	// pare out duplicates.
+	for i, chid := range chids {
+		if dup := chids[i+1:].IndexOf(chid); dup > -1 {
+			chids = remove(chids, i+dup)
+		}
+	}
 	raw, err := json.Marshal(chids)
 	if err != nil {
 		s.logger.Error("gomemc", "Could not marshal AppIDArray", LogFields{"error": err.Error()})
@@ -638,7 +632,7 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 		Expiration: int32(ttl.Seconds()),
 	})
 	if err != nil {
-		s.logger.Warn("gomemc", "Failure to set item", LogFields{
+		s.logger.Error("gomemc", "Failure to set item", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
 		})
