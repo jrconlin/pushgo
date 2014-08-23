@@ -12,6 +12,7 @@ install:
 - make
 script:
 - make simplepush
+- make test
 before_deploy:
 - mkdir -p build/server
 - gzip simplepush
