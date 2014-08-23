@@ -56,7 +56,9 @@ simplepush:
 	$(GODEP) go build -o simplepush github.com/mozilla-services/pushgo
 
 test:
+	./simplepush -config=config.test.ini &
 	$(GODEP) go test github.com/mozilla-services/pushgo/client github.com/mozilla-services/pushgo/id
+	killall simplepush
 
 clean:
 	rm -rf bin $(DEPS)
