@@ -18,66 +18,103 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"math/rand"
+	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
-
-	"github.com/coreos/go-etcd/etcd"
-)
-
-const (
-	ETCD_DIR = "push_hosts/"
 )
 
 var (
-	errNextCastle = errors.New("Client not found")
+	ErrNoLocator      = errors.New("Discovery service not configured")
+	AvailableLocators = make(AvailableExtensions)
 )
 
-type Router struct {
-	logger      *SimpleLogger
-	metrics     *Metrics
-	bucketSize  int64
-	template    *template.Template
-	ctimeout    time.Duration
-	rwtimeout   time.Duration
-	defaultTTL  uint64
-	client      *etcd.Client
-	lastRefresh time.Time
-	serverList  []string
-	host        string
-	scheme      string
-	port        int
-	rclient     *http.Client
-	mux         sync.Mutex
+// Routable is the update payload sent to each contact.
+type Routable struct {
+	DeviceID  string `json:"uaid"`
+	ChannelID string `json:"chid"`
+	Version   int64  `json:"version"`
+	Time      string `json:"time"`
+}
+
+type LocatorConf struct {
+	Etcd EtcdConf
+}
+
+// Locator describes a contact discovery service.
+type Locator interface {
+	// Close stops and releases any resources associated with the Locator.
+	Close() error
+
+	// Contacts returns a slice of candidate peers for the router to probe. For
+	// an etcd-based Locator, the slice may contain all nodes in the cluster;
+	// for a DHT-based Locator, the slice may contain either a single node or a
+	// short list of the closest nodes.
+	Contacts(uaid string) ([]string, error)
+
+	// MaxParallel returns the maximum number of contacts that the router should
+	// probe before checking replies.
+	MaxParallel() int
 }
 
 type RouterConfig struct {
-	BucketSize  int64 `toml:"bucket_size"`
-	Ctimeout    string
-	DefaultHost string   `toml:"default_host"`
-	EtcdServers []string `toml:"etcd_servers"`
-	Rwtimeout   string
-	Scheme      string
-	Port        int
-	DefaultTTL  string
+	// Ctimeout is the maximum amount of time that the router's `RoundTripper`
+	// should wait for a dial to succeed. Defaults to 3 seconds.
+	Ctimeout string
+
+	// Rwtimeout is the maximum amount of time that the router should wait for an
+	// HTTP request to complete. Defaults to 3 seconds.
+	Rwtimeout string
+
+	// Scheme is the scheme component of the proxy endpoint, used by the router
+	// to construct the endpoint of a peer. Defaults to `"http"`.
+	Scheme string
+
+	// DefaultHost is the default hostname of the proxy endpoint. No default
+	// value; overrides `app.Hostname()` if specified.
+	DefaultHost string `toml:"default_host"`
+
+	// Port is the port that the router will use to receive proxied updates. This
+	// port should not be publicly accessible. Defaults to 3000.
+	Port int
+
+	// UrlTemplate is a text/template source string for constructing the proxy
+	// endpoint URL. Interpolated variables are `{{.Scheme}}`, `{{.Host}}`,
+	// and `{{.Uaid}}`.
 	UrlTemplate string `toml:"url_template"`
 }
 
-func (r *Router) ConfigStruct() interface{} {
+// Router proxies incoming updates to the Simple Push server ("contact") that
+// currently maintains a WebSocket connection to the target device.
+type Router struct {
+	locator     Locator
+	logger      *SimpleLogger
+	metrics     *Metrics
+	template    *template.Template
+	ctimeout    time.Duration
+	rwtimeout   time.Duration
+	scheme      string
+	hostname    string
+	port        int
+	rclient     *http.Client
+	closeSignal chan bool
+}
+
+func NewRouter() *Router {
+	return &Router{
+		closeSignal: make(chan bool),
+	}
+}
+
+func (*Router) ConfigStruct() interface{} {
 	return &RouterConfig{
-		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
 		Ctimeout:    "3s",
 		Rwtimeout:   "3s",
 		Scheme:      "http",
-		DefaultTTL:  "24h",
 		Port:        3000,
-		BucketSize:  int64(10),
-		EtcdServers: []string{"http://localhost:4001"},
+		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
 	}
 }
 
@@ -89,7 +126,8 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.template, err = template.New("Route").Parse(conf.UrlTemplate)
 	if err != nil {
 		r.logger.Critical("router", "Could not parse router template",
-			LogFields{"error": err.Error()})
+			LogFields{"error": err.Error(),
+				"template": conf.UrlTemplate})
 		return
 	}
 	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
@@ -97,161 +135,168 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		r.logger.Error("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
-		return err
+		return
 	}
 	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
 	if err != nil {
 		r.logger.Error("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
-		return err
+		return
 	}
+
 	r.scheme = conf.Scheme
+	r.hostname = conf.DefaultHost
+	if r.hostname == "" {
+		r.hostname = app.Hostname()
+	}
 	r.port = conf.Port
-	r.bucketSize = conf.BucketSize
-	r.serverList = conf.EtcdServers
 
-	if conf.DefaultHost == "" {
-		r.host = app.Hostname()
-	} else {
-		r.host = conf.DefaultHost
-	}
-
-	// default time for the server to be "live"
-	defaultTTLs := conf.DefaultTTL
-	defaultTTLd, err := time.ParseDuration(defaultTTLs)
-	if err != nil {
-		r.logger.Critical("router",
-			"Could not parse router default TTL",
-			LogFields{"value": defaultTTLs, "error": err.Error()})
-	}
-	r.defaultTTL = uint64(defaultTTLd.Seconds())
-	if r.defaultTTL < 2 {
-		r.logger.Critical("router",
-			"default TTL too short",
-			LogFields{"value": defaultTTLs})
-	}
-
-	r.logger.Debug("router",
-		"connecting to etcd servers",
-		LogFields{"list": strings.Join(r.serverList, ";")})
-	r.client = etcd.NewClient(r.serverList)
-	// create the push hosts directory (if not already there)
-	_, err = r.client.CreateDir(ETCD_DIR, 0)
-	if err != nil {
-		if err.Error()[:3] != "105" {
-			r.logger.Error("router", "etcd createDir error", LogFields{
-				"error": err.Error()})
-		}
-	}
 	r.rclient = &http.Client{
 		Transport: &http.Transport{
 			Dial: TimeoutDialer(r.ctimeout, r.rwtimeout),
 			ResponseHeaderTimeout: r.rwtimeout,
-			TLSClientConfig:       &tls.Config{},
+			TLSClientConfig:       new(tls.Config),
 		},
 	}
-	if _, err = r.getServers(); err != nil {
-		r.logger.Critical("router", "Could not initialize server list",
-			LogFields{"error": err.Error()})
-		return
-	}
 
-	// auto refresh slightly more often than the TTL
-	go func() {
-		timeout := 0.75 * float64(r.defaultTTL)
-		tick := time.Tick(time.Second * time.Duration(timeout))
-		for _ = range tick {
-			r.Register()
-		}
-	}()
-	r.Register()
+	return
+}
+
+func (r *Router) SetLocator(locator Locator) error {
+	r.locator = locator
 	return nil
 }
 
-// Get the servers from the etcd cluster
-func (r *Router) getServers() (reply []string, err error) {
-	r.mux.Lock()
-	defer r.mux.Unlock()
-	if time.Now().Sub(r.lastRefresh) < (time.Minute * 5) {
-		return r.serverList, nil
+func (r *Router) Locator() Locator {
+	return r.locator
+}
+
+func (r *Router) Close() (err error) {
+	close(r.closeSignal)
+	if r.locator != nil {
+		err = r.locator.Close()
 	}
-	nodeList, err := r.client.Get(ETCD_DIR, false, false)
+	return
+}
+
+// SendUpdate broadcasts an update packet to the correct server.
+func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
+	if r.locator == nil {
+		r.logger.Warn("router", "No discovery service set; unable to route message",
+			LogFields{"uaid": uaid, "chid": chid})
+		return ErrNoLocator
+	}
+	msg, err := json.Marshal(&Routable{
+		DeviceID:  uaid,
+		ChannelID: chid,
+		Version:   version,
+		Time:      timer.Format(time.RFC3339Nano),
+	})
 	if err != nil {
-		return r.serverList, err
+		r.logger.Error("router", "Could not compose routing message",
+			LogFields{"error": err.Error()})
+		return
 	}
-	reply = []string{}
-	for _, node := range nodeList.Node.Nodes {
-		reply = append(reply, node.Value)
+	contacts, err := r.locator.Contacts(uaid)
+	if err != nil {
+		r.logger.Error("router", "Could not query discovery service for contacts",
+			LogFields{"error": err.Error()})
+		return
 	}
-	r.serverList = reply
-	r.lastRefresh = time.Now()
-	return r.serverList, nil
+	if _, err = r.notifyAll(contacts, uaid, msg); err != nil {
+		r.logger.Error("router", "Could not post to server",
+			LogFields{"error": err.Error()})
+		return
+	}
+	return
 }
 
-func (r *Router) getBuckets(servers []string) (buckets [][]string) {
-	bucket := 0
-	counter := 0
-	buckets = make([][]string, (len(servers)/int(r.bucketSize))+1)
-	buckets[0] = make([]string, r.bucketSize)
-	for _, i := range rand.Perm(len(servers)) {
-		if counter >= int(r.bucketSize) {
-			bucket = bucket + 1
-			counter = 0
-			buckets[bucket] = make([]string, r.bucketSize)
+// FormatURL constructs a proxy endpoint for the given contact and device ID.
+func (r *Router) FormatURL(contact, uaid string) (string, error) {
+	url := new(bytes.Buffer)
+	err := r.template.Execute(url, struct {
+		Scheme, Host, Uaid string
+	}{r.scheme, contact, uaid})
+	if err != nil {
+		return "", err
+	}
+	return url.String(), nil
+}
+
+func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool, err error) {
+	if r.logger.ShouldLog(DEBUG) {
+		r.logger.Debug("router", "Sending push...", LogFields{"msg": string(msg),
+			"servers": strings.Join(contacts, ", ")})
+	}
+	// The buffered lease channel ensures that the number of in-flight requests
+	// never exceeds `r.locator.MaxParallel()`.
+	leases := make(chan struct{}, r.locator.MaxParallel())
+	for i := 0; i < cap(leases); i++ {
+		leases <- struct{}{}
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	// Broadcast the message to all contacts in the list returned by the
+	// discovery service. The `stop` channel will be closed as soon as a
+	// contact accepts the update.
+	result := make(chan bool)
+	for _, contact := range contacts {
+		url, err := r.FormatURL(contact, uaid)
+		if err != nil {
+			r.logger.Error("router", "Could not build routing URL",
+				LogFields{"error": err.Error()})
+			return false, err
 		}
-		buckets[bucket][counter] = servers[i]
-		counter++
+		go r.notifyOne(result, leases, stop, contact, url, msg)
 	}
-	return buckets
+	select {
+	case ok = <-r.closeSignal:
+		err = io.EOF
+	case ok = <-result:
+	case <-time.After(r.ctimeout + r.rwtimeout + 1*time.Second):
+	}
+	return
 }
 
-// register the server to the etcd cluster.
-func (r *Router) Register() (err error) {
-	var hostname string
-	if r.port != 80 {
-		hostname = r.host + ":" + strconv.Itoa(r.port)
-	} else {
-		hostname = r.host
+// notifyOne routes a message to a single contact.
+func (r *Router) notifyOne(result chan<- bool, leases chan struct{}, stop <-chan struct{}, contact, url string, msg []byte) {
+	lease := <-leases
+	defer func() {
+		leases <- lease
+	}()
+	body := bytes.NewReader(msg)
+	req, err := http.NewRequest("PUT", url, body)
+	if err != nil {
+		r.logger.Warn("router", "Router request failed", LogFields{"error": err.Error()})
+		return
 	}
 	if r.logger.ShouldLog(DEBUG) {
-		r.logger.Debug("router", "Registering host", LogFields{"host": r.host})
+		r.logger.Debug("router", "Sending request",
+			LogFields{"server": contact,
+				"url":  url,
+				"body": string(msg)})
 	}
-	// remember, paths are absolute.
-	_, err = r.client.Set(ETCD_DIR+hostname, hostname, r.defaultTTL)
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := r.rclient.Do(req)
 	if err != nil {
-		r.logger.Error("router",
-			"Failed to register",
-			LogFields{"error": err.Error(),
-				"host": r.host})
-	}
-	return err
-}
-
-func (r *Router) Unregister() (err error) {
-	if r.host != "" {
-		_, err = r.client.Delete(r.host, false)
-	}
-	return err
-}
-
-func (r *Router) send(cli *http.Client, req *http.Request, host string) (err error) {
-	resp, err := cli.Do(req)
-	if err != nil {
-		r.logger.Error("router", "Router send failed", LogFields{"error": err.Error()})
-		return err
+		r.logger.Warn("router", "Router send failed", LogFields{"error": err.Error()})
+		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 200 {
-		r.logger.Debug("router", "Update Handled", LogFields{"host": host})
-		return nil
-	} else {
-		r.logger.Debug("router", "Denied", LogFields{"host": host})
-		return errNextCastle
+	if resp.StatusCode != 200 {
+		r.logger.Debug("router", "Denied", LogFields{"server": contact})
+		return
 	}
-	return err
+	r.logger.Debug("router", "Server accepted", LogFields{"server": contact})
+	select {
+	case <-stop:
+	case result <- true:
+	}
 }
 
+// TimeoutDialer returns a dialer function suitable for use with an
+// `http.Transport` instance.
 func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
 
 	return func(netw, addr string) (c net.Conn, err error) {
@@ -263,91 +308,4 @@ func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c 
 		c.SetDeadline(time.Now().Add(rwTimeout))
 		return c, nil
 	}
-}
-
-func (r *Router) bucketSend(uaid string, msg []byte, serverList []string) (success bool, err error) {
-	r.logger.Debug("router", "Sending push...", LogFields{"msg": string(msg),
-		"servers": strings.Join(serverList, ", ")})
-	test := make(chan bool, 1)
-	// blast it out to all servers in the already randomized list.
-	for _, server := range serverList {
-		if server == r.host || server == "" {
-			continue
-		}
-		url := new(bytes.Buffer)
-		if err = r.template.Execute(url, struct {
-			Scheme string
-			Host   string
-			Uaid   string
-		}{
-			Scheme: r.scheme,
-			Host:   server,
-			Uaid:   uaid,
-		}); err == nil {
-			go func(server, url, msg string) {
-				// do not optimize this. Request needs a fresh body per call.
-				body := strings.NewReader(msg)
-				if req, err := http.NewRequest("PUT", url, body); err == nil {
-					r.logger.Debug("router", "Sending request",
-						LogFields{"server": server,
-							"url":  url,
-							"body": msg})
-					req.Header.Add("Content-Type", "application/json")
-					if err = r.send(r.rclient, req, server); err == nil {
-						r.logger.Debug("router", "Server accepted", LogFields{"server": server})
-						select {
-						case test <- true:
-						default:
-						}
-						return
-					}
-				}
-			}(server, url.String(), string(msg))
-		} else {
-			r.logger.Error("router", "Could not build routing URL", LogFields{"error": err.Error()})
-			return success, err
-		}
-	}
-	select {
-	case <-test:
-		success = true
-		break
-	case <-time.After(r.ctimeout + r.rwtimeout + (1 * time.Second)):
-		success = false
-		break
-	}
-	return success, nil
-}
-
-func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
-	var server string
-	serverList, err := r.getServers()
-	if err != nil {
-		r.logger.Error("router", "Could not get server list",
-			LogFields{"error": err.Error()})
-		return err
-	}
-	buckets := r.getBuckets(serverList)
-	msg, err := json.Marshal(JsMap{
-		"uaid":    uaid,
-		"chid":    chid,
-		"version": version,
-		"time":    timer.Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		r.logger.Error("router", "Could not compose routing message",
-			LogFields{"error": err.Error()})
-		return err
-	}
-	for _, bucket := range buckets {
-		if success, err := r.bucketSend(uaid, msg, bucket); err != nil || success {
-			break
-		}
-	}
-	if err != nil {
-		r.logger.Error("router",
-			"Could not post to server",
-			LogFields{"host": server, "error": err.Error()})
-	}
-	return err
 }

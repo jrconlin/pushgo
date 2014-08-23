@@ -184,11 +184,20 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 	}
 
 	// Next, setup the router, Deps: Logger, Metrics
-	router := new(Router)
+	router := NewRouter()
 	if err = LoadConfigForSection(app, "router", router, configFile); err != nil {
 		return
 	}
 	if err = app.SetRouter(router); err != nil {
+		return
+	}
+
+	// Set up the node discovery mechanism. Deps: Logger, Metrics, Router.
+	if obj, err = LoadExtensibleSection(app, "discovery", AvailableLocators, configFile); err != nil {
+		return
+	}
+	locator := obj.(Locator)
+	if err = router.SetLocator(locator); err != nil {
 		return
 	}
 

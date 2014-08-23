@@ -279,6 +279,6 @@ func (a *Application) RemoveClient(uaid string) {
 }
 
 func (a *Application) Stop() {
-	a.router.Unregister()
+	a.router.Close()
 	a.store.Close()
 }
