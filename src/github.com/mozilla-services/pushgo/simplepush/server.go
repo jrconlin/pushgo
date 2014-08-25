@@ -5,10 +5,12 @@
 package simplepush
 
 import (
+	"bytes"
 	"errors"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/mozilla-services/pushgo/id"
@@ -28,25 +30,25 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	PushEndpoint       string `toml:"push_endpoint"`
+	PushEndpoint       string `toml:"push_endpoint_template"`
 	PushLongPongs      int    `toml:"push_long_pongs"`
 	ClientMinPing      string `toml:"client_min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
 
 type Serv struct {
-	app          *Application
-	logger       *SimpleLogger
-	metrics      *Metrics
-	store        Store
-	key          []byte
-	pushEndpoint string
-	prop         PropPinger
+	app      *Application
+	logger   *SimpleLogger
+	metrics  *Metrics
+	store    Store
+	key      []byte
+	template *template.Template
+	prop     PropPinger
 }
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
-		PushEndpoint: "<current_host>/update/<token>",
+		PushEndpoint: "{{.CurrentHost}}/update/{{.Token}}",
 	}
 }
 
@@ -57,7 +59,12 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.metrics = app.Metrics()
 	self.store = app.Store()
 	self.key = app.TokenKey()
-	self.pushEndpoint = conf.PushEndpoint
+	self.template, err = template.New("Push").Parse(conf.PushEndpoint)
+	if err != nil {
+		self.logger.Critical("server", "Could not parse push endpoint template",
+			LogFields{"error": err.Error()})
+		return
+	}
 	return
 }
 
@@ -173,8 +180,6 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	var err error
 	args := cmd.Arguments
 	args["status"] = 200
-	var endPoint string
-	endPoint = self.pushEndpoint
 	// Generate the call back URL
 	chid, _ := args["channelID"].(string)
 	token, ok := self.store.IDsToKey(sock.Uaid, chid)
@@ -193,18 +198,28 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		}
 
 	}
+
 	// cheezy variable replacement.
-	endPoint = strings.Replace(endPoint, "<token>", token, -1)
-	endPoint = strings.Replace(endPoint, "<current_host>", self.app.FullHostname(), -1)
-	args["push.endpoint"] = endPoint
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("server",
-			"Generated Endpoint",
-			LogFields{"uaid": sock.Uaid,
-				"channelID": chid,
-				"token":     token,
-				"endpoint":  endPoint})
+	endpoint := new(bytes.Buffer)
+	if err = self.template.Execute(endpoint, struct {
+		Token       string
+		CurrentHost string
+	}{
+		Token:       token,
+		CurrentHost: self.app.FullHostname(),
+	}); err != nil {
+		self.logger.Error("server",
+			"Could not generate Push Endpoint",
+			LogFields{"error": err.Error()})
+		return 500, nil
 	}
+	args["push.endpoint"] = endpoint.String()
+	self.logger.Info("server",
+		"Generated Push Endpoint",
+		LogFields{"uaid": sock.Uaid,
+			"channelID": chid,
+			"token":     token,
+			"endpoint":  args["push.endpoint"].(string)})
 	return 200, args
 }
 

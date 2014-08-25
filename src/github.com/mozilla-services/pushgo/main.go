@@ -25,7 +25,7 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "1.3"
+const VERSION = "1.4"
 
 // -- main
 func main() {
