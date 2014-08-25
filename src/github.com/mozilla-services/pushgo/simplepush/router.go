@@ -312,18 +312,3 @@ func (r *Router) notifyOne(result chan<- bool, leases chan struct{}, stop <-chan
 func (r *Router) Addr() string {
 	return net.JoinHostPort(r.host, strconv.FormatUint(uint64(r.port), 10))
 }
-
-// TimeoutDialer returns a dialer function suitable for use with an
-// `http.Transport` instance.
-func TimeoutDialer(cTimeout, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
-
-	return func(netw, addr string) (c net.Conn, err error) {
-		c, err = net.DialTimeout(netw, addr, cTimeout)
-		if err != nil {
-			return nil, err
-		}
-		// do we need this if ResponseHeaderTimeout is set?
-		c.SetDeadline(time.Now().Add(rwTimeout))
-		return c, nil
-	}
-}
