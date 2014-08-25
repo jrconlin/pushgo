@@ -17,7 +17,7 @@ const (
 
 var ErrMinTTL = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
 
-type EtcdConf struct {
+type EtcdLocatorConf struct {
 	// Dir is the etcd key prefix for storing contacts. Defaults to
 	// `"push_hosts"`.
 	Dir string `toml:"dir"`
@@ -64,47 +64,45 @@ func NewEtcdLocator() *EtcdLocator {
 }
 
 func (*EtcdLocator) ConfigStruct() interface{} {
-	return &LocatorConf{
-		Etcd: EtcdConf{
-			Dir:             "push_hosts",
-			BucketSize:      10,
-			Servers:         []string{"http://localhost:4001"},
-			DefaultTTL:      "24h",
-			RefreshInterval: "5m",
-		},
+	return &EtcdLocatorConf{
+		Dir:             "push_hosts",
+		BucketSize:      10,
+		Servers:         []string{"http://localhost:4001"},
+		DefaultTTL:      "24h",
+		RefreshInterval: "5m",
 	}
 }
 
 func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*LocatorConf)
+	conf := config.(*EtcdLocatorConf)
 	l.logger = app.Logger()
 	l.metrics = app.Metrics()
 
-	l.refreshInterval, err = time.ParseDuration(conf.Etcd.RefreshInterval)
+	l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval)
 	if err != nil {
 		l.logger.Error("etcd", "Could not parse refreshInterval",
 			LogFields{"error": err.Error(),
-				"refreshInterval": conf.Etcd.RefreshInterval})
+				"refreshInterval": conf.RefreshInterval})
 		return
 	}
 	// default time for the server to be "live"
-	l.defaultTTL, err = time.ParseDuration(conf.Etcd.DefaultTTL)
+	l.defaultTTL, err = time.ParseDuration(conf.DefaultTTL)
 	if err != nil {
 		l.logger.Critical("etcd",
 			"Could not parse etcd default TTL",
-			LogFields{"value": conf.Etcd.DefaultTTL, "error": err.Error()})
+			LogFields{"value": conf.DefaultTTL, "error": err.Error()})
 		return
 	}
 	if l.defaultTTL < minTTL {
 		l.logger.Critical("etcd",
 			"default TTL too short",
-			LogFields{"value": conf.Etcd.DefaultTTL})
+			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
 	}
 
-	l.bucketSize = conf.Etcd.BucketSize
-	l.serverList = conf.Etcd.Servers
-	l.dir = path.Clean(conf.Etcd.Dir)
+	l.bucketSize = conf.BucketSize
+	l.serverList = conf.Servers
+	l.dir = path.Clean(conf.Dir)
 
 	// The authority of the current server is used as the etcd key.
 	router := app.Router()

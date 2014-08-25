@@ -40,7 +40,8 @@ type Routable struct {
 }
 
 type LocatorConf struct {
-	Etcd EtcdConf
+	Etcd   EtcdLocatorConf
+	Static StaticLocatorConf
 }
 
 // Locator describes a contact discovery service.
