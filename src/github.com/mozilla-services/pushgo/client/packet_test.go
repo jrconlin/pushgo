@@ -74,7 +74,11 @@ type caseTest struct {
 }
 
 func (t caseTest) TestPing() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}
@@ -97,7 +101,11 @@ func (t caseTest) TestPing() error {
 }
 
 func (t caseTest) TestACK() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}
@@ -141,7 +149,11 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}

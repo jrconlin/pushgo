@@ -22,8 +22,12 @@ const (
 var channelIds = MustGenerateIds(maxChannels + 1)
 
 func TestPush(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
 	// Send 50 messages on 3 channels.
-	if err := DoTest(Origin, 3, 50); err != nil {
+	if err := DoTest(origin, 3, 50); err != nil {
 		t.Fatalf("Smoke test failed: %#v", err)
 	}
 }
@@ -33,7 +37,11 @@ func TestDuplicateHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -67,7 +75,11 @@ func TestMultiRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -97,7 +109,11 @@ func TestChannelTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -120,7 +136,11 @@ func TestTooManyChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -136,7 +156,11 @@ func TestTooManyChannels(t *testing.T) {
 }
 
 func TestRegisterSeparate(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}

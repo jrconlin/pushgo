@@ -19,11 +19,12 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-const (
-	// Origin specifies the URI of the Simple Push WebSocket server. Can be
-	// obtained via `app.FullHostname()`.
-	Origin = "ws://localhost:8080"
+var (
+	// Server is a test Simple Push server.
+	Server = &TestServer{LogLevel: 0}
+)
 
+const (
 	// AllowDupes indicates whether the Simple Push server under test allows
 	// duplicate registrations. TODO: Expose as an `app` configuration flag.
 	AllowDupes = true
@@ -221,11 +222,15 @@ func isValidEndpoint(endpoint string) bool {
 
 // Sending channel IDs with an unknown device ID should return a new device ID.
 func TestHeloReset(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
 	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -262,7 +267,11 @@ type typeTest struct {
 }
 
 func (t typeTest) Run() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
@@ -393,7 +402,11 @@ func TestDuplicateRegister(t *testing.T) {
 		t.Log("Duplicate channel IDs not supported; skipping test")
 		return
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -420,7 +433,11 @@ func TestPrematureRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -454,7 +471,11 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -484,7 +505,11 @@ func TestMultipleRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -520,7 +545,11 @@ func (t idTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.name, err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
@@ -554,7 +583,11 @@ func (t idTest) TestHelo() error {
 }
 
 func (t idTest) TestRegister() error {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
@@ -633,7 +666,11 @@ func TestPrematureUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -662,7 +699,11 @@ func TestPrematureUnregister(t *testing.T) {
 }
 
 func TestUnregister(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -692,7 +733,11 @@ func TestUnregister(t *testing.T) {
 }
 
 func TestUnregisterRace(t *testing.T) {
-	socket, err := ws.Dial(Origin, "", Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	socket, err := ws.Dial(origin, "", origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -797,7 +842,11 @@ func TestUnregisterRace(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -840,7 +889,11 @@ func TestPrematureACK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -886,7 +939,11 @@ func TestPrematureACK(t *testing.T) {
 }
 
 func TestACK(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
