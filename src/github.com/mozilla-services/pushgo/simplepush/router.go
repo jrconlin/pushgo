@@ -21,7 +21,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -92,13 +91,13 @@ type RouterConfig struct {
 // currently maintains a WebSocket connection to the target device.
 type Router struct {
 	locator     Locator
+	listener    net.Listener
 	logger      *SimpleLogger
 	metrics     *Metrics
 	template    *template.Template
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	scheme      string
-	host        string
 	hostname    string
 	port        int
 	rclient     *http.Client
@@ -148,23 +147,24 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return
 	}
 
-	var (
-		portString string
-		port       uint64
-	)
-	if r.host, portString, err = net.SplitHostPort(conf.Addr); err != nil {
+	r.listener, err = Listen(conf.Addr)
+	if err != nil {
+		r.logger.Error("router", "Could not attach listener",
+			LogFields{"error": err.Error()})
 		return
 	}
-	if port, err = strconv.ParseUint(portString, 10, 16); err != nil {
-		return
-	}
-	r.port = int(port)
 
 	r.scheme = conf.Scheme
 	r.hostname = conf.DefaultHost
-	if r.hostname == "" {
+	if len(r.hostname) == 0 {
 		r.hostname = app.Hostname()
 	}
+
+	addr := r.listener.Addr().(*net.TCPAddr)
+	if len(r.hostname) == 0 {
+		r.hostname = addr.IP.String()
+	}
+	r.port = addr.Port
 
 	r.rclient = &http.Client{
 		Transport: &http.Transport{
@@ -186,11 +186,16 @@ func (r *Router) Locator() Locator {
 	return r.locator
 }
 
+func (r *Router) Listener() net.Listener {
+	return r.listener
+}
+
 func (r *Router) Close() (err error) {
 	close(r.closeSignal)
 	if r.locator != nil {
 		err = r.locator.Close()
 	}
+	r.listener.Close()
 	return
 }
 
@@ -307,8 +312,4 @@ func (r *Router) notifyOne(result chan<- bool, leases chan struct{}, stop <-chan
 	case <-stop:
 	case result <- true:
 	}
-}
-
-func (r *Router) Addr() string {
-	return net.JoinHostPort(r.host, strconv.FormatUint(uint64(r.port), 10))
 }

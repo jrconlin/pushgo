@@ -74,13 +74,13 @@ func main() {
 	errChan := app.Run()
 
 	select {
-	case err := <-errChan:
-		if err != nil {
-			panic("ListenAndServe: " + err.Error())
-		}
+	case err = <-errChan:
 	case <-sigChan:
 		app.Logger().Info("main", "Recieved signal, shutting down.", nil)
-		app.Stop()
+	}
+	app.Stop()
+	if err != nil {
+		panic("Run: " + err.Error())
 	}
 }
 
