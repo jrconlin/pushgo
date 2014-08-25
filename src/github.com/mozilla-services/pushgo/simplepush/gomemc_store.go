@@ -49,6 +49,7 @@ type GomemcStore struct {
 // GomemcConf specifies memcached adapter options.
 type GomemcConf struct {
 	ElastiCacheConfigEndpoint string           `toml:"elasticache_config_endpoint"`
+	MaxChannels               int              `toml:"max_channels"`
 	Driver                    GomemcDriverConf `toml:"memcache"`
 	Db                        DbConf
 }
@@ -57,6 +58,7 @@ type GomemcConf struct {
 // `HasConfigStruct.ConfigStruct()`.
 func (*GomemcStore) ConfigStruct() interface{} {
 	return &GomemcConf{
+		MaxChannels: 200,
 		Driver: GomemcDriverConf{
 			Hosts: []string{"127.0.0.1:11211"},
 		},
@@ -66,7 +68,6 @@ func (*GomemcStore) ConfigStruct() interface{} {
 			TimeoutDel:    24 * 60 * 60,
 			HandleTimeout: "5s",
 			PingPrefix:    "_pc-",
-			MaxChannels:   200,
 		},
 	}
 }
@@ -77,6 +78,8 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*GomemcConf)
 	s.logger = app.Logger()
 	s.defaultHost = app.Hostname()
+	s.maxChannels = conf.MaxChannels
+
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
 		s.Hosts = conf.Driver.Hosts
 	} else {
@@ -96,7 +99,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	s.PingPrefix = conf.Db.PingPrefix
-	s.maxChannels = conf.Db.MaxChannels
+
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
 		s.logger.Error("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err

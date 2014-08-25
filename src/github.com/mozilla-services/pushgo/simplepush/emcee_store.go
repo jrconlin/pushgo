@@ -117,6 +117,7 @@ type EmceeStore struct {
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
 	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
+	MaxChannels               int             `toml:"max_channels"`
 	Driver                    EmceeDriverConf `toml:"memcache"`
 	Db                        DbConf
 }
@@ -125,6 +126,7 @@ type EmceeConf struct {
 // `HasConfigStruct.ConfigStruct()`.
 func (*EmceeStore) ConfigStruct() interface{} {
 	return &EmceeConf{
+		MaxChannels: 200,
 		Driver: EmceeDriverConf{
 			Hosts:        []string{"127.0.0.1:11211"},
 			MaxConns:     400,
@@ -139,7 +141,6 @@ func (*EmceeStore) ConfigStruct() interface{} {
 			TimeoutDel:    24 * 60 * 60,
 			HandleTimeout: "5s",
 			PingPrefix:    "_pc-",
-			MaxChannels:   200,
 		},
 	}
 }
@@ -149,7 +150,10 @@ func (*EmceeStore) ConfigStruct() interface{} {
 func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EmceeConf)
 	s.logger = app.Logger()
+
 	s.defaultHost = app.Hostname()
+	s.maxChannels = conf.MaxChannels
+
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
 		s.Hosts = conf.Driver.Hosts
 	} else {
@@ -163,8 +167,8 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	s.MaxConns = conf.Driver.MaxConns
-	s.maxChannels = conf.Db.MaxChannels
 	s.PingPrefix = conf.Db.PingPrefix
+
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
 		s.logger.Error("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err

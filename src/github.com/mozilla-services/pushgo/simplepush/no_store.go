@@ -11,12 +11,12 @@ import (
 )
 
 type NoStoreConfig struct {
-	Db DbConf
+	MaxChannels int `toml:"max_channels"`
 }
 
 type NoStore struct {
-	config *NoStoreConfig
-	logger *SimpleLogger
+	logger      *SimpleLogger
+	maxChannels int
 }
 
 func (*NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
@@ -36,19 +36,17 @@ func (*NoStore) IDsToKey(suaid, schid string) (string, bool) {
 
 func (*NoStore) ConfigStruct() interface{} {
 	return &NoStoreConfig{
-		Db: DbConf{
-			MaxChannels: 200,
-		},
+		MaxChannels: 200,
 	}
 }
 
 func (n *NoStore) Init(app *Application, config interface{}) error {
-	n.config = config.(*NoStoreConfig)
 	n.logger = app.Logger()
+	n.maxChannels = config.(*NoStoreConfig).MaxChannels
 	return nil
 }
 
-func (n *NoStore) MaxChannels() int                                     { return n.config.Db.MaxChannels }
+func (n *NoStore) MaxChannels() int                                     { return n.maxChannels }
 func (*NoStore) Close() error                                           { return nil }
 func (*NoStore) Status() (bool, error)                                  { return true, nil }
 func (*NoStore) Exists(string) bool                                     { return false }
