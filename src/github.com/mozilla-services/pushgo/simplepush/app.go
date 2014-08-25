@@ -83,7 +83,7 @@ func (a *Application) ConfigStruct() interface{} {
 // as well.
 // Note: We implement the Init method to comply with the interface, so the app
 // passed here will be nil.
-func (a *Application) Init(app *Application, config interface{}) (err error) {
+func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
 	if conf.UseAwsHost {

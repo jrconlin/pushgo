@@ -35,6 +35,135 @@ type HasConfigStruct interface {
 
 var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
+// Plugin types
+type PluginType int
+
+const (
+	PluginApp PluginType = iota + 1
+	PluginLogger
+	PluginPinger
+	PluginMetrics
+	PluginStore
+	PluginRouter
+	PluginLocator
+	PluginServer
+	PluginHandlers
+)
+
+var pluginNames = map[PluginType]string{
+	PluginApp:      "app",
+	PluginLogger:   "logger",
+	PluginPinger:   "pinger",
+	PluginMetrics:  "metrics",
+	PluginStore:    "store",
+	PluginLocator:  "locator",
+	PluginServer:   "server",
+	PluginHandlers: "handlers",
+}
+
+func (t PluginType) String() string {
+	return pluginNames[t]
+}
+
+// Plugin loaders
+type PluginLoaders map[PluginType]func(*Application) (HasConfigStruct, error)
+
+func (l PluginLoaders) loadPlugin(plugin PluginType, app *Application) (HasConfigStruct, error) {
+	if loader, ok := l[plugin]; ok {
+		return loader(app)
+	}
+	return nil, fmt.Errorf("Missing plugin loader for %s", plugin)
+}
+
+func (l PluginLoaders) Load(logging int) (*Application, error) {
+	var (
+		obj HasConfigStruct
+		err error
+	)
+
+	// We have a somewhat convoluted setup process to ensure prerequisites are
+	// available on the Application at each stage of application setup
+
+	// Setup the base application first
+	app := new(Application)
+	if obj, err = l.loadPlugin(PluginApp, app); err != nil {
+		return nil, err
+	}
+
+	// Next, many things require the logger, and logger has no other deps
+	if obj, err = l.loadPlugin(PluginLogger, app); err != nil {
+		return nil, err
+	}
+	logger := obj.(Logger)
+	if logging > 0 {
+		logger.SetFilter(LogLevel(logging))
+		logger.Log(LogLevel(logging), "config", "Setting minimum logging level from CLI",
+			LogFields{"level": fmt.Sprintf("%d", LogLevel(logging))})
+	}
+	if err = app.SetLogger(logger); err != nil {
+		return nil, err
+	}
+
+	// Load the Proprietary Ping element. Deps: Logger
+	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
+		return nil, err
+	}
+	propping := obj.(PropPinger)
+	if err = app.SetPropPinger(propping); err != nil {
+		return nil, err
+	}
+
+	// Next, metrics, Deps: Logger
+	if obj, err = l.loadPlugin(PluginMetrics, app); err != nil {
+		return nil, err
+	}
+	metrics := obj.(*Metrics)
+	if err = app.SetMetrics(metrics); err != nil {
+		return nil, err
+	}
+
+	// Next, storage, Deps: Logger, Metrics
+	if obj, err = l.loadPlugin(PluginStore, app); err != nil {
+		return nil, err
+	}
+	store := obj.(Store)
+	if err = app.SetStore(store); err != nil {
+		return nil, err
+	}
+
+	// Next, setup the router, Deps: Logger, Metrics
+	if obj, err = l.loadPlugin(PluginRouter, app); err != nil {
+		return nil, err
+	}
+	router := obj.(*Router)
+	if err = app.SetRouter(router); err != nil {
+		return nil, err
+	}
+
+	// Set up the node discovery mechanism. Deps: Logger, Metrics, Router.
+	if obj, err = l.loadPlugin(PluginLocator, app); err != nil {
+		return nil, err
+	}
+	locator := obj.(Locator)
+	if err = router.SetLocator(locator); err != nil {
+		return nil, err
+	}
+
+	// Finally, setup the handlers, Deps: Logger, Metrics
+	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
+		return nil, err
+	}
+	serv := obj.(*Serv)
+	app.SetServer(serv)
+	if obj, err = l.loadPlugin(PluginHandlers, app); err != nil {
+		return nil, err
+	}
+	handlers := obj.(*Handler)
+	app.SetHandlers(handlers)
+
+	return app, nil
+}
+
 func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
@@ -88,7 +217,7 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 
 // Load an extensible section that has a type keyword
 func LoadExtensibleSection(app *Application, sectionName string,
-	extensions AvailableExtensions, configFile ConfigFile) (interface{}, error) {
+	extensions AvailableExtensions, configFile ConfigFile) (HasConfigStruct, error) {
 	var err error
 
 	confSection := new(ExtensibleGlobals)
@@ -124,94 +253,57 @@ func LoadExtensibleSection(app *Application, sectionName string,
 // Handles reading a TOML based configuration file, and loading an
 // initialized Application, ready to Run
 func LoadApplicationFromFileName(filename string, logging int) (app *Application, err error) {
-	var (
-		obj        interface{}
-		configFile ConfigFile
-	)
+	var configFile ConfigFile
 
 	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
 		return nil, fmt.Errorf("Error decoding config file: %s", err)
 	}
 
-	// We have a somewhat convoluted setup process to ensure prerequisites are
-	// available on the Application at each stage of application setup
-
-	// Setup the base application first
-	app = new(Application)
-	if err = LoadConfigForSection(nil, "default", app, configFile); err != nil {
-		return
+	loaders := PluginLoaders{
+		PluginApp: func(app *Application) (HasConfigStruct, error) {
+			return nil, LoadConfigForSection(nil, "default", app, configFile)
+		},
+		PluginLogger: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "logging", AvailableLoggers, configFile)
+		},
+		PluginPinger: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "propping", AvailablePings, configFile)
+		},
+		PluginMetrics: func(app *Application) (HasConfigStruct, error) {
+			metrics := new(Metrics)
+			if err := LoadConfigForSection(app, "metrics", metrics, configFile); err != nil {
+				return nil, err
+			}
+			return metrics, nil
+		},
+		PluginStore: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "storage", AvailableStores, configFile)
+		},
+		PluginRouter: func(app *Application) (HasConfigStruct, error) {
+			router := NewRouter()
+			if err := LoadConfigForSection(app, "router", router, configFile); err != nil {
+				return nil, err
+			}
+			return router, nil
+		},
+		PluginLocator: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "discovery", AvailableLocators, configFile)
+		},
+		PluginServer: func(app *Application) (HasConfigStruct, error) {
+			serv := new(Serv)
+			configStruct := serv.ConfigStruct()
+			if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
+				return nil, err
+			}
+			serv.Init(app, configStruct)
+			return serv, nil
+		},
+		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
+			handlers := new(Handler)
+			handlers.Init(app, nil)
+			return handlers, nil
+		},
 	}
 
-	// Next, many things require the logger, and logger has no other deps
-	if obj, err = LoadExtensibleSection(app, "logging", AvailableLoggers, configFile); err != nil {
-		return
-	}
-	logger := obj.(Logger)
-	if logging > 0 {
-		logger.SetFilter(LogLevel(logging))
-		logger.Log(LogLevel(logging), "config", "Setting minimum logging level from CLI",
-			LogFields{"level": fmt.Sprintf("%d", LogLevel(logging))})
-	}
-	if err = app.SetLogger(logger); err != nil {
-		return
-	}
-
-	// Load the Proprietary Ping element. Deps: Logger
-	if obj, err = LoadExtensibleSection(app, "propping", AvailablePings, configFile); err != nil {
-		return
-	}
-	propping, _ := obj.(PropPinger)
-	if err = app.SetPropPinger(propping); err != nil {
-		return
-	}
-
-	// Next, metrics, Deps: Logger
-	metrics := new(Metrics)
-	if err = LoadConfigForSection(app, "metrics", metrics, configFile); err != nil {
-		return
-	}
-	if err = app.SetMetrics(metrics); err != nil {
-		return
-	}
-
-	// Next, storage, Deps: Logger, Metrics
-	if obj, err = LoadExtensibleSection(app, "storage", AvailableStores, configFile); err != nil {
-		return
-	}
-	store := obj.(Store)
-	if err = app.SetStore(store); err != nil {
-		return
-	}
-
-	// Next, setup the router, Deps: Logger, Metrics
-	router := NewRouter()
-	if err = LoadConfigForSection(app, "router", router, configFile); err != nil {
-		return
-	}
-	if err = app.SetRouter(router); err != nil {
-		return
-	}
-
-	// Set up the node discovery mechanism. Deps: Logger, Metrics, Router.
-	if obj, err = LoadExtensibleSection(app, "discovery", AvailableLocators, configFile); err != nil {
-		return
-	}
-	locator := obj.(Locator)
-	if err = router.SetLocator(locator); err != nil {
-		return
-	}
-
-	// Finally, setup the handlers, Deps: Logger, Metrics
-	serv := new(Serv)
-	configStruct := serv.ConfigStruct()
-	if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
-		return
-	}
-	serv.Init(app, configStruct)
-	app.SetServer(serv)
-
-	handlers := new(Handler)
-	handlers.Init(app, nil)
-	app.SetHandlers(handlers)
-	return
+	return loaders.Load(logging)
 }
