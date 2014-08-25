@@ -7,6 +7,7 @@ package simplepush
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,8 +21,7 @@ import (
 
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host"`
-	Host               string
-	Port               int
+	Addr               string
 	TokenKey           string `toml:"token_key"`
 	MaxConnections     int    `toml:"max_connections"`
 	UseAwsHost         bool   `toml:"use_aws_host"`
@@ -70,8 +70,7 @@ func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
-		Host:               "0.0.0.0",
-		Port:               8080,
+		Addr:               ":8080",
 		MaxConnections:     1000,
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
@@ -100,19 +99,29 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 		}
 	}
 
+	var (
+		portString string
+		port       uint64
+	)
+	if a.host, portString, err = net.SplitHostPort(conf.Addr); err != nil {
+		return
+	}
+	if port, err = strconv.ParseUint(portString, 10, 16); err != nil {
+		return
+	}
+	a.port = int(port)
+
 	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
-	if usingSSL && conf.Port == 443 {
+	if usingSSL && a.port == 443 {
 		a.fullHostname = fmt.Sprintf("https://%s", a.hostname)
 	} else if usingSSL {
-		a.fullHostname = fmt.Sprintf("https://%s:%d", a.hostname, conf.Port)
-	} else if conf.Port == 80 {
+		a.fullHostname = fmt.Sprintf("https://%s:%d", a.hostname, a.port)
+	} else if a.port == 80 {
 		a.fullHostname = fmt.Sprintf("http://%s", a.hostname)
 	} else {
-		a.fullHostname = fmt.Sprintf("http://%s:%d", a.hostname, conf.Port)
+		a.fullHostname = fmt.Sprintf("http://%s:%d", a.hostname, a.port)
 	}
 
-	a.host = conf.Host
-	a.port = conf.Port
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
 		err = fmt.Errorf("Unable to parse 'client_min_ping_interval: %s",
 			err.Error())
@@ -189,7 +198,7 @@ func (a *Application) Run() (errChan chan error) {
 
 	// Weigh the anchor!
 	go func() {
-		addr := a.host + ":" + strconv.Itoa(a.port)
+		addr := a.Addr()
 		if len(a.sslCertFile) > 0 && len(a.sslKeyFile) > 0 {
 			a.log.Info("app", "Using TLS", nil)
 			errChan <- http.ListenAndServeTLS(addr, a.sslCertFile, a.sslKeyFile, RESTMux)
@@ -199,8 +208,8 @@ func (a *Application) Run() (errChan chan error) {
 	}()
 
 	go func() {
-		addr := ":" + strconv.Itoa(a.router.port)
-		a.log.Info("app", "Starting Router", LogFields{"port": addr})
+		addr := a.router.Addr()
+		a.log.Info("app", "Starting Router", LogFields{"addr": addr})
 		errChan <- http.ListenAndServe(addr, RouteMux)
 	}()
 
@@ -213,6 +222,10 @@ func (a *Application) Hostname() string {
 
 func (a *Application) FullHostname() string {
 	return a.fullHostname
+}
+
+func (a *Application) Addr() string {
+	return net.JoinHostPort(a.host, strconv.FormatUint(uint64(a.port), 10))
 }
 
 func (a *Application) MaxConnections() int {

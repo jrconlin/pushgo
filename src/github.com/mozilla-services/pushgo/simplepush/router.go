@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -77,9 +78,9 @@ type RouterConfig struct {
 	// value; overrides `app.Hostname()` if specified.
 	DefaultHost string `toml:"default_host"`
 
-	// Port is the port that the router will use to receive proxied updates. This
-	// port should not be publicly accessible. Defaults to 3000.
-	Port int
+	// Addr is the interface and port that the router will use to receive proxied
+	// updates. The port should not be publicly accessible. Defaults to `":3000"`.
+	Addr string
 
 	// UrlTemplate is a text/template source string for constructing the proxy
 	// endpoint URL. Interpolated variables are `{{.Scheme}}`, `{{.Host}}`,
@@ -97,6 +98,7 @@ type Router struct {
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	scheme      string
+	host        string
 	hostname    string
 	port        int
 	rclient     *http.Client
@@ -114,7 +116,7 @@ func (*Router) ConfigStruct() interface{} {
 		Ctimeout:    "3s",
 		Rwtimeout:   "3s",
 		Scheme:      "http",
-		Port:        3000,
+		Addr:        ":3000",
 		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
 	}
 }
@@ -146,12 +148,23 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return
 	}
 
+	var (
+		portString string
+		port       uint64
+	)
+	if r.host, portString, err = net.SplitHostPort(conf.Addr); err != nil {
+		return
+	}
+	if port, err = strconv.ParseUint(portString, 10, 16); err != nil {
+		return
+	}
+	r.port = int(port)
+
 	r.scheme = conf.Scheme
 	r.hostname = conf.DefaultHost
 	if r.hostname == "" {
 		r.hostname = app.Hostname()
 	}
-	r.port = conf.Port
 
 	r.rclient = &http.Client{
 		Transport: &http.Transport{
@@ -294,6 +307,10 @@ func (r *Router) notifyOne(result chan<- bool, leases chan struct{}, stop <-chan
 	case <-stop:
 	case result <- true:
 	}
+}
+
+func (r *Router) Addr() string {
+	return net.JoinHostPort(r.host, strconv.FormatUint(uint64(r.port), 10))
 }
 
 // TimeoutDialer returns a dialer function suitable for use with an
