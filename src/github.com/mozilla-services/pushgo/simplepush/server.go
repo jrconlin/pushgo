@@ -96,14 +96,18 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	}
 	self.port = addr.Port
 
-	if usingSSL && self.port == 443 {
-		self.fullHostname = fmt.Sprintf("https://%s", self.hostname)
-	} else if usingSSL {
-		self.fullHostname = fmt.Sprintf("https://%s:%d", self.hostname, self.port)
-	} else if self.port == 80 {
-		self.fullHostname = fmt.Sprintf("http://%s", self.hostname)
+	if usingSSL {
+		if self.port == 443 {
+			self.fullHostname = fmt.Sprintf("https://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("https://%s:%d", self.hostname, self.port)
+		}
 	} else {
-		self.fullHostname = fmt.Sprintf("http://%s:%d", self.hostname, self.port)
+		if self.port == 80 {
+			self.fullHostname = fmt.Sprintf("http://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("http://%s:%d", self.hostname, self.port)
+		}
 	}
 
 	return
@@ -255,7 +259,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.fullHostname,
+		self.FullHostname(),
 	}); err != nil {
 		self.logger.Error("server",
 			"Could not generate Push Endpoint",

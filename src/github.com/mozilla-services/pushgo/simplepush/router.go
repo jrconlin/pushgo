@@ -29,10 +29,7 @@ import (
 	"time"
 )
 
-var (
-	ErrNoLocator      = errors.New("Discovery service not configured")
-	AvailableLocators = make(AvailableExtensions)
-)
+var ErrNoLocator = errors.New("Discovery service not configured")
 
 // Routable is the update payload sent to each contact.
 type Routable struct {
@@ -40,27 +37,6 @@ type Routable struct {
 	ChannelID string `json:"chid"`
 	Version   int64  `json:"version"`
 	Time      string `json:"time"`
-}
-
-type LocatorConf struct {
-	Etcd   EtcdLocatorConf
-	Static StaticLocatorConf
-}
-
-// Locator describes a contact discovery service.
-type Locator interface {
-	// Close stops and releases any resources associated with the Locator.
-	Close() error
-
-	// Contacts returns a slice of candidate peers for the router to probe. For
-	// an etcd-based Locator, the slice may contain all nodes in the cluster;
-	// for a DHT-based Locator, the slice may contain either a single node or a
-	// short list of the closest nodes.
-	Contacts(uaid string) ([]string, error)
-
-	// MaxParallel returns the maximum number of contacts that the router should
-	// probe before checking replies.
-	MaxParallel() int
 }
 
 type RouterConfig struct {
@@ -195,8 +171,8 @@ func (r *Router) Listener() net.Listener {
 
 func (r *Router) Close() (err error) {
 	close(r.closeSignal)
-	if r.locator != nil {
-		err = r.locator.Close()
+	if locator := r.Locator(); locator != nil {
+		err = locator.Close()
 	}
 	r.listener.Close()
 	return
@@ -204,7 +180,8 @@ func (r *Router) Close() (err error) {
 
 // SendUpdate broadcasts an update packet to the correct server.
 func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
-	if r.locator == nil {
+	locator := r.Locator()
+	if locator == nil {
 		r.logger.Warn("router", "No discovery service set; unable to route message",
 			LogFields{"uaid": uaid, "chid": chid})
 		return ErrNoLocator
@@ -220,7 +197,7 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 			LogFields{"error": err.Error()})
 		return
 	}
-	contacts, err := r.locator.Contacts(uaid)
+	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		r.logger.Error("router", "Could not query discovery service for contacts",
 			LogFields{"error": err.Error()})
@@ -234,8 +211,8 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 	return
 }
 
-// FormatURL constructs a proxy endpoint for the given contact and device ID.
-func (r *Router) FormatURL(contact, uaid string) (string, error) {
+// formatURL constructs a proxy endpoint for the given contact and device ID.
+func (r *Router) formatURL(contact, uaid string) (string, error) {
 	url := new(bytes.Buffer)
 	err := r.template.Execute(url, struct {
 		Scheme, Host, Uaid string
@@ -251,9 +228,8 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 		r.logger.Debug("router", "Sending push...", LogFields{"msg": string(msg),
 			"servers": strings.Join(contacts, ", ")})
 	}
-	// The buffered lease channel ensures that the number of in-flight requests
-	// never exceeds r.locator.MaxParallel().
-	leases := make(chan struct{}, r.locator.MaxParallel())
+	// The buffered lease channel sets a limit on the number of pending requests.
+	leases := make(chan struct{}, r.Locator().MaxParallel())
 	for i := 0; i < cap(leases); i++ {
 		leases <- struct{}{}
 	}
@@ -264,7 +240,7 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 	// contact accepts the update.
 	result := make(chan bool)
 	for _, contact := range contacts {
-		url, err := r.FormatURL(contact, uaid)
+		url, err := r.formatURL(contact, uaid)
 		if err != nil {
 			r.logger.Error("router", "Could not build routing URL",
 				LogFields{"error": err.Error()})
