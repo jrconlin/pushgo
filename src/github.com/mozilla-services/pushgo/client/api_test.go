@@ -26,10 +26,10 @@ var (
 
 const (
 	// AllowDupes indicates whether the Simple Push server under test allows
-	// duplicate registrations. TODO: Expose as an `app` configuration flag.
+	// duplicate registrations. TODO: Expose as a simplepush.Application flag.
 	AllowDupes = true
 
-	// validId is a placeholder device ID used by `typeTest`.
+	// validId is a placeholder device ID used by typeTest.
 	validId = "57954545-c1bc-4fc4-9c1a-cd186d861336"
 )
 
@@ -101,8 +101,8 @@ func (h *CustomHelo) Do() (reply Reply, err error) {
 	return
 }
 
-// ClientInvalidACK wraps a `ClientACK` packet in a synchronous request packet
-// with a fabricated message ID to track error replies.
+// ClientInvalidACK wraps a ClientACK in a synchronous request packet with a
+// fabricated message ID to track error replies.
 type ClientInvalidACK struct {
 	ClientACK
 }
@@ -112,7 +112,7 @@ func (*ClientInvalidACK) CanReply() bool  { return true }
 func (*ClientInvalidACK) Sync() bool      { return true }
 
 // ServerInvalidACK tracks invalid acknowledgement replies. The reply packet
-// payload contains the data sent in the `ClientACK` packet.
+// payload contains the data sent in the ClientACK.
 type ServerInvalidACK struct {
 	Updates    []Update
 	StatusCode int
@@ -146,7 +146,7 @@ func (t *ClientTracked) Do() (reply Reply, err error) {
 	return
 }
 
-// ServerUnregister is a reply to a `ClientUnregister` request. Simple Push
+// ServerUnregister is a reply to a ClientUnregister request. Simple Push
 // servers are not required to support deregistration, so deregistration
 // packets are not tracked by default.
 type ServerUnregister struct {
@@ -160,7 +160,7 @@ func (*ServerUnregister) Sync() bool        { return false }
 func (u *ServerUnregister) Id() interface{} { return u.ChannelId }
 func (u *ServerUnregister) Status() int     { return u.StatusCode }
 
-// MultipleRegister is a malformed `ClientRegister` packet that specifies
+// MultipleRegister is a malformed ClientRegister packet that specifies
 // multiple channel IDs in the payload.
 type MultipleRegister struct {
 	ClientRegister
@@ -573,7 +573,7 @@ func (t idTest) TestHelo() error {
 	if helo.StatusCode != 200 {
 		return fmt.Errorf("On test %v, unexpected status code: got %#v; want 200", t.name, helo.StatusCode)
 	}
-	// The Simple Push server requires the `channelIDs` field to be present in
+	// The Simple Push server requires the channelIDs field to be present in
 	// the handshake, but does not validate its contents, since any queued
 	// messages will be immediately flushed to the client.
 	if helo.DeviceId == deviceId {
@@ -777,7 +777,7 @@ func TestUnregisterRace(t *testing.T) {
 			case <-pendingTimer:
 				ok = false
 
-			// Read the update, but don't call `AcceptUpdate()`.
+			// Read the update, but don't call AcceptUpdate().
 			case packet, ok = <-conn.packets:
 				if !ok {
 					err = ErrChanClosed

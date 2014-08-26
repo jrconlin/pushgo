@@ -55,7 +55,7 @@ type GomemcConf struct {
 }
 
 // ConfigStruct returns a configuration object with defaults. Implements
-// `HasConfigStruct.ConfigStruct()`.
+// HasConfigStruct.ConfigStruct().
 func (*GomemcStore) ConfigStruct() interface{} {
 	return &GomemcConf{
 		MaxChannels: 200,
@@ -73,7 +73,7 @@ func (*GomemcStore) ConfigStruct() interface{} {
 }
 
 // Init initializes the memcached adapter with the given configuration.
-// Implements `HasConfigStruct.Init()`.
+// Implements HasConfigStruct.Init().
 func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*GomemcConf)
 	s.logger = app.Logger()
@@ -116,19 +116,19 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 }
 
 // MaxChannels returns the maximum number of channel registrations allowed per
-// client. Implements `Store.MaxChannels()`.
+// client. Implements Store.MaxChannels().
 func (s *GomemcStore) MaxChannels() int {
 	return s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
-// errors. Safe to call multiple times. Implements `Store.Close()`.
+// errors. Safe to call multiple times. Implements Store.Close().
 func (s *GomemcStore) Close() (err error) {
 	return
 }
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
-// readable primary key. Implements `Store.KeyToIDs()`.
+// readable primary key. Implements Store.KeyToIDs().
 func (s *GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
@@ -141,7 +141,7 @@ func (s *GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
-// `Store.IDsToKey()`.
+// Store.IDsToKey().
 func (s *GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
 		s.logger.Warn("gomemc", "Invalid IDs, returning blank Key",
@@ -152,7 +152,7 @@ func (s *GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 }
 
 // Status queries whether memcached is available for reading and writing.
-// Implements `Store.Status()`.
+// Implements Store.Status().
 func (s *GomemcStore) Status() (success bool, err error) {
 	test := []byte("test")
 	fakeID, err := id.Generate()
@@ -178,7 +178,7 @@ func (s *GomemcStore) Status() (success bool, err error) {
 }
 
 // Exists returns a Boolean indicating whether a device has previously
-// registered with the Simple Push server. Implements `Store.Exists()`.
+// registered with the Simple Push server. Implements Store.Exists().
 func (s *GomemcStore) Exists(suaid string) bool {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -223,8 +223,8 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 }
 
 // Register creates and stores a channel record for the given device ID and
-// channel ID. If the channel `version` is > 0, the record will be marked as
-// active. Implements `Store.Register()`.
+// channel ID. If version > 0, the record will be marked as active. Implements
+// Store.Register().
 func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -275,7 +275,7 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 }
 
 // Update updates the version for the given device ID and channel ID.
-// Implements `Store.Update()`.
+// Implements Store.Update().
 func (s *GomemcStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
@@ -334,7 +334,7 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 }
 
 // Unregister marks the channel ID associated with the given device ID
-// as inactive. Implements `Store.Unregister()`.
+// as inactive. Implements Store.Unregister().
 func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -350,8 +350,8 @@ func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 }
 
 // Drop removes a channel ID associated with the given device ID from
-// memcached. Deregistration calls should use `Unregister()` instead.
-// Implements `Store.Drop()`.
+// memcached. Deregistration calls should call s.Unregister() instead.
+// Implements Store.Drop().
 func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
@@ -375,7 +375,7 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 }
 
 // FetchAll returns all channel updates and expired channels for a device ID
-// since the specified cutoff time. Implements `Store.FetchAll()`.
+// since the specified cutoff time. Implements Store.FetchAll().
 func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
 		return nil, nil, sperrors.InvalidDataError
@@ -469,7 +469,7 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 }
 
 // DropAll removes all channel records for the given device ID. Implements
-// `Store.DropAll()`.
+// Store.DropAll().
 func (s *GomemcStore) DropAll(suaid string) error {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -493,7 +493,7 @@ func (s *GomemcStore) DropAll(suaid string) error {
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
-// from memcached. Implements `Store.FetchPing()`.
+// from memcached. Implements Store.FetchPing().
 func (s *GomemcStore) FetchPing(suaid string) (connect string, err error) {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -507,7 +507,7 @@ func (s *GomemcStore) FetchPing(suaid string) (connect string, err error) {
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
-// memcached. Implements `Store.PutPing()`.
+// memcached. Implements Store.PutPing().
 func (s *GomemcStore) PutPing(suaid string, connect string) error {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -520,7 +520,7 @@ func (s *GomemcStore) PutPing(suaid string, connect string) error {
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
-// Implements `Store.DropPing()`.
+// Implements Store.DropPing().
 func (s *GomemcStore) DropPing(suaid string) error {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {

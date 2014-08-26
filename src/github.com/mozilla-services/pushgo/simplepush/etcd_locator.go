@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package simplepush
 
 import (
@@ -19,7 +23,7 @@ var ErrMinTTL = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
 
 type EtcdLocatorConf struct {
 	// Dir is the etcd key prefix for storing contacts. Defaults to
-	// `"push_hosts"`.
+	// "push_hosts".
 	Dir string `toml:"dir"`
 
 	// BucketSize is the maximum number of requests that the router should send
@@ -30,11 +34,11 @@ type EtcdLocatorConf struct {
 	Servers []string
 
 	// DefaultTTL is the maximum amount of time that registered contacts will be
-	// considered valid. Defaults to `"24h"`.
+	// considered valid. Defaults to "24h".
 	DefaultTTL string
 
 	// RefreshInterval is the maximum amount of time that a cached contact list
-	// will be considered valid. Defaults to `"5m"`.
+	// will be considered valid. Defaults to "5m".
 	RefreshInterval string `toml:"refresh_interval"`
 }
 
@@ -146,7 +150,7 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 }
 
 // Close stops the locator and closes the etcd client connection. Implements
-// `Locator.Close()`.
+// Locator.Close().
 func (l *EtcdLocator) Close() (err error) {
 	close(l.closeSignal)
 	l.closeWait.Wait()
@@ -157,7 +161,7 @@ func (l *EtcdLocator) Close() (err error) {
 }
 
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
-// Implements `Locator.Contacts()`.
+// Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) ([]string, error) {
 	contacts, err := l.getServers()
 	if err != nil {
@@ -174,7 +178,7 @@ func (l *EtcdLocator) Contacts(string) ([]string, error) {
 }
 
 // MaxParallel returns the maximum number of requests that the router should
-// send in parallel. Implements `Locator.MaxParallel()`.
+// send in parallel. Implements Locator.MaxParallel().
 func (l *EtcdLocator) MaxParallel() int {
 	return l.bucketSize
 }

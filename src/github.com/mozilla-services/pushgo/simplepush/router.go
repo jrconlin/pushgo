@@ -1,7 +1,10 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 // HTTP version of the cross machine router
-// Fetch the servers from etcd, divvy them up into buckets,
-// proxy the update to the servers, stopping once you've gotten
-// a successful return.
+// Fetch a list of peers (via an etcd store, DHT, or static list), divvy them
+// up into buckets, proxy the update to the servers, stopping once you've
+// gotten a successful return.
 // PROS:
 //  Very simple to implement
 //  hosts can autoannounce
@@ -61,7 +64,7 @@ type Locator interface {
 }
 
 type RouterConfig struct {
-	// Ctimeout is the maximum amount of time that the router's `RoundTripper`
+	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
 	Ctimeout string
 
@@ -70,20 +73,20 @@ type RouterConfig struct {
 	Rwtimeout string
 
 	// Scheme is the scheme component of the proxy endpoint, used by the router
-	// to construct the endpoint of a peer. Defaults to `"http"`.
+	// to construct the endpoint of a peer. Defaults to "http".
 	Scheme string
 
 	// DefaultHost is the default hostname of the proxy endpoint. No default
-	// value; overrides `app.Hostname()` if specified.
+	// value; overrides simplepush.Application.Hostname() if specified.
 	DefaultHost string `toml:"default_host"`
 
 	// Addr is the interface and port that the router will use to receive proxied
-	// updates. The port should not be publicly accessible. Defaults to `":3000"`.
+	// updates. The port should not be publicly accessible. Defaults to ":3000".
 	Addr string
 
 	// UrlTemplate is a text/template source string for constructing the proxy
-	// endpoint URL. Interpolated variables are `{{.Scheme}}`, `{{.Host}}`,
-	// and `{{.Uaid}}`.
+	// endpoint URL. Interpolated variables are {{.Scheme}}, {{.Host}}, and
+	// {{.Uaid}}.
 	UrlTemplate string `toml:"url_template"`
 }
 
@@ -249,7 +252,7 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 			"servers": strings.Join(contacts, ", ")})
 	}
 	// The buffered lease channel ensures that the number of in-flight requests
-	// never exceeds `r.locator.MaxParallel()`.
+	// never exceeds r.locator.MaxParallel().
 	leases := make(chan struct{}, r.locator.MaxParallel())
 	for i := 0; i < cap(leases); i++ {
 		leases <- struct{}{}
@@ -257,7 +260,7 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 	stop := make(chan struct{})
 	defer close(stop)
 	// Broadcast the message to all contacts in the list returned by the
-	// discovery service. The `stop` channel will be closed as soon as a
+	// discovery service. The stop channel will be closed as soon as a
 	// contact accepts the update.
 	result := make(chan bool)
 	for _, contact := range contacts {

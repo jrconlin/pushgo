@@ -15,7 +15,7 @@ import (
 const (
 	// maxChannels is the maximum number of channels allowed in the opening
 	// handshake. Clients that specify more channels will receive a new device
-	// ID. Can be obtained via `app.Store.MaxChannels()`.
+	// ID. Can be obtained via server.Application.Store().MaxChannels.
 	maxChannels = 500
 )
 

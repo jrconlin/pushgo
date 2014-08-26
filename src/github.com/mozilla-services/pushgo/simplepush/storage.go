@@ -17,7 +17,7 @@ var (
 // StorageError represents an adapter storage error.
 type StorageError string
 
-// Error implements the `error` interface.
+// Error implements the error interface.
 func (err StorageError) Error() string {
 	return fmt.Sprintf("StorageError: %s", string(err))
 }
@@ -47,7 +47,7 @@ type DbConf struct {
 	HandleTimeout string `toml:"handle_timeout"`
 
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
-	// `"_pc-"`.
+	// "_pc-".
 	PingPrefix string `toml:"prop_prefix"`
 }
 

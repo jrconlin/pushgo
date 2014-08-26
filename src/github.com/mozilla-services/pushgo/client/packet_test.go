@@ -16,11 +16,11 @@ import (
 
 var ErrInvalidCaseTest = &ClientError{"Invalid case test type."}
 
-// CaseTestType is used by `Case{ClientPing, ACK}.MarshalJSON()` to generate
+// CaseTestType is used by Case{ClientPing, ACK}.MarshalJSON() to generate
 // different JSON representations of the underlying ping or ACK packet. If
-// a packet doesn't support a particular representation (e.g., `CaseACK`
-// doesn't support any of the `FieldType*` test types), its `MarshalJSON()`
-// method will return ``ErrInvalidCaseTest`.
+// a packet doesn't support a particular representation (e.g., CaseACK
+// doesn't support any of the FieldType* test types), MarshalJSON() should
+// return ErrInvalidCaseTest.
 type CaseTestType int
 
 const (

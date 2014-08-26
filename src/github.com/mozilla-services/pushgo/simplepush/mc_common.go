@@ -50,19 +50,19 @@ type ChannelRecord struct {
 type ChannelIDs [][]byte
 
 // Len returns the length of the channel ID slice. Implements
-// `sort.Interface.Len()`.
+// sort.Interface.Len().
 func (l ChannelIDs) Len() int {
 	return len(l)
 }
 
 // Swap swaps two channel ID slices at the corresponding indices. Implements
-// `sort.Interface.Swap()`.
+// sort.Interface.Swap().
 func (l ChannelIDs) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
 // Less indicates whether one channel ID slice lexicographically precedes the
-// other. Implements `sort.Interface.Less()`.
+// other. Implements sort.Interface.Less().
 func (l ChannelIDs) Less(i, j int) bool {
 	return bytes.Compare(l[i], l[j]) < 0
 }
@@ -87,7 +87,7 @@ func remove(list [][]byte, pos int) (res [][]byte) {
 	return append(list[:pos], list[pos+1:]...)
 }
 
-// Converts a `(uaid, chid)` tuple to a binary primary key.
+// Converts a (device ID, channel ID) tuple to a binary primary key.
 func toBinaryKey(uaid, chid []byte) ([]byte, error) {
 	key := make([]byte, 32)
 	aoff := 16 - len(uaid)

@@ -137,14 +137,14 @@ func (c *Conn) Origin() string {
 	return c.Socket.RemoteAddr().String()
 }
 
-// RegisterDecoder registers a decoder `d` for the specified `messageType`.
-// Message types are case-insensitive.
+// RegisterDecoder registers a decoder for the specified message type. Message
+// types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
 	c.decoders[strings.ToLower(messageType)] = d
 }
 
 // Decoder returns a registered custom decoder, or the default decoder if
-// `DecodeDefault` is `true`.
+// c.DecodeDefault == true.
 func (c *Conn) Decoder(messageType string) (d Decoder) {
 	name := strings.ToLower(messageType)
 	if d = c.decoders[name]; d == nil && c.DecodeDefault {
@@ -159,8 +159,8 @@ func (c *Conn) UnregisterDecoder(messageType string) {
 }
 
 // Close closes the connection to the push server, unblocking all
-// `ReadMessage()`, `AcceptBatch()`, and `AcceptUpdate()` calls.
-// All registrations and pending updates will be dropped.
+// ReadMessage(), AcceptBatch(), and AcceptUpdate() calls. All registrations
+// and pending updates will be dropped.
 func (c *Conn) Close() (err error) {
 	err, ok := c.stop()
 	if !ok {
@@ -171,8 +171,8 @@ func (c *Conn) Close() (err error) {
 	return
 }
 
-// Acquires `c.closeLock`, closes the socket, and releases the lock, recording
-// the error in the `lastErr` field.
+// Acquires c.closeLock, closes the socket, and releases the lock, recording
+// the error in c.lastErr.
 func (c *Conn) fatal(err error) {
 	defer c.closeLock.Unlock()
 	c.closeLock.Lock()
@@ -182,10 +182,10 @@ func (c *Conn) fatal(err error) {
 	}
 }
 
-// Acquires `c.closeLock`, closes the socket, and releases the lock, reporting
-// any errors to the caller. The Boolean specifies whether the caller should
-// wait for the socket to close before returning.
-func (c *Conn) stop() (error, bool) {
+// Acquires c.closeLock, closes the socket, and releases the lock, reporting
+// any errors to the caller. ok specifies whether the caller should wait for
+// the socket to close before returning.
+func (c *Conn) stop() (err error, ok bool) {
 	defer c.closeLock.Unlock()
 	c.closeLock.Lock()
 	if c.isClosing {
@@ -195,7 +195,7 @@ func (c *Conn) stop() (error, bool) {
 }
 
 // Closes the underlying socket and unblocks the read and write loops. Assumes
-// the caller holds `c.closeLock`.
+// the caller holds c.closeLock.
 func (c *Conn) signalClose() (err error) {
 	if c.isClosing {
 		return
@@ -290,9 +290,9 @@ func (c *Conn) processRequest(requests Requests, outboxes Outboxes, request Requ
 		if !isPending {
 			goto Send
 		}
-		// Multiple synchronous requests (e.g., `Helo` handshakes and pings) with
-		// the same ID should be idempotent. Synchronous requests with different
-		// IDs are not supported.
+		// Multiple synchronous requests (e.g., Helo handshakes and pings) with the
+		// same ID should be idempotent. Synchronous requests with different IDs are
+		// not supported.
 		if pending.Id() != id {
 			request.Error(ErrMismatchedIds)
 		}
@@ -511,7 +511,7 @@ func (c *Conn) Purge() (err error) {
 }
 
 // ReadBatch consumes a batch of messages sent by the push server. Returns
-// `io.EOF` if the client is closed.
+// io.EOF if the client is closed.
 func (c *Conn) ReadBatch() ([]Update, error) {
 	for packet := range c.packets {
 		if updates, ok := packet.(ServerUpdates); ok {
@@ -533,7 +533,7 @@ func (c *Conn) AcceptBatch(updates []Update) (err error) {
 	return
 }
 
-// AcceptUpdate accepts an update sent to the client. Returns `io.EOF` if the
+// AcceptUpdate accepts an update sent to the client. Returns io.EOF if the
 // client is closed, or a socket error if the write failed.
 func (c *Conn) AcceptUpdate(update Update) (err error) {
 	return c.AcceptBatch([]Update{update})
@@ -562,8 +562,8 @@ func (c *Conn) readPacket() (packet HasType, err error) {
 		messageType, hasMessageType, statusCode = "ping", true, 200
 		goto Decode
 	}
-	// Extract the `status`, `error`, and `messageType` fields. Per RFC 7159,
-	// Go's JSON library represents numbers as 64-bit floats when decoding into
+	// Extract the status code, error string, and message type. Per RFC 7159,
+	// Go's JSON library represents numbers as float64 values when decoding into
 	// an untyped map.
 	if asFloat, ok := fields["status"].(float64); ok && asFloat >= 0 {
 		statusCode = int(asFloat)
@@ -577,8 +577,8 @@ func (c *Conn) readPacket() (packet HasType, err error) {
 		hasMessageType = false
 	}
 	if !hasMessageType {
-		// Missing or empty `messageType` field. Likely an error response; use the
-		// `error` and `status` fields to construct the error reply, if present.
+		// Missing or empty message type. Likely an error response; use the
+		// error text and status to construct the error reply, if present.
 		var message string
 		if hasErrorText {
 			message = errorText
@@ -592,8 +592,7 @@ Decode:
 		return decoder.Decode(c, fields, statusCode, errorText)
 	}
 	if hasErrorText {
-		// Typed error response. Construct an error reply with the `messageType`
-		// and `error` fields, and `status` if present.
+		// Unprocessed typed error response.
 		return nil, &ServerError{messageType, c.Origin(), errorText, statusCode}
 	}
 	return nil, nil

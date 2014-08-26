@@ -52,9 +52,9 @@ const (
 	PurgeId
 	PingId
 
-	// nilId is used by tests to simulate a `nil` packet ID, as `Conn.Send()`
-	// will close the connection with an error if a packet contains a `nil` ID.
-	// `getId()` coerces `nilId` to `nil` during serialization.
+	// nilId is used by tests to simulate a nil packet ID, as Conn.Send() will
+	// close the connection with an error if Request.Id() == nil. getId()
+	// converts nilId to nil.
 	nilId
 )
 
