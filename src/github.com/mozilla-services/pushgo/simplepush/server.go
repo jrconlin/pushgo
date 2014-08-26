@@ -205,8 +205,8 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		Token       string
 		CurrentHost string
 	}{
-		Token:       token,
-		CurrentHost: self.app.FullHostname(),
+		token,
+		self.app.FullHostname(),
 	}); err != nil {
 		self.logger.Error("server",
 			"Could not generate Push Endpoint",
