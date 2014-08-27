@@ -58,7 +58,7 @@ func decodePing(c *client.Conn, fields client.Fields, statusCode int, errorText 
 	if len(errorText) > 0 {
 		return nil, &client.ServerError{"ping", c.Origin(), errorText, statusCode}
 	}
-	return &ServerPing{statusCode}, nil
+	return ServerPing{statusCode}, nil
 }
 
 func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.HasType, error) {
@@ -86,7 +86,7 @@ func (t caseTest) TestPing() error {
 	defer conn.Close()
 	defer conn.Purge()
 	conn.RegisterDecoder("ping", client.DecoderFunc(decodePing))
-	request := &CaseClientPing{t.CaseTestType, client.NewPing(true)}
+	request := CaseClientPing{t.CaseTestType, client.NewPing(true)}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		return fmt.Errorf("On test %v, error writing ping packet: %#v", t.CaseTestType, err)
@@ -109,7 +109,7 @@ func (t caseTest) TestACK() error {
 	defer conn.Close()
 	defer conn.Purge()
 	conn.RegisterDecoder("ack", client.DecoderFunc(decodeCaseACK))
-	request := &CaseACK{t.CaseTestType, client.NewACK(nil, true)}
+	request := CaseACK{t.CaseTestType, client.NewACK(nil, true)}
 	_, err = conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
@@ -150,13 +150,13 @@ func (t caseTest) TestHelo() error {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CaseHelo{t.CaseTestType, client.NewHelo(deviceId, []string{channelId}).(*client.ClientHelo)}
+	request := CaseHelo{t.CaseTestType, client.NewHelo(deviceId, []string{channelId}).(client.ClientHelo)}
 	reply, err := conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
 			return fmt.Errorf("On test %v, error writing handshake request: %#v", t.CaseTestType, err)
 		}
-		helo, ok := reply.(*client.ServerHelo)
+		helo, ok := reply.(client.ServerHelo)
 		if !ok {
 			return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.CaseTestType, reply)
 		}
@@ -193,12 +193,12 @@ type CaseACK struct {
 	client.Request
 }
 
-func (*CaseACK) Sync() bool { return true }
+func (CaseACK) Sync() bool { return true }
 
-func (a *CaseACK) MarshalJSON() ([]byte, error) {
+func (a CaseACK) MarshalJSON() ([]byte, error) {
 	var results interface{}
 	messageType := a.Type().String()
-	packet := a.Request.(*client.ClientACK)
+	packet := a.Request.(client.ClientACK)
 	switch a.CaseTestType {
 	case ValueTypeUpper:
 		results = struct {
@@ -229,13 +229,13 @@ type CaseClientPing struct {
 	client.Request
 }
 
-func (p *CaseClientPing) Sync() bool { return true }
+func (p CaseClientPing) Sync() bool { return true }
 
-func (p *CaseClientPing) Close() {
+func (p CaseClientPing) Close() {
 	p.Request.Close()
 }
 
-func (p *CaseClientPing) MarshalJSON() ([]byte, error) {
+func (p CaseClientPing) MarshalJSON() ([]byte, error) {
 	switch p.CaseTestType {
 	case ValueTypeUpper:
 		return []byte(`{"messageType":"PING"}`), nil
@@ -253,18 +253,18 @@ type ServerPing struct {
 	StatusCode int
 }
 
-func (*ServerPing) Type() client.PacketType { return client.Ping }
-func (*ServerPing) Id() interface{}         { return client.PingId }
-func (*ServerPing) HasRequest() bool        { return true }
-func (*ServerPing) Sync() bool              { return true }
-func (p *ServerPing) Status() int           { return p.StatusCode }
+func (ServerPing) Type() client.PacketType { return client.Ping }
+func (ServerPing) Id() interface{}         { return client.PingId }
+func (ServerPing) HasRequest() bool        { return true }
+func (ServerPing) Sync() bool              { return true }
+func (p ServerPing) Status() int           { return p.StatusCode }
 
 type CaseHelo struct {
 	CaseTestType
-	*client.ClientHelo
+	client.ClientHelo
 }
 
-func (h *CaseHelo) MarshalJSON() ([]byte, error) {
+func (h CaseHelo) MarshalJSON() ([]byte, error) {
 	var results interface{}
 	messageType := h.Type().String()
 	switch h.CaseTestType {

@@ -64,19 +64,19 @@ type CustomRegister struct {
 	errors    chan error
 }
 
-func (*CustomRegister) Type() client.PacketType    { return client.Register }
-func (*CustomRegister) CanReply() bool             { return true }
-func (*CustomRegister) Sync() bool                 { return false }
-func (r *CustomRegister) Id() interface{}          { return r.ChannelId }
-func (r *CustomRegister) Reply(reply client.Reply) { r.replies <- reply }
-func (r *CustomRegister) Error(err error)          { r.errors <- err }
+func (CustomRegister) Type() client.PacketType    { return client.Register }
+func (CustomRegister) CanReply() bool             { return true }
+func (CustomRegister) Sync() bool                 { return false }
+func (r CustomRegister) Id() interface{}          { return r.ChannelId }
+func (r CustomRegister) Reply(reply client.Reply) { r.replies <- reply }
+func (r CustomRegister) Error(err error)          { r.errors <- err }
 
-func (r *CustomRegister) Close() {
+func (r CustomRegister) Close() {
 	close(r.replies)
 	close(r.errors)
 }
 
-func (r *CustomRegister) Do() (reply client.Reply, err error) {
+func (r CustomRegister) Do() (reply client.Reply, err error) {
 	select {
 	case reply = <-r.replies:
 	case err = <-r.errors:
@@ -84,7 +84,7 @@ func (r *CustomRegister) Do() (reply client.Reply, err error) {
 	return
 }
 
-func (r *CustomRegister) MarshalJSON() ([]byte, error) {
+func (r CustomRegister) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		MessageType client.PacketType `json:"messageType"`
 		ChannelId   interface{}       `json:"channelID"`
@@ -102,19 +102,19 @@ type CustomHelo struct {
 	errors      chan error
 }
 
-func (*CustomHelo) Type() client.PacketType    { return client.Helo }
-func (*CustomHelo) CanReply() bool             { return true }
-func (*CustomHelo) Sync() bool                 { return true }
-func (h *CustomHelo) Id() interface{}          { return h.DeviceId }
-func (h *CustomHelo) Reply(reply client.Reply) { h.replies <- reply }
-func (h *CustomHelo) Error(err error)          { h.errors <- err }
+func (CustomHelo) Type() client.PacketType    { return client.Helo }
+func (CustomHelo) CanReply() bool             { return true }
+func (CustomHelo) Sync() bool                 { return true }
+func (h CustomHelo) Id() interface{}          { return h.DeviceId }
+func (h CustomHelo) Reply(reply client.Reply) { h.replies <- reply }
+func (h CustomHelo) Error(err error)          { h.errors <- err }
 
-func (h *CustomHelo) Close() {
+func (h CustomHelo) Close() {
 	close(h.replies)
 	close(h.errors)
 }
 
-func (h *CustomHelo) Do() (reply client.Reply, err error) {
+func (h CustomHelo) Do() (reply client.Reply, err error) {
 	select {
 	case reply = <-h.replies:
 	case err = <-h.errors:
@@ -122,7 +122,7 @@ func (h *CustomHelo) Do() (reply client.Reply, err error) {
 	return
 }
 
-func (h *CustomHelo) MarshalJSON() ([]byte, error) {
+func (h CustomHelo) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		MessageType interface{}   `json:"messageType"`
 		DeviceId    interface{}   `json:"uaid"`
@@ -137,7 +137,7 @@ type ClientInvalidACK struct {
 	client.Request
 }
 
-func (*ClientInvalidACK) Sync() bool { return true }
+func (ClientInvalidACK) Sync() bool { return true }
 
 // ServerInvalidACK tracks invalid acknowledgement replies. The reply packet
 // payload contains the data sent in the ClientACK.
@@ -146,11 +146,11 @@ type ServerInvalidACK struct {
 	StatusCode int
 }
 
-func (*ServerInvalidACK) Type() client.PacketType { return client.ACK }
-func (*ServerInvalidACK) HasRequest() bool        { return true }
-func (*ServerInvalidACK) Sync() bool              { return true }
-func (a *ServerInvalidACK) Id() interface{}       { return client.ACKId }
-func (a *ServerInvalidACK) Status() int           { return a.StatusCode }
+func (ServerInvalidACK) Type() client.PacketType { return client.ACK }
+func (ServerInvalidACK) HasRequest() bool        { return true }
+func (ServerInvalidACK) Sync() bool              { return true }
+func (a ServerInvalidACK) Id() interface{}       { return client.ACKId }
+func (a ServerInvalidACK) Status() int           { return a.StatusCode }
 
 // ServerUnregister is a reply to a ClientUnregister request. Simple Push
 // servers are not required to support deregistration, so deregistration
@@ -160,19 +160,19 @@ type ServerUnregister struct {
 	ChannelId  string
 }
 
-func (*ServerUnregister) Type() client.PacketType { return client.Unregister }
-func (*ServerUnregister) HasRequest() bool        { return true }
-func (*ServerUnregister) Sync() bool              { return false }
-func (u *ServerUnregister) Id() interface{}       { return u.ChannelId }
-func (u *ServerUnregister) Status() int           { return u.StatusCode }
+func (ServerUnregister) Type() client.PacketType { return client.Unregister }
+func (ServerUnregister) HasRequest() bool        { return true }
+func (ServerUnregister) Sync() bool              { return false }
+func (u ServerUnregister) Id() interface{}       { return u.ChannelId }
+func (u ServerUnregister) Status() int           { return u.StatusCode }
 
 // MultipleRegister is a malformed ClientRegister packet that specifies
 // multiple channel IDs in the payload.
 type MultipleRegister struct {
-	*client.ClientRegister
+	client.ClientRegister
 }
 
-func (r *MultipleRegister) MarshalJSON() ([]byte, error) {
+func (r MultipleRegister) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		MessageType client.PacketType `json:"messageType"`
 		ChannelIds  []string          `json:"channelIDs"`
@@ -187,7 +187,7 @@ func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int,
 	if !hasChannelId {
 		return nil, &client.IncompleteError{"register", c.Origin(), "channelID"}
 	}
-	reply := &ServerUnregister{
+	reply := ServerUnregister{
 		StatusCode: statusCode,
 		ChannelId:  channelId,
 	}
@@ -202,7 +202,7 @@ func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int
 	if !hasUpdates {
 		return nil, &client.IncompleteError{"ack", c.Origin(), "updates"}
 	}
-	reply := &ServerInvalidACK{
+	reply := ServerInvalidACK{
 		Updates:    make([]client.Update, len(updates)),
 		StatusCode: statusCode,
 	}
@@ -254,7 +254,7 @@ func TestHeloReset(t *testing.T) {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: "hello",
 		DeviceId:    deviceId,
 		ChannelIds:  []interface{}{"1", "2"},
@@ -265,7 +265,7 @@ func TestHeloReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
 	}
-	helo, ok := reply.(*client.ServerHelo)
+	helo, ok := reply.(client.ServerHelo)
 	if !ok {
 		t.Fatalf("Type assertion failed for reply: %#v", reply)
 	}
@@ -295,7 +295,7 @@ func (t typeTest) Run() error {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: t.messageType,
 		DeviceId:    t.deviceId,
 		ChannelIds:  []interface{}{"1", "2"},
@@ -308,7 +308,7 @@ func (t typeTest) Run() error {
 		if err != nil {
 			return fmt.Errorf("On test %v, error writing handshake request: %#v", t.name, err)
 		}
-		helo, ok := reply.(*client.ServerHelo)
+		helo, ok := reply.(client.ServerHelo)
 		if !ok {
 			return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.name, reply)
 		}
@@ -529,7 +529,7 @@ func TestMultipleRegister(t *testing.T) {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &MultipleRegister{client.NewRegister(channelId).(*client.ClientRegister)}
+	request := MultipleRegister{client.NewRegister(channelId).(client.ClientRegister)}
 	_, err = conn.WriteRequest(request)
 	if err != io.EOF {
 		t.Fatalf("Error writing registration request: got %#v; want io.EOF", err)
@@ -565,7 +565,7 @@ func (t idTest) TestHelo() error {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: "hello",
 		DeviceId:    deviceId,
 		ChannelIds:  []interface{}{t.channelId},
@@ -576,7 +576,7 @@ func (t idTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error writing handshake: %#v", t.name, err)
 	}
-	helo, ok := reply.(*client.ServerHelo)
+	helo, ok := reply.(client.ServerHelo)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.name, reply)
 	}
@@ -603,7 +603,7 @@ func (t idTest) TestRegister() error {
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomRegister{
+	request := CustomRegister{
 		ChannelId: t.channelId,
 		replies:   make(chan client.Reply),
 		errors:    make(chan error),
@@ -898,7 +898,7 @@ func TestPrematureACK(t *testing.T) {
 	updates := []client.Update{
 		client.Update{channelId, time.Now().UTC().Unix()},
 	}
-	request := &ClientInvalidACK{client.NewACK(updates, true)}
+	request := ClientInvalidACK{client.NewACK(updates, true)}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		t.Fatalf("Error writing acknowledgement: %#v", err)
@@ -906,7 +906,7 @@ func TestPrematureACK(t *testing.T) {
 	if reply.Status() != 401 {
 		t.Errorf("Incorrect status code: got %#v, wanted 401", reply.Status())
 	}
-	if r, ok := reply.(*ServerInvalidACK); ok {
+	if r, ok := reply.(ServerInvalidACK); ok {
 		if len(r.Updates) != len(updates) {
 			t.Errorf("Incorrect update count: got %#v; want %#v", len(r.Updates), len(updates))
 		} else {

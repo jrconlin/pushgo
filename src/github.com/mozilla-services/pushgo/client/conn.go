@@ -382,7 +382,7 @@ func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string
 	if err != nil {
 		return
 	}
-	helo, ok := reply.(*ServerHelo)
+	helo, ok := reply.(ServerHelo)
 	if !ok {
 		// Unexpected reply packet from server.
 		return "", ErrInvalidState
@@ -421,7 +421,7 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 	if err != nil {
 		return
 	}
-	register, ok := reply.(*ServerRegister)
+	register, ok := reply.(ServerRegister)
 	if !ok {
 		return "", ErrInvalidState
 	}
@@ -579,7 +579,7 @@ func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (HasTy
 		return nil, &IncompleteError{"hello", c.Origin(), "uaid"}
 	}
 	redirect, _ := fields["redirect"].(string)
-	reply := &ServerHelo{
+	reply := ServerHelo{
 		StatusCode: statusCode,
 		DeviceId:   deviceId,
 		Redirect:   redirect,
@@ -599,7 +599,7 @@ func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (H
 	if !hasEndpoint {
 		return nil, &IncompleteError{"register", c.Origin(), "pushEndpoint"}
 	}
-	reply := &ServerRegister{
+	reply := ServerRegister{
 		StatusCode: statusCode,
 		ChannelId:  channelId,
 		Endpoint:   endpoint,
