@@ -44,6 +44,7 @@ type Conn struct {
 	channels      Channels
 	channelLock   sync.RWMutex
 	decoders      Decoders
+	decoderLock   sync.RWMutex
 	signalChan    chan bool
 	closeLock     sync.Mutex
 	closeWait     sync.WaitGroup
@@ -140,22 +141,21 @@ func (c *Conn) Origin() string {
 // RegisterDecoder registers a decoder for the specified message type. Message
 // types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
+	defer c.decoderLock.Unlock()
+	c.decoderLock.Lock()
 	c.decoders[strings.ToLower(messageType)] = d
 }
 
 // Decoder returns a registered custom decoder, or the default decoder if
 // c.DecodeDefault == true.
 func (c *Conn) Decoder(messageType string) (d Decoder) {
+	defer c.decoderLock.RUnlock()
+	c.decoderLock.RLock()
 	name := strings.ToLower(messageType)
 	if d = c.decoders[name]; d == nil && c.DecodeDefault {
 		d = DefaultDecoders[name]
 	}
 	return
-}
-
-// UnregisterDecoder deregisters a custom decoder.
-func (c *Conn) UnregisterDecoder(messageType string) {
-	delete(c.decoders, strings.ToLower(messageType))
 }
 
 // Close closes the connection to the push server, unblocking all
