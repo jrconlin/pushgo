@@ -109,7 +109,7 @@ func (*ClientHelo) Type() PacketType          { return Helo }
 func (*ClientHelo) CanReply() bool            { return true }
 func (*ClientHelo) Sync() bool                { return true }
 func (ch *ClientHelo) Id() interface{}        { return ch.DeviceId }
-func (ch *ClientHelo) Reply(reply Reply)      { ch.replies <- reply }
+func (ch *ClientHelo) Reply(r Reply)          { ch.replies <- r }
 func (ch *ClientHelo) Error(err error)        { ch.errors <- err }
 func (ch *ClientHelo) Do() (Reply, error)     { return doClientPacket(ch) }
 func (ch *ClientHelo) Close()                 { closeClientPacket(ch) }

@@ -570,31 +570,6 @@ Decode:
 	return nil, nil
 }
 
-func (c *Conn) decodeUpdate(field interface{}) (result Update, err error) {
-	update, ok := field.(map[string]interface{})
-	if !ok {
-		err = &IncompleteError{"notification", c.Origin(), "update"}
-		return
-	}
-	channelId, ok := update["channelID"].(string)
-	if !ok {
-		err = &IncompleteError{"notification", c.Origin(), "pushEndpoint"}
-		return
-	}
-	var version int64
-	if asFloat, ok := update["version"].(float64); ok {
-		version = int64(asFloat)
-	} else {
-		err = &IncompleteError{"notification", c.Origin(), "version"}
-		return
-	}
-	result = Update{
-		ChannelId: channelId,
-		Version:   version,
-	}
-	return
-}
-
 func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"hello", c.Origin(), errorText, statusCode}
@@ -642,14 +617,25 @@ func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string
 	}
 	var packet ServerUpdates
 	for _, field := range updates {
-		update, err := c.decodeUpdate(field)
-		if err != nil {
-			return nil, err
+		var (
+			update    map[string]interface{}
+			channelId string
+			version   float64
+			ok        bool
+		)
+		if update, ok = field.(map[string]interface{}); !ok {
+			return nil, &IncompleteError{"notification", c.Origin(), "update"}
 		}
-		if !c.SpoolAll && !c.Registered(update.ChannelId) {
+		if channelId, ok = update["channelID"].(string); !ok {
+			return nil, &IncompleteError{"notification", c.Origin(), "channelID"}
+		}
+		if !c.SpoolAll && !c.Registered(channelId) {
 			continue
 		}
-		packet = append(packet, update)
+		if version, ok = update["version"].(float64); !ok {
+			return nil, &IncompleteError{"notification", c.Origin(), "version"}
+		}
+		packet = append(packet, Update{channelId, int64(version)})
 	}
 	return packet, nil
 }
