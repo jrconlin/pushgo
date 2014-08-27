@@ -309,7 +309,7 @@ func (c *Conn) processRequest(requests Requests, outboxes Outboxes, request Requ
 		return nil
 	}
 Send:
-	if err = c.writeMessage(request); err != nil {
+	if err = ws.JSON.Send(c.Socket, request); err != nil {
 		request.Error(err)
 		request.Close()
 		return nil
@@ -329,19 +329,6 @@ Send:
 	}
 	outbox[id] = request
 	return nil
-}
-
-func (c *Conn) writeMessage(request Request) (err error) {
-	var data []byte
-	if withMarshal, ok := request.(requestWithMarshal); ok {
-		data, err = withMarshal.MarshalJSON()
-	} else {
-		data, err = json.Marshal(request)
-	}
-	if err != nil {
-		return
-	}
-	return ws.Message.Send(c.Socket, data)
 }
 
 func (c *Conn) Send() {
@@ -390,12 +377,7 @@ func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
 // permitted if the device ID is identical to the prior ID, or left empty;
 // otherwise, the server will close the connection.
 func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string, err error) {
-	request := &ClientHelo{
-		DeviceId:   deviceId,
-		ChannelIds: channelIds,
-		replies:    make(chan Reply),
-		errors:     make(chan error),
-	}
+	request := NewHelo(deviceId, channelIds)
 	reply, err := c.WriteRequest(request)
 	if err != nil {
 		return
@@ -434,11 +416,7 @@ func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
 // read synchronously because the push server may interleave other replies and
 // notification requests before fulfilling the registration.
 func (c *Conn) Register(channelId string) (endpoint string, err error) {
-	request := &ClientRegister{
-		ChannelId: channelId,
-		replies:   make(chan Reply),
-		errors:    make(chan error),
-	}
+	request := NewRegister(channelId)
 	reply, err := c.WriteRequest(request)
 	if err != nil {
 		return
@@ -491,10 +469,7 @@ func (c *Conn) removeAllChannels() {
 // Unregister signals that the client is no longer interested in receiving
 // updates for a particular channel. The server never replies to this message.
 func (c *Conn) Unregister(channelId string) (err error) {
-	request := &ClientUnregister{
-		ChannelId: channelId,
-		errors:    make(chan error),
-	}
+	request := NewUnregister(channelId, false)
 	if _, err = c.WriteRequest(request); err != nil {
 		return
 	}
@@ -505,7 +480,7 @@ func (c *Conn) Unregister(channelId string) (err error) {
 // Purge hints the push server to prune all channel registrations for the
 // connection. This is a no-op if purging is disabled.
 func (c *Conn) Purge() (err error) {
-	request := make(ClientPurge)
+	request := NewPurge(false)
 	_, err = c.WriteRequest(request)
 	return
 }
@@ -525,10 +500,7 @@ func (c *Conn) ReadBatch() ([]Update, error) {
 // acknowledge updates within the specified window (the spec suggests 60 sec.
 // for reference implementations) to avoid retransmission.
 func (c *Conn) AcceptBatch(updates []Update) (err error) {
-	request := &ClientACK{
-		Updates: updates,
-		errors:  make(chan error),
-	}
+	request := NewACK(updates, false)
 	_, err = c.WriteRequest(request)
 	return
 }
