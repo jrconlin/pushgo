@@ -40,7 +40,7 @@ type Conn struct {
 	SpoolAll      bool          // Spool incoming notifications sent on deregistered channels.
 	requests      chan Request
 	replies       chan Reply
-	packets       chan HasType
+	Packets       chan HasType
 	channels      Channels
 	channelLock   sync.RWMutex
 	decoders      Decoders
@@ -121,7 +121,7 @@ func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
 		SpoolAll:      spoolAll,
 		requests:      make(chan Request),
 		replies:       make(chan Reply),
-		packets:       make(chan HasType),
+		Packets:       make(chan HasType),
 		channels:      make(Channels),
 		decoders:      make(Decoders),
 		signalChan:    make(chan bool),
@@ -224,7 +224,7 @@ func (c *Conn) Receive() {
 			// This is a reply to a client request.
 			replies = c.replies
 		} else {
-			packets = c.packets
+			packets = c.Packets
 		}
 		select {
 		case ok = <-c.signalChan:
@@ -232,7 +232,7 @@ func (c *Conn) Receive() {
 		case replies <- reply:
 		}
 	}
-	close(c.packets)
+	close(c.Packets)
 }
 
 // Cancels a pending request.
@@ -513,7 +513,7 @@ func (c *Conn) Purge() (err error) {
 // ReadBatch consumes a batch of messages sent by the push server. Returns
 // io.EOF if the client is closed.
 func (c *Conn) ReadBatch() ([]Update, error) {
-	for packet := range c.packets {
+	for packet := range c.Packets {
 		if updates, ok := packet.(ServerUpdates); ok {
 			return updates, nil
 		}

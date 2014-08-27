@@ -198,7 +198,7 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 			ok = false
 			err = ErrTimedOut
 
-		case packet, ok = <-t.conn.packets:
+		case packet, ok = <-t.conn.Packets:
 			if !ok {
 				break
 			}
