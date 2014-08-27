@@ -2,14 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package client
+package simplepush
 
 import (
 	"fmt"
 	"net/url"
 	"sync"
-
-	server "github.com/mozilla-services/pushgo/simplepush"
 )
 
 type TestServer struct {
@@ -17,7 +15,8 @@ type TestServer struct {
 	ServAddr   string
 	RouterAddr string
 	LogLevel   int
-	app        *server.Application
+	Contacts   []string
+	app        *Application
 	lastErr    error
 	isStopping bool
 }
@@ -41,50 +40,51 @@ func (t *TestServer) run() {
 	}
 }
 
-func (t *TestServer) load() (*server.Application, error) {
-	loaders := server.PluginLoaders{
-		server.PluginApp: func(app *server.Application) (server.HasConfigStruct, error) {
-			appConf := app.ConfigStruct().(*server.ApplicationConfig)
+func (t *TestServer) load() (*Application, error) {
+	loaders := PluginLoaders{
+		PluginApp: func(app *Application) (HasConfigStruct, error) {
+			appConf := app.ConfigStruct().(*ApplicationConfig)
 			if err := app.Init(app, appConf); err != nil {
 				return nil, fmt.Errorf("Error initializing application: %#v", err)
 			}
 			return app, nil
 		},
-		server.PluginLogger: func(app *server.Application) (server.HasConfigStruct, error) {
-			logger := new(server.StdOutLogger)
-			loggerConf := logger.ConfigStruct().(*server.StdOutLoggerConfig)
+		PluginLogger: func(app *Application) (HasConfigStruct, error) {
+			logger := new(StdOutLogger)
+			loggerConf := logger.ConfigStruct().(*StdOutLoggerConfig)
+			loggerConf.Filter = -1
 			if err := logger.Init(app, loggerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing logger: %#v", err)
 			}
 			return logger, nil
 		},
-		server.PluginPinger: func(app *server.Application) (server.HasConfigStruct, error) {
-			pinger := new(server.NoopPing)
-			pingerConf := pinger.ConfigStruct().(*server.NoopPingConfig)
+		PluginPinger: func(app *Application) (HasConfigStruct, error) {
+			pinger := new(NoopPing)
+			pingerConf := pinger.ConfigStruct().(*NoopPingConfig)
 			if err := pinger.Init(app, pingerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing proprietary pinger: %#v", err)
 			}
 			return pinger, nil
 		},
-		server.PluginMetrics: func(app *server.Application) (server.HasConfigStruct, error) {
-			metrics := new(server.Metrics)
-			metricsConf := metrics.ConfigStruct().(*server.MetricsConfig)
+		PluginMetrics: func(app *Application) (HasConfigStruct, error) {
+			metrics := new(Metrics)
+			metricsConf := metrics.ConfigStruct().(*MetricsConfig)
 			if err := metrics.Init(app, metricsConf); err != nil {
 				return nil, fmt.Errorf("Error initializing metrics: %#v", err)
 			}
 			return metrics, nil
 		},
-		server.PluginStore: func(app *server.Application) (server.HasConfigStruct, error) {
-			store := new(server.NoStore)
-			storeConf := store.ConfigStruct().(*server.NoStoreConfig)
+		PluginStore: func(app *Application) (HasConfigStruct, error) {
+			store := new(NoStore)
+			storeConf := store.ConfigStruct().(*NoStoreConfig)
 			if err := store.Init(app, storeConf); err != nil {
 				return nil, fmt.Errorf("Error initializing store: %#v", err)
 			}
 			return store, nil
 		},
-		server.PluginRouter: func(app *server.Application) (server.HasConfigStruct, error) {
-			router := server.NewRouter()
-			routerConf := router.ConfigStruct().(*server.RouterConfig)
+		PluginRouter: func(app *Application) (HasConfigStruct, error) {
+			router := NewRouter()
+			routerConf := router.ConfigStruct().(*RouterConfig)
 			routerConf.Addr = t.RouterAddr
 			if len(routerConf.Addr) == 0 {
 				routerConf.Addr = ""
@@ -94,17 +94,18 @@ func (t *TestServer) load() (*server.Application, error) {
 			}
 			return router, nil
 		},
-		server.PluginLocator: func(app *server.Application) (server.HasConfigStruct, error) {
-			locator := new(server.StaticLocator)
-			locatorConf := locator.ConfigStruct().(*server.StaticLocatorConf)
+		PluginLocator: func(app *Application) (HasConfigStruct, error) {
+			locator := new(StaticLocator)
+			locatorConf := locator.ConfigStruct().(*StaticLocatorConf)
+			locatorConf.Contacts = t.Contacts
 			if err := locator.Init(app, locatorConf); err != nil {
 				return nil, fmt.Errorf("Error initializing locator: %#v", err)
 			}
 			return locator, nil
 		},
-		server.PluginServer: func(app *server.Application) (server.HasConfigStruct, error) {
-			serv := new(server.Serv)
-			servConf := serv.ConfigStruct().(*server.ServerConfig)
+		PluginServer: func(app *Application) (HasConfigStruct, error) {
+			serv := new(Serv)
+			servConf := serv.ConfigStruct().(*ServerConfig)
 			servConf.Addr = t.ServAddr
 			if len(servConf.Addr) == 0 {
 				// Listen on a random port for testing.
@@ -115,8 +116,8 @@ func (t *TestServer) load() (*server.Application, error) {
 			}
 			return serv, nil
 		},
-		server.PluginHandlers: func(app *server.Application) (server.HasConfigStruct, error) {
-			handlers := new(server.Handler)
+		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
+			handlers := new(Handler)
 			if err := handlers.Init(app, handlers.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
 			}
@@ -126,7 +127,7 @@ func (t *TestServer) load() (*server.Application, error) {
 	return loaders.Load(t.LogLevel)
 }
 
-func (t *TestServer) Listen() (app *server.Application, err error) {
+func (t *TestServer) Listen() (app *Application, err error) {
 	defer t.Unlock()
 	t.Lock()
 	if t.isStopping {
