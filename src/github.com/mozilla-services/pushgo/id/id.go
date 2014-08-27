@@ -92,3 +92,18 @@ func DecodeString(id string) ([]byte, error) {
 	}
 	return bytes, nil
 }
+
+// MustGenerate returns a slice containing the specified number of random
+// IDs, panicking if an error occurs. This simplifies generating random data
+// for running smoke tests.
+func MustGenerate(count int) []string {
+	results := make([]string, count)
+	for index := range results {
+		bytes, err := GenerateBytes()
+		if err != nil {
+			panic(fmt.Sprintf("MustGenerate: Error generating ID: %s", err))
+		}
+		results[index], _ = Encode(bytes)
+	}
+	return results
+}
