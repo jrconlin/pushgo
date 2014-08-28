@@ -188,7 +188,7 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 	// be changed to exit as soon as the latest version is received.
 	expected, actual := len(t.endpoints)*t.Updates, 0
 	for ok := true; ok; {
-		var packet HasType
+		var packet Packet
 		if actual >= expected {
 			break
 		}

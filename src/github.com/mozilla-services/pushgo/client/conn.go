@@ -40,7 +40,7 @@ type Conn struct {
 	SpoolAll      bool          // Spool incoming notifications sent on deregistered channels.
 	requests      chan Request
 	replies       chan Reply
-	Packets       chan HasType
+	Packets       chan Packet
 	channels      Channels
 	channelLock   sync.RWMutex
 	decoders      Decoders
@@ -62,12 +62,12 @@ type (
 )
 
 type Decoder interface {
-	Decode(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error)
+	Decode(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error)
 }
 
-type DecoderFunc func(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error)
+type DecoderFunc func(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error)
 
-func (d DecoderFunc) Decode(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func (d DecoderFunc) Decode(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {
 	return d(c, fields, statusCode, errorText)
 }
 
@@ -122,7 +122,7 @@ func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
 		SpoolAll:      spoolAll,
 		requests:      make(chan Request),
 		replies:       make(chan Reply),
-		Packets:       make(chan HasType),
+		Packets:       make(chan Packet),
 		channels:      make(Channels),
 		decoders:      make(Decoders),
 		signalChan:    make(chan bool),
@@ -218,7 +218,7 @@ func (c *Conn) Receive() {
 			reply   Reply
 			ok      bool
 			replies chan Reply
-			packets chan HasType
+			packets chan Packet
 		)
 		if reply, ok = packet.(Reply); ok {
 			// This is a reply to a client request.
@@ -511,7 +511,7 @@ func (c *Conn) AcceptUpdate(update Update) (err error) {
 	return c.AcceptBatch([]Update{update})
 }
 
-func (c *Conn) readPacket() (packet HasType, err error) {
+func (c *Conn) readPacket() (packet Packet, err error) {
 	var data []byte
 	if err = ws.Message.Receive(c.Socket, &data); err != nil {
 		return nil, err
@@ -570,7 +570,7 @@ Decode:
 	return nil, nil
 }
 
-func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"hello", c.Origin(), errorText, statusCode}
 	}
@@ -587,7 +587,7 @@ func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (HasTy
 	return reply, nil
 }
 
-func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {
 	if len(errorText) > 0 {
 		return nil, &ServerError{"register", c.Origin(), errorText, statusCode}
 	}
@@ -607,7 +607,7 @@ func decodeRegister(c *Conn, fields Fields, statusCode int, errorText string) (H
 	return reply, nil
 }
 
-func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeNotification(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {
 	if statusCode != NoStatus || len(errorText) > 0 {
 		return nil, &ServerError{"notification", c.Origin(), errorText, statusCode}
 	}

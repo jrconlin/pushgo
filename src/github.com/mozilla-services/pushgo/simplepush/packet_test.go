@@ -54,14 +54,14 @@ func (t CaseTestType) String() string {
 	return "unknown case test type"
 }
 
-func decodePing(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.HasType, error) {
+func decodePing(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
 		return nil, &client.ServerError{"ping", c.Origin(), errorText, statusCode}
 	}
 	return ServerPing{statusCode}, nil
 }
 
-func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.HasType, error) {
+func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
 		return nil, &client.ServerError{"ack", c.Origin(), errorText, statusCode}
 	}

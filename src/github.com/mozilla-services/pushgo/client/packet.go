@@ -53,7 +53,7 @@ const (
 	PingId
 )
 
-type HasType interface {
+type Packet interface {
 	Type() PacketType
 }
 
@@ -67,7 +67,7 @@ type CanReply interface {
 }
 
 type Request interface {
-	HasType
+	Packet
 	Exchange
 	CanReply
 	json.Marshaler
@@ -78,7 +78,7 @@ type Request interface {
 }
 
 type Reply interface {
-	HasType
+	Packet
 	Exchange
 	Status() int
 }

@@ -179,7 +179,7 @@ func (r MultipleRegister) MarshalJSON() ([]byte, error) {
 	}{r.Type(), []string{r.ChannelId}})
 }
 
-func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.HasType, error) {
+func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
 		return nil, &client.ServerError{"unregister", c.Origin(), errorText, statusCode}
 	}
@@ -194,7 +194,7 @@ func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int,
 	return reply, nil
 }
 
-func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.HasType, error) {
+func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) == 0 {
 		return nil, nil
 	}
@@ -765,7 +765,7 @@ func TestUnregisterRace(t *testing.T) {
 			pendingTimer <-chan time.Time
 		)
 		for ok := true; ok; {
-			var packet client.HasType
+			var packet client.Packet
 			select {
 			case ok = <-signal:
 			case <-timeout:
