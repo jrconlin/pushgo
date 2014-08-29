@@ -6,11 +6,6 @@ package simplepush
 
 var AvailableLocators = make(AvailableExtensions)
 
-type LocatorConf struct {
-	Etcd   EtcdLocatorConf
-	Static StaticLocatorConf
-}
-
 // Locator describes a contact discovery service.
 type Locator interface {
 	// Close stops and releases any resources associated with the Locator.

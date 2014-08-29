@@ -160,7 +160,7 @@ func (l *EtcdLocator) Close() (err error) {
 	}
 	l.isClosing = true
 	l.lastErr = err
-	return
+	return err
 }
 
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
@@ -178,14 +178,14 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	if err != nil {
 		l.logger.Error("etcd", "Could not get server list",
 			LogFields{"error": err.Error()})
-		return
+		return nil, err
 	}
 	for length := len(contacts); length > 0; {
 		index := rand.Intn(length)
 		length--
 		contacts[index], contacts[length] = contacts[length], contacts[index]
 	}
-	return
+	return contacts, nil
 }
 
 // Register registers the server to the etcd cluster.
@@ -198,9 +198,9 @@ func (l *EtcdLocator) Register() (err error) {
 			LogFields{"error": err.Error(),
 				"key":  l.key,
 				"host": l.authority})
-		return
+		return err
 	}
-	return
+	return nil
 }
 
 // getServers gets the current contact list from etcd.

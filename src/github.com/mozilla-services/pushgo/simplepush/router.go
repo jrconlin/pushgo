@@ -115,33 +115,29 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 
-	r.template, err = template.New("Route").Parse(conf.UrlTemplate)
-	if err != nil {
+	if r.template, err = template.New("Route").Parse(conf.UrlTemplate); err != nil {
 		r.logger.Critical("router", "Could not parse router template",
 			LogFields{"error": err.Error(),
 				"template": conf.UrlTemplate})
-		return
+		return err
 	}
-	r.ctimeout, err = time.ParseDuration(conf.Ctimeout)
-	if err != nil {
+	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
 		r.logger.Error("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
-		return
+		return err
 	}
-	r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout)
-	if err != nil {
+	if r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout); err != nil {
 		r.logger.Error("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
-		return
+		return err
 	}
 
-	r.listener, err = Listen(conf.Addr)
-	if err != nil {
+	if r.listener, err = Listen(conf.Addr); err != nil {
 		r.logger.Error("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
 
 	r.bucketSize = conf.BucketSize
@@ -165,7 +161,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		},
 	}
 
-	return
+	return nil
 }
 
 func (r *Router) SetLocator(locator Locator) error {
@@ -194,7 +190,7 @@ func (r *Router) Close() (err error) {
 	r.listener.Close()
 	r.isClosing = true
 	r.lastErr = err
-	return
+	return err
 }
 
 // SendUpdate routes an update packet to the correct server.
@@ -214,20 +210,20 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 	if err != nil {
 		r.logger.Error("router", "Could not compose routing message",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		r.logger.Error("router", "Could not query discovery service for contacts",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
 	if _, err = r.notifyAll(contacts, uaid, msg); err != nil {
 		r.logger.Error("router", "Could not post to server",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
-	return
+	return nil
 }
 
 // formatURL constructs a proxy endpoint for the given contact and device ID.
@@ -278,11 +274,11 @@ func (r *Router) notifyBucket(contacts []string, uaid string, msg []byte) (ok bo
 	}
 	select {
 	case ok = <-r.closeSignal:
-		err = io.EOF
+		return false, io.EOF
 	case ok = <-result:
 	case <-time.After(r.ctimeout + r.rwtimeout + 1*time.Second):
 	}
-	return
+	return ok, nil
 }
 
 // notifyContact routes a message to a single contact.
