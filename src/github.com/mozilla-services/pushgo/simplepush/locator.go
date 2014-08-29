@@ -22,7 +22,7 @@ type Locator interface {
 	// short list of the closest nodes.
 	Contacts(uaid string) ([]string, error)
 
-	// MaxParallel returns the maximum number of contacts that the router should
-	// probe before checking replies.
-	MaxParallel() int
+	// BucketSize returns the maximum number of contacts that the router should
+	// probe at once.
+	BucketSize() int
 }

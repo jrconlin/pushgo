@@ -189,7 +189,7 @@ func (r *Router) Close() (err error) {
 	return
 }
 
-// SendUpdate broadcasts an update packet to the correct server.
+// SendUpdate routes an update packet to the correct server.
 func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
 	locator := r.Locator()
 	if locator == nil {
@@ -234,22 +234,31 @@ func (r *Router) formatURL(contact, uaid string) (string, error) {
 	return url.String(), nil
 }
 
+// notifyAll partitions a slice of contacts into buckets, then broadcasts an
+// update to each bucket.
 func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool, err error) {
 	if r.logger.ShouldLog(DEBUG) {
 		r.logger.Debug("router", "Sending push...", LogFields{"msg": string(msg),
 			"servers": strings.Join(contacts, ", ")})
 	}
-	// The buffered lease channel sets a limit on the number of pending requests.
-	leases := make(chan struct{}, r.Locator().MaxParallel())
-	for i := 0; i < cap(leases); i++ {
-		leases <- struct{}{}
+	for fromIndex := 0; !ok && fromIndex < len(contacts); {
+		toIndex := fromIndex + r.Locator().BucketSize()
+		if toIndex > len(contacts) {
+			toIndex = len(contacts)
+		}
+		if ok, err = r.notifyBucket(contacts[fromIndex:toIndex], uaid, msg); err != nil {
+			break
+		}
+		fromIndex += toIndex
 	}
-	stop := make(chan struct{})
+	return
+}
+
+// notifyBucket routes a message to all contacts in a bucket, returning as soon
+// as a contact accepts the update.
+func (r *Router) notifyBucket(contacts []string, uaid string, msg []byte) (ok bool, err error) {
+	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
-	// Broadcast the message to all contacts in the list returned by the
-	// discovery service. The stop channel will be closed as soon as a
-	// contact accepts the update.
-	result := make(chan bool)
 	for _, contact := range contacts {
 		url, err := r.formatURL(contact, uaid)
 		if err != nil {
@@ -257,7 +266,7 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 				LogFields{"error": err.Error()})
 			return false, err
 		}
-		go r.notifyOne(result, leases, stop, contact, url, msg)
+		go r.notifyContact(result, stop, contact, url, msg)
 	}
 	select {
 	case ok = <-r.closeSignal:
@@ -268,12 +277,8 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 	return
 }
 
-// notifyOne routes a message to a single contact.
-func (r *Router) notifyOne(result chan<- bool, leases chan struct{}, stop <-chan struct{}, contact, url string, msg []byte) {
-	lease := <-leases
-	defer func() {
-		leases <- lease
-	}()
+// notifyContact routes a message to a single contact.
+func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact, url string, msg []byte) {
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {

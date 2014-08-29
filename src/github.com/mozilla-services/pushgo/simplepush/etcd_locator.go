@@ -195,9 +195,10 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	return
 }
 
-// MaxParallel returns the maximum number of requests that the router should
-// send in parallel. Implements Locator.MaxParallel().
-func (l *EtcdLocator) MaxParallel() int {
+// BucketSize returns the maximum number of nodes to probe at once. The router
+// will defer further requests until all nodes in a bucket have responded.
+// Implements Locator.BucketSize().
+func (l *EtcdLocator) BucketSize() int {
 	return l.bucketSize
 }
 
