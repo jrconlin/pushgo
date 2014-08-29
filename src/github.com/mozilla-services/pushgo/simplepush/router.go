@@ -41,6 +41,11 @@ type Routable struct {
 }
 
 type RouterConfig struct {
+	// BucketSize is the maximum number of contacts to probe at once. The router
+	// will defer requests until all nodes in a bucket have responded. Defaults
+	// to 10 contacts.
+	BucketSize int `toml:"bucket_size"`
+
 	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
 	Ctimeout string
@@ -77,6 +82,7 @@ type Router struct {
 	template    *template.Template
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
+	bucketSize  int
 	scheme      string
 	hostname    string
 	port        int
@@ -95,6 +101,7 @@ func NewRouter() *Router {
 
 func (*Router) ConfigStruct() interface{} {
 	return &RouterConfig{
+		BucketSize:  10,
 		Ctimeout:    "3s",
 		Rwtimeout:   "3s",
 		Scheme:      "http",
@@ -137,6 +144,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return
 	}
 
+	r.bucketSize = conf.BucketSize
 	r.scheme = conf.Scheme
 	r.hostname = conf.DefaultHost
 	if len(r.hostname) == 0 {
@@ -242,7 +250,7 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 			"servers": strings.Join(contacts, ", ")})
 	}
 	for fromIndex := 0; !ok && fromIndex < len(contacts); {
-		toIndex := fromIndex + r.Locator().BucketSize()
+		toIndex := fromIndex + r.bucketSize
 		if toIndex > len(contacts) {
 			toIndex = len(contacts)
 		}

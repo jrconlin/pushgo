@@ -21,8 +21,4 @@ type Locator interface {
 	// for a DHT-based Locator, the slice may contain either a single node or a
 	// short list of the closest nodes.
 	Contacts(uaid string) ([]string, error)
-
-	// BucketSize returns the maximum number of contacts that the router should
-	// probe at once.
-	BucketSize() int
 }

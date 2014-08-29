@@ -10,10 +10,9 @@ type StaticLocatorConf struct {
 }
 
 type StaticLocator struct {
-	logger     *SimpleLogger
-	metrics    *Metrics
-	contacts   []string
-	bucketSize int
+	logger   *SimpleLogger
+	metrics  *Metrics
+	contacts []string
 }
 
 func (*StaticLocator) ConfigStruct() interface{} {
@@ -27,13 +26,11 @@ func (l *StaticLocator) Init(app *Application, config interface{}) error {
 	l.logger = app.Logger()
 	l.metrics = app.Metrics()
 	l.contacts = conf.Contacts
-	l.bucketSize = conf.BucketSize
 	return nil
 }
 
 func (l *StaticLocator) Close() error                      { return nil }
 func (l *StaticLocator) Contacts(string) ([]string, error) { return l.contacts, nil }
-func (l *StaticLocator) BucketSize() int                   { return l.bucketSize }
 
 func init() {
 	AvailableLocators["static"] = func() HasConfigStruct { return new(StaticLocator) }

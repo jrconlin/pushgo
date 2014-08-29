@@ -27,10 +27,6 @@ type EtcdLocatorConf struct {
 	// "push_hosts".
 	Dir string `toml:"dir"`
 
-	// BucketSize is the maximum number of requests that the router should send
-	// before checking replies. Defaults to 10.
-	BucketSize int `toml:"bucket_size"`
-
 	// Servers is a list of etcd servers.
 	Servers []string
 
@@ -56,7 +52,6 @@ type EtcdLocator struct {
 	metrics         *Metrics
 	refreshInterval time.Duration
 	defaultTTL      time.Duration
-	bucketSize      int
 	serverList      []string
 	dir             string
 	authority       string
@@ -80,7 +75,6 @@ func NewEtcdLocator() *EtcdLocator {
 func (*EtcdLocator) ConfigStruct() interface{} {
 	return &EtcdLocatorConf{
 		Dir:             "push_hosts",
-		BucketSize:      10,
 		Servers:         []string{"http://localhost:4001"},
 		DefaultTTL:      "24h",
 		RefreshInterval: "5m",
@@ -112,7 +106,6 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 		return ErrMinTTL
 	}
 
-	l.bucketSize = conf.BucketSize
 	l.serverList = conf.Servers
 	l.dir = path.Clean(conf.Dir)
 
@@ -193,13 +186,6 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 		contacts[index], contacts[length] = contacts[length], contacts[index]
 	}
 	return
-}
-
-// BucketSize returns the maximum number of nodes to probe at once. The router
-// will defer further requests until all nodes in a bucket have responded.
-// Implements Locator.BucketSize().
-func (l *EtcdLocator) BucketSize() int {
-	return l.bucketSize
 }
 
 // Register registers the server to the etcd cluster.
