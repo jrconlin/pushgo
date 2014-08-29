@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -80,7 +81,10 @@ type Router struct {
 	hostname    string
 	port        int
 	rclient     *http.Client
+	isClosing   bool
 	closeSignal chan bool
+	closeLock   sync.Mutex
+	lastErr     error
 }
 
 func NewRouter() *Router {
@@ -170,11 +174,18 @@ func (r *Router) Listener() net.Listener {
 }
 
 func (r *Router) Close() (err error) {
+	defer r.closeLock.Unlock()
+	r.closeLock.Lock()
+	if r.isClosing {
+		return r.lastErr
+	}
 	close(r.closeSignal)
 	if locator := r.Locator(); locator != nil {
 		err = locator.Close()
 	}
 	r.listener.Close()
+	r.isClosing = true
+	r.lastErr = err
 	return
 }
 

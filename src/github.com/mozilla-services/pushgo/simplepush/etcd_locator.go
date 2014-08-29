@@ -57,8 +57,11 @@ type EtcdLocator struct {
 	key             string
 	client          *etcd.Client
 	lastRefresh     time.Time
+	isClosing       bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
+	closeLock       sync.Mutex
+	lastErr         error
 }
 
 func NewEtcdLocator() *EtcdLocator {
@@ -152,12 +155,19 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 // Close stops the locator and closes the etcd client connection. Implements
 // Locator.Close().
 func (l *EtcdLocator) Close() (err error) {
+	defer l.closeLock.Unlock()
+	l.closeLock.Lock()
+	if l.isClosing {
+		return l.lastErr
+	}
 	close(l.closeSignal)
 	l.closeWait.Wait()
 	if l.key != "" {
 		_, err = l.client.Delete(l.key, false)
 	}
-	return err
+	l.isClosing = true
+	l.lastErr = err
+	return
 }
 
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
