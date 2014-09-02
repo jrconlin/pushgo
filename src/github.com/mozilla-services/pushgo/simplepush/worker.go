@@ -371,9 +371,8 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	// 	"messageType": data["messageType"],
 	// 	"status":      status,
 	// 	"uaid":        sock.Uaid})
-	msg := []byte("{\"messageType\":\"" + messageType +
-		"\",\"status\":" + strconv.FormatInt(int64(status), 10) +
-		",\"uaid\":\"" + sock.Uaid + "\"}")
+	msg := []byte(fmt.Sprintf(`{"messageType":"%s","status":%d,"uaid":"%s"}`,
+		messageType, status, sock.Uaid))
 	_, err = sock.Socket.Write(msg)
 	self.metrics.Increment("updates.client.hello")
 	self.logger.Info("dash", "Client successfully connected", nil)

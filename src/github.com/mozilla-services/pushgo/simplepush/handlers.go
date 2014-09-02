@@ -66,6 +66,7 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 	if err != nil {
 		self.logger.Error("handler", "Could not generate metrics report",
 			LogFields{"error": err.Error()})
+		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
 	}
@@ -81,17 +82,19 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := self.app.ClientCount()
-	OK := "OK"
-	if clientCount >= self.max_connections {
-		OK = "NOPE"
+	ok := clientCount >= self.max_connections
+	statusText := "OK"
+	if !ok {
+		statusText = "NOPE"
 	}
-	reply := fmt.Sprintf("{\"status\":\"%s\",\"clients\":%d}",
-		OK, clientCount)
-	if OK != "OK" {
-		http.Error(resp, reply, http.StatusServiceUnavailable)
-	} else {
-		resp.Write([]byte(reply))
+	reply := []byte(fmt.Sprintf(`{"status":"%s","clients":%d}`,
+		statusText, clientCount))
+
+	resp.Header().Set("Content-Type", "application/json")
+	if !ok {
+		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
+	resp.Write(reply)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
@@ -139,8 +142,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	)
 
 	if self.app.ClientCount() >= self.max_connections {
-		http.Error(resp, "{\"error\": \"Server unavailable\"}",
-			http.StatusServiceUnavailable)
+		resp.Header().Set("Content-Type", "application/json")
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Write([]byte(`{"error": "Server unavailable"}`))
 		self.metrics.Increment("updates.appserver.too_many_connections")
 		return
 	}
@@ -180,7 +184,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if svers != "" {
 		version, err = strconv.ParseInt(svers, 10, 64)
 		if err != nil || version < 0 {
-			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
+			resp.Header().Set("Content-Type", "application/json")
+			resp.WriteHeader(http.StatusBadRequest)
+			resp.Write([]byte(`"Invalid Version"`))
 			self.metrics.Increment("updates.appserver.invalid")
 			return
 		}
@@ -271,6 +277,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
 			resp.Write([]byte("{}"))
 		} else {
+			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 		}
 		return
@@ -471,7 +478,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.metrics.Increment("updates.routed.error")
 		return
 	}
-	http.Error(resp, "Ok", http.StatusOK)
+	resp.Write([]byte("Ok"))
 	self.metrics.Increment("updates.routed.received")
 	return
 }
