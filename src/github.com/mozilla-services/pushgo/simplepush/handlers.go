@@ -36,6 +36,16 @@ type Handler struct {
 	propping        PropPinger
 }
 
+type ServerStatus struct {
+	Healthy bool `json:"ok"`
+	Clients int `json:"clientCount"`
+	MaxClients int `json:"maxClients"`
+	StoreHealthy bool `json:"mcstatus"`
+	Goroutines int `json:"goroutines"`
+	Error string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 func (self *Handler) ConfigStruct() interface{} {
 	return &HandlerConfig{}
 }
@@ -101,26 +111,24 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 		msg += fmt.Sprintf(" Memcache error %s,", err)
 	}
 	ok := okClients && mcStatus
-	gcount := runtime.NumGoroutine()
-	repMap := JsMap{"ok": ok,
-		"clientCount": clientCount,
-		"maxClients":  self.max_connections,
-		"mcstatus":    mcStatus,
-		"goroutines":  gcount,
+	status := &ServerStatus{
+		Healthy: ok,
+		Clients: clientCount,
+		MaxClients: self.max_connections,
+		StoreHealthy: mcStatus,
+		Goroutines: runtime.NumGoroutine(),
+		Message: msg,
 	}
 	if err != nil {
-		repMap["error"] = err.Error()
+		status.Error = err.Error()
 	}
-	if msg != "" {
-		repMap["message"] = msg
-	}
-	reply, err := json.Marshal(repMap)
+	reply, err := json.Marshal(status)
 
-	if ok {
-		resp.Write(reply)
-	} else {
-		http.Error(resp, string(reply), http.StatusServiceUnavailable)
+	resp.Header().Set("Content-Type", "application/json")
+	if !ok {
+		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
+	resp.Write(reply)
 }
 
 func proxyNotification(proto, host, path string, vers int64) (err error) {
@@ -366,10 +374,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if self.app.ClientCount() > int(self.max_connections) {
-		websocket.JSON.Send(ws, JsMap{
-			"status": http.StatusServiceUnavailable,
-			"error":  "Server Unavailable"})
+	if self.app.ClientCount() >= self.max_connections {
+		websocket.JSON.Send(ws, struct{
+			Status int `json:"status"`
+			Error string `json:"error"`
+		}{http.StatusServiceUnavailable, "Server Unavailable"})
 		return
 	}
 	sock := PushWS{Uaid: "",

@@ -221,12 +221,12 @@ func (r *GCMPing) Send(vers int64) error {
 	// google docs lie. You MUST send the regid as an array, even if it's one
 	// element.
 	regs := [1]string{r.config.RegID}
-	data, err := json.Marshal(JsMap{
-		"registration_ids": regs,
-		"collapse_key":     r.config.CollapseKey,
-		"time_to_live":     r.config.TTL,
-		"dry_run":          r.config.DryRun,
-	})
+	data, err := json.Marshal(struct{
+		Regs [1]string `json:"registration_ids"`
+		CollapseKey string `json:"collapse_key"`
+		TTL uint64 `json:"time_to_live"`
+		DryRun bool `json:"dry_run"`
+	}{regs, r.config.CollapseKey, r.config.TTL, r.config.DryRun})
 	if err != nil {
 		r.app.Logger().Error("propping",
 			"Could not marshal request for GCM post",

@@ -49,6 +49,31 @@ const (
 	WorkerActive               = 1
 )
 
+type RegisterReply struct {
+	Type interface{} `json:"messageType"`
+	DeviceID string `json:"uaid"`
+	Status int `json:"status"`
+	ChannelID string `json:"channelID"`
+	Endpoint string `json:"pushEndpoint"`
+}
+
+type UnregisterReply struct {
+	Type interface{} `json:"messageType"`
+	Status int `json:"status"`
+	ChannelID string `json:"channelID"`
+}
+
+type FlushReply struct {
+	Type interface{} `json:"messageType"`
+	Updates []Update `json:"updates"`
+	Expired []string `json:"expired"`
+}
+
+type PingReply struct {
+	Type interface{} `json:"messageType"`
+	Status int `json:"status"`
+}
+
 const CHID_DEFAULT_MAX_NUM = 200
 
 func NewWorker(app *Application) *Worker {
@@ -463,11 +488,6 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	// return the info back to the socket
 	messageType, _ := data["messageType"].(string)
 	statusCode := 200
-	reply := JsMap{"messageType": messageType,
-		"uaid":         sock.Uaid,
-		"status":       statusCode,
-		"channelID":    appid,
-		"pushEndpoint": endpoint}
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response", LogFields{
 			"messageType":  messageType,
@@ -476,7 +496,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 			"channelID":    appid,
 			"pushEndpoint": endpoint})
 	}
-	websocket.JSON.Send(sock.Socket, reply)
+	websocket.JSON.Send(sock.Socket, RegisterReply{messageType, sock.Uaid, statusCode, appid, endpoint})
 	self.metrics.Increment("updates.client.register")
 	return err
 }
@@ -511,10 +531,7 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"cmd": "unregister", "error": ErrStr(err)})
 	}
-	websocket.JSON.Send(sock.Socket, JsMap{
-		"messageType": data["messageType"],
-		"status":      200,
-		"channelID":   appid})
+	websocket.JSON.Send(sock.Socket, UnregisterReply{data["messageType"], 200, appid})
 	self.metrics.Increment("updates.client.unregister")
 	return err
 }
@@ -545,7 +562,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	// Fetch the pending updates from #storage
 	var (
 		updates []Update
-		reply   JsMap
+		reply   *FlushReply
 	)
 	mod := false
 	// if we have a channel, don't flush. we can get them later in the ACK
@@ -558,13 +575,13 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 			return err
 		}
 		if len(updates) > 0 || len(expired) > 0 {
-			reply = JsMap{"updates": updates, "expired": expired}
+			reply = &FlushReply{messageType, updates, expired}
 		}
 	} else {
 		// hand craft a notification update to the client.
 		// TODO: allow bulk updates.
 		updates = []Update{Update{channel, uint64(version)}}
-		reply = JsMap{"updates": updates}
+		reply = &FlushReply{messageType, updates, nil}
 	}
 	if reply == nil {
 		return nil
@@ -582,7 +599,6 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		}
 	}
 
-	reply["messageType"] = messageType
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "Flushing data back to socket",
 			LogFields{"updates": "[" + strings.Join(logStrings, ", ") + "]"})
@@ -604,9 +620,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 	self.lastPing = now
 	data, _ := buffer.(JsMap)
 	if self.app.pushLongPongs {
-		websocket.JSON.Send(sock.Socket, JsMap{
-			"messageType": data["messageType"],
-			"status":      200})
+		websocket.JSON.Send(sock.Socket, PingReply{data["messageType"], 200})
 	} else {
 		websocket.Message.Send(sock.Socket, "{}")
 	}
