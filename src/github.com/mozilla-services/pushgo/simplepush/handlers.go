@@ -163,15 +163,30 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	defer func(err *error) {
+		now := time.Now()
+		if len(uaid) > 0 && len(chid) > 0 {
+			if self.logger.ShouldLog(DEBUG) {
+				self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
+			}
+			if self.logger.ShouldLog(INFO) {
+				self.logger.Info("dash", "Client Update complete",
+					LogFields{
+						"uaid":       uaid,
+						"path":       req.URL.Path,
+						"channelID":  chid,
+						"successful": strconv.FormatBool(*err == nil),
+						"duration":   strconv.FormatInt(int64(now.Sub(timer)), 10)})
+			}
+		}
+		self.metrics.Timer("updates.handled", now.Sub(timer))
+	}(&err)
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
 			LogFields{"path": req.URL.Path})
 	}
 
-	defer func() {
-		self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
-	}()
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		self.metrics.Increment("updates.appserver.invalid")
@@ -321,16 +336,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	}
 	if self.logger.ShouldLog(INFO) {
-		defer func(uaid, chid, path string, timer time.Time, err error) {
-			self.logger.Info("dash", "Client Update complete",
-				LogFields{
-					"uaid":       uaid,
-					"path":       req.URL.Path,
-					"channelID":  chid,
-					"successful": strconv.FormatBool(err == nil),
-					"duration":   strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10)})
-		}(uaid, chid, req.URL.Path, timer, err)
-
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			LogFields{"uaid": uaid, "channelID": chid,
@@ -389,7 +394,14 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		}
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
+		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
+
+		self.metrics.Increment("updates.client.disconnect")
+		self.metrics.GaugeDelta("updates.clients", -1)
 	}()
+
+	self.metrics.Increment("updates.client.connect")
+	self.metrics.GaugeDelta("updates.clients", 1)
 
 	NewWorker(self.app).Run(&sock)
 	if self.logger.ShouldLog(DEBUG) {

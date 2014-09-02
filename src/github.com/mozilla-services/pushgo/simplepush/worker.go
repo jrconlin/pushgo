@@ -532,10 +532,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
 					"uaid": sock.Uaid})
 		}
-		if self.metrics != nil {
-			self.metrics.Timer("client.flush",
-				time.Now().Unix()-timer.Unix())
-		}
+		self.metrics.Timer("client.flush", now.Sub(timer))
 	}(timer, sock)
 	if sock.Uaid == "" {
 		self.logger.Error("worker",

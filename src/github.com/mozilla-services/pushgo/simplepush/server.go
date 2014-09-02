@@ -184,7 +184,6 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	}
 	self.app.AddClient(uaid, client)
 	self.logger.Info("dash", "Client registered", nil)
-	self.metrics.Increment("updates.client.connect")
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -215,10 +214,7 @@ func (self *Serv) Bye(sock *PushWS) {
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
-	self.metrics.Timer("socket.lifespan",
-		time.Now().Unix()-sock.Born.Unix())
 	self.app.RemoveClient(uaid)
-	self.metrics.Increment("updates.client.disconnect")
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {

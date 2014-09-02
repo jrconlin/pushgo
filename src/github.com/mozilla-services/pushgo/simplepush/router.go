@@ -195,6 +195,7 @@ func (r *Router) Close() (err error) {
 
 // SendUpdate routes an update packet to the correct server.
 func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
+	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
 		r.logger.Warn("router", "No discovery service set; unable to route message",
@@ -221,13 +222,19 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 		r.metrics.Increment("router.broadcast.failure")
 		return err
 	}
-	if _, err = r.notifyAll(contacts, uaid, msg); err != nil {
+	ok, err := r.notifyAll(contacts, uaid, msg)
+	endTime := time.Now()
+	if err != nil {
 		r.logger.Error("router", "Could not post to server",
 			LogFields{"error": err.Error()})
 		r.metrics.Increment("router.broadcast.failure")
 		return err
 	}
 	r.metrics.Increment("router.broadcast.success")
+	r.metrics.Timer("router.handled", endTime.Sub(startTime))
+	if ok {
+		r.metrics.Timer("updates.routed", endTime.Sub(timer))
+	}
 	return nil
 }
 
