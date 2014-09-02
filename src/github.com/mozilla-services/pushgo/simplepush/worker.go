@@ -50,28 +50,28 @@ const (
 )
 
 type RegisterReply struct {
-	Type interface{} `json:"messageType"`
-	DeviceID string `json:"uaid"`
-	Status int `json:"status"`
-	ChannelID string `json:"channelID"`
-	Endpoint string `json:"pushEndpoint"`
+	Type      interface{} `json:"messageType"`
+	DeviceID  string      `json:"uaid"`
+	Status    int         `json:"status"`
+	ChannelID string      `json:"channelID"`
+	Endpoint  string      `json:"pushEndpoint"`
 }
 
 type UnregisterReply struct {
-	Type interface{} `json:"messageType"`
-	Status int `json:"status"`
-	ChannelID string `json:"channelID"`
+	Type      interface{} `json:"messageType"`
+	Status    int         `json:"status"`
+	ChannelID string      `json:"channelID"`
 }
 
 type FlushReply struct {
-	Type interface{} `json:"messageType"`
-	Updates []Update `json:"updates"`
-	Expired []string `json:"expired"`
+	Type    interface{} `json:"messageType"`
+	Updates []Update    `json:"updates"`
+	Expired []string    `json:"expired"`
 }
 
 type PingReply struct {
-	Type interface{} `json:"messageType"`
-	Status int `json:"status"`
+	Type   interface{} `json:"messageType"`
+	Status int         `json:"status"`
 }
 
 const CHID_DEFAULT_MAX_NUM = 200

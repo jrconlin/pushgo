@@ -34,13 +34,13 @@ type Handler struct {
 }
 
 type ServerStatus struct {
-	Healthy bool `json:"ok"`
-	Clients int `json:"clientCount"`
-	MaxClients int `json:"maxClients"`
-	StoreHealthy bool `json:"mcstatus"`
-	Goroutines int `json:"goroutines"`
-	Error string `json:"error,omitempty"`
-	Message string `json:"message,omitempty"`
+	Healthy      bool   `json:"ok"`
+	Clients      int    `json:"clientCount"`
+	MaxClients   int    `json:"maxClients"`
+	StoreHealthy bool   `json:"mcstatus"`
+	Goroutines   int    `json:"goroutines"`
+	Error        string `json:"error,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -109,12 +109,12 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	}
 	ok := okClients && mcStatus
 	status := &ServerStatus{
-		Healthy: ok,
-		Clients: clientCount,
-		MaxClients: self.max_connections,
+		Healthy:      ok,
+		Clients:      clientCount,
+		MaxClients:   self.max_connections,
 		StoreHealthy: mcStatus,
-		Goroutines: runtime.NumGoroutine(),
-		Message: msg,
+		Goroutines:   runtime.NumGoroutine(),
+		Message:      msg,
 	}
 	if err != nil {
 		status.Error = err.Error()
@@ -347,9 +347,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	if self.app.ClientCount() >= self.max_connections {
-		websocket.JSON.Send(ws, struct{
-			Status int `json:"status"`
-			Error string `json:"error"`
+		websocket.JSON.Send(ws, struct {
+			Status int    `json:"status"`
+			Error  string `json:"error"`
 		}{http.StatusServiceUnavailable, "Server Unavailable"})
 		return
 	}

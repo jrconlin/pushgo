@@ -136,6 +136,7 @@ type GCMPing struct {
 	PropPinger
 	config *GCMPingConfig
 	app    *Application
+	client *http.Client
 }
 
 type GCMPingConfig struct {
@@ -163,6 +164,7 @@ func (r *GCMPing) ConfigStruct() interface{} {
 func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.app = app
 	r.config = config.(*GCMPingConfig)
+	r.client = new(http.Client)
 	return nil
 }
 
@@ -221,11 +223,11 @@ func (r *GCMPing) Send(vers int64) error {
 	// google docs lie. You MUST send the regid as an array, even if it's one
 	// element.
 	regs := [1]string{r.config.RegID}
-	data, err := json.Marshal(struct{
-		Regs [1]string `json:"registration_ids"`
-		CollapseKey string `json:"collapse_key"`
-		TTL uint64 `json:"time_to_live"`
-		DryRun bool `json:"dry_run"`
+	data, err := json.Marshal(struct {
+		Regs        [1]string `json:"registration_ids"`
+		CollapseKey string    `json:"collapse_key"`
+		TTL         uint64    `json:"time_to_live"`
+		DryRun      bool      `json:"dry_run"`
 	}{regs, r.config.CollapseKey, r.config.TTL, r.config.DryRun})
 	if err != nil {
 		r.app.Logger().Error("propping",
@@ -244,8 +246,7 @@ func (r *GCMPing) Send(vers int64) error {
 	req.Header.Add("Project_id", r.config.ProjectID)
 	req.Header.Add("Content-Type", "application/json")
 	r.app.Metrics().Increment("propretary.ping.gcm")
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := r.client.Do(req)
 	if err != nil {
 		r.app.Logger().Error("propping",
 			"Failed to send GCM message",
