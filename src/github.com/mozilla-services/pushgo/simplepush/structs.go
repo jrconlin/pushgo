@@ -10,8 +10,10 @@ import (
 	"code.google.com/p/go.net/websocket"
 )
 
+type CommandType int
+
 const (
-	UNREG = iota
+	UNREG CommandType = iota
 	REGIS
 	HELLO
 	ACK
@@ -21,20 +23,20 @@ const (
 	PURGE
 )
 
-var cmdLabels = map[int]string{
-	0: "Unregister",
-	1: "Register",
-	2: "Hello",
-	3: "ACK",
-	4: "Flush",
-	5: "Return",
-	6: "Die",
-	7: "Purge"}
+var cmdLabels = map[CommandType]string{
+	UNREG: "Unregister",
+	REGIS: "Register",
+	HELLO: "Hello",
+	ACK:   "ACK",
+	FLUSH: "Flush",
+	RETRN: "Return",
+	DIE:   "Die",
+	PURGE: "Purge"}
 
 type PushCommand struct {
 	// Use mutable int value
-	Command   int   //command type (UNREG, REGIS, ACK, etc)
-	Arguments JsMap //command arguments
+	Command   CommandType //command type (UNREG, REGIS, ACK, etc)
+	Arguments JsMap       //command arguments
 }
 
 type PushWS struct {

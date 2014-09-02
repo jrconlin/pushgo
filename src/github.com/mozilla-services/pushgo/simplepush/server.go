@@ -367,7 +367,7 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		args = make(JsMap)
 	}
 
-	switch int(cmd.Command) {
+	switch cmd.Command {
 	case HELLO:
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling HELLO event", nil)

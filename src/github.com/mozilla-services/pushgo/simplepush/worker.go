@@ -360,8 +360,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		},
 	}
 	// blocking call back to the boss.
-	raw_result, args := self.app.Server().HandleCommand(cmd, sock)
-	result := PushCommand{raw_result, args}
+	status, _ := self.app.Server().HandleCommand(cmd, sock)
 
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
@@ -370,10 +369,10 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 	}
 	// websocket.JSON.Send(sock.Socket, JsMap{
 	// 	"messageType": data["messageType"],
-	// 	"status":      result.Command,
+	// 	"status":      status,
 	// 	"uaid":        sock.Uaid})
 	msg := []byte("{\"messageType\":\"" + messageType +
-		"\",\"status\":" + strconv.FormatInt(int64(result.Command), 10) +
+		"\",\"status\":" + strconv.FormatInt(int64(status), 10) +
 		",\"uaid\":\"" + sock.Uaid + "\"}")
 	_, err = sock.Socket.Write(msg)
 	self.metrics.Increment("updates.client.hello")
@@ -476,15 +475,14 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	}
 	// have the server generate the callback URL.
 	cmd := PushCommand{Command: REGIS, Arguments: data}
-	raw_result, args := self.app.Server().HandleCommand(cmd, sock)
-	result := PushCommand{raw_result, args}
+	status, args := self.app.Server().HandleCommand(cmd, sock)
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker",
-			"Server returned", LogFields{"Command": strconv.FormatInt(int64(result.Command), 10),
+			"Server returned", LogFields{"Command": strconv.FormatInt(int64(status), 10),
 				"args.channelID": IStr(args["channelID"]),
 				"args.uaid":      IStr(args["uaid"])})
 	}
-	endpoint, _ := result.Arguments["push.endpoint"].(string)
+	endpoint, _ := args["push.endpoint"].(string)
 	// return the info back to the socket
 	messageType, _ := data["messageType"].(string)
 	statusCode := 200
