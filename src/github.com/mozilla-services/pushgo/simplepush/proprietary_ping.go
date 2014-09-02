@@ -179,7 +179,7 @@ func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 		return ConfigurationErr
 	}
 
-	regid, ok := connect["regid"]
+	regid, ok := connect["regid"].(string)
 	if !ok {
 		r.app.Logger().Error("gcmping",
 			"No user registration ID present. Cannot send message",
@@ -193,7 +193,7 @@ func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 	connect["gcm_url"] = r.config.URL
 	connect["ttl"] = r.config.TTL
 	connect["project_id"] = r.config.ProjectID
-	r.config.RegID = regid.(string)
+	r.config.RegID = regid
 	r.config.UAID = uaid
 	full_connect, err := json.Marshal(connect)
 	if err != nil {

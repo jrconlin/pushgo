@@ -5,16 +5,13 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
@@ -131,29 +128,6 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	resp.Write(reply)
 }
 
-func proxyNotification(proto, host, path string, vers int64) (err error) {
-
-	// I have tried a number of variations on this, but while it's possible
-	// to add Form values to this request, they're never actually sent out.
-	// Thus, I'm using the URL arguments option. Which sucks.
-	req, err := http.NewRequest("PUT",
-		fmt.Sprintf("%s://%s%s?version=%d", proto, host, path, vers), nil)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
-		return nil
-	}
-	rbody, err := ioutil.ReadAll(resp.Body)
-	return errors.New(fmt.Sprintf("Proxy failed. Returned (%d)\n %s",
-		resp.StatusCode, rbody))
-}
-
 // -- REST
 func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
@@ -190,7 +164,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.metrics.Timer("updates.handled", now.Sub(timer))
 		}
 	}(&err)
-	filter := regexp.MustCompile("[^\\w-\\.\\=]")
+
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
 			LogFields{"path": req.URL.Path})
@@ -250,10 +224,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			return
 		}
 
-		pk = strings.TrimSpace(string(bpk))
+		pk = string(bytes.TrimSpace(bpk))
 	}
 
-	if filter.Find([]byte(pk)) != nil {
+	if !validPK(pk) {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("update",
 				"Invalid token for update",
@@ -331,29 +305,27 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
 	if self.propping != nil && self.propping.CanBypassWebsocket() {
-		err = self.propping.Send(version)
-		if err != nil {
-			self.logger.Warn("update",
-				"Could not force to proprietary ping",
-				LogFields{"error": err.Error()})
-		} else {
+		if err = self.propping.Send(version); err == nil {
 			// Neat! Might as well return.
 			self.metrics.Increment("updates.appserver.received")
 			resp.Header().Set("Content-Type", "application/json")
 			resp.Write([]byte("{}"))
 			return
 		}
+		self.logger.Warn("update",
+			"Could not force to proprietary ping",
+			LogFields{"error": err.Error()})
 	}
+
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			LogFields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(version, 10)})
 	}
-	err = self.store.Update(pk, version)
 
-	if err != nil {
-		self.logger.Error("update", "Could not update channel",
+	if err = self.store.Update(pk, version); err != nil {
+		self.logger.Warn("update", "Could not update channel",
 			LogFields{"UAID": uaid,
 				"channelID": chid,
 				"version":   strconv.FormatInt(version, 10),
@@ -389,7 +361,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("handler", "websocket connection", LogFields{
-			"UserAgent":  strings.Join(ws.Request().Header["User-Agent"], ","),
+			"UserAgent":  ws.Request().Header.Get("User-Agent"),
 			"URI":        ws.Request().RequestURI,
 			"RemoteAddr": ws.Request().RemoteAddr,
 		})
@@ -456,39 +428,37 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.metrics.Increment("updates.routed.invalid")
 		return
 	}
-	if v, ok := jdata["chid"]; !ok {
+	if chid, ok = jdata["chid"].(string); !ok {
 		self.logger.Error("router", "Missing chid", LogFields{"uaid": uaid})
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 		self.metrics.Increment("updates.routed.invalid")
 		return
-	} else {
-		chid = v.(string)
 	}
-	if v, ok := jdata["time"]; !ok {
+	if v, ok := jdata["time"].(string); !ok {
 		self.logger.Error("router",
 			"Missing time", nil)
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 		self.metrics.Increment("updates.routed.invalid")
 		return
 	} else {
-		ts, err = time.Parse(time.RFC3339Nano, v.(string))
+		ts, err = time.Parse(time.RFC3339Nano, v)
 		if err != nil {
 			self.logger.Error("router", "Could not parse time",
 				LogFields{"error": err.Error(),
 					"uaid": uaid,
 					"chid": chid,
-					"time": v.(string)})
+					"time": v})
 			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 			self.metrics.Increment("updates.routed.invalid")
 			return
 		}
 	}
-	if v, ok := jdata["version"]; !ok {
+	if v, ok := jdata["version"].(float64); !ok {
 		self.logger.Warn("router",
 			"Missing version", nil)
 		vers = int64(time.Now().UTC().Unix())
 	} else {
-		vers = int64(v.(float64))
+		vers = int64(v)
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
@@ -513,6 +483,19 @@ func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
 
 func (r *Handler) PropPinger() PropPinger {
 	return r.propping
+}
+
+func validPK(pk string) bool {
+	for i := 0; i < len(pk); i++ {
+		b := pk[i]
+		if b >= 'A' && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' && b != '.' && b != '=' {
+			return false
+		}
+	}
+	return true
 }
 
 // o4fs
