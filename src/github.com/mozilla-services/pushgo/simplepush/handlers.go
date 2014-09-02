@@ -149,8 +149,12 @@ func proxyNotification(proto, host, path string, vers int64) (err error) {
 // -- REST
 func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
-	var err error
-	var version int64
+	timer := time.Now()
+	var (
+		err        error
+		version    int64
+		uaid, chid string
+	)
 
 	if self.app.ClientCount() > int(self.max_connections) {
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
@@ -159,7 +163,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	timer := time.Now()
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
@@ -212,7 +215,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		var err error
 		bpk, err := Decode(token, pk)
 		if err != nil {
-			self.logger.Error("update",
+			self.logger.Debug("update",
 				"Could not decode token",
 				LogFields{"primarykey": pk,
 					"remoteAddr": req.RemoteAddr,
@@ -238,7 +241,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	uaid, chid, ok := self.store.KeyToIDs(pk)
+	uaid, chid, ok = self.store.KeyToIDs(pk)
 	if !ok {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("update",
@@ -311,6 +314,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				LogFields{"error": err.Error()})
 		} else {
 			// Neat! Might as well return.
+			self.metrics.Increment("updates.received")
 			resp.Header().Set("Content-Type", "application/json")
 			resp.Write([]byte("{}"))
 			return
@@ -341,6 +345,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				"version":   strconv.FormatInt(version, 10),
 				"error":     err.Error()})
 		status, _ := sperrors.ErrToStatus(err)
+		self.metrics.Increment("updates.appserver.error")
 		http.Error(resp, "Could not update channel version", status)
 		return
 	}
@@ -355,13 +360,13 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
+	timer := time.Now()
 	if self.app.ClientCount() > int(self.max_connections) {
 		websocket.JSON.Send(ws, JsMap{
 			"status": http.StatusServiceUnavailable,
 			"error":  "Server Unavailable"})
 		return
 	}
-	timer := time.Now()
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,
@@ -376,6 +381,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		})
 	}
 	defer func() {
+		now := time.Now()
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			self.logger.Error("main", "Unknown error",

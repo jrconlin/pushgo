@@ -203,6 +203,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// For that matter, you may wish to store the Proprietary wake data to
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
+	now := time.Now()
 	uaid := sock.Uaid
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
@@ -212,7 +213,7 @@ func (self *Serv) Bye(sock *PushWS) {
 		self.logger.Info("dash", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
-				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
+				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
 	self.metrics.Timer("socket.lifespan",
 		time.Now().Unix()-sock.Born.Unix())
