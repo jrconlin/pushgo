@@ -85,7 +85,7 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	// TODO: make sure all is well.
 	clientCount := self.app.ClientCount()
 	OK := "OK"
-	if clientCount >= int(self.max_connections) {
+	if clientCount >= self.max_connections {
 		OK = "NOPE"
 	}
 	reply := fmt.Sprintf("{\"status\":\"%s\",\"clients\":%d}",
@@ -103,7 +103,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	var msg string
 
 	clientCount := self.app.ClientCount()
-	if okClients = clientCount > int(self.max_connections); !okClients {
+	if okClients = clientCount < self.max_connections; !okClients {
 		msg += "Exceeding max_connections, "
 	}
 	mcStatus, err := self.store.Status()
@@ -164,7 +164,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		uaid, chid string
 	)
 
-	if self.app.ClientCount() > int(self.max_connections) {
+	if self.app.ClientCount() >= self.max_connections {
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
 			http.StatusServiceUnavailable)
 		self.metrics.Increment("updates.appserver.too_many_connections")
