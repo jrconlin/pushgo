@@ -91,7 +91,7 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.metrics = app.Metrics()
 
 	if l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval); err != nil {
-		l.logger.Error("etcd", "Could not parse refreshInterval",
+		l.logger.Critical("etcd", "Could not parse refreshInterval",
 			LogFields{"error": err.Error(),
 				"refreshInterval": conf.RefreshInterval})
 		return err
@@ -124,15 +124,17 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 		l.key = path.Join(l.dir, l.authority)
 	}
 
-	l.logger.Debug("etcd", "connecting to etcd servers",
-		LogFields{"list": strings.Join(l.serverList, ";")})
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("etcd", "connecting to etcd servers",
+			LogFields{"list": strings.Join(l.serverList, ";")})
+	}
 	l.client = etcd.NewClient(l.serverList)
 
 	// create the push hosts directory (if not already there)
 	if _, err = l.client.CreateDir(l.dir, 0); err != nil {
 		clientErr, ok := err.(*etcd.EtcdError)
 		if !ok || clientErr.ErrorCode != 105 {
-			l.logger.Error("etcd", "etcd createDir error", LogFields{
+			l.logger.Critical("etcd", "etcd createDir error", LogFields{
 				"error": err.Error()})
 			return err
 		}
@@ -218,9 +220,7 @@ func (l *EtcdLocator) Status() (ok bool, err error) {
 
 // Register registers the server to the etcd cluster.
 func (l *EtcdLocator) Register() (err error) {
-	if l.logger.ShouldLog(DEBUG) {
-		l.logger.Debug("etcd", "Registering host", LogFields{"host": l.authority})
-	}
+	l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
 	if _, err = l.client.Set(l.key, l.authority, uint64(l.defaultTTL/time.Second)); err != nil {
 		l.logger.Error("etcd", "Failed to register",
 			LogFields{"error": err.Error(),

@@ -248,8 +248,10 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 		return err
 	}
 	if err = r.store.PutPing(uaid, requestData); err != nil {
-		r.logger.Error("gcmping", "Could not store connect",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(WARNING) {
+			r.logger.Warn("gcmping", "Could not store connect",
+				LogFields{"error": err.Error()})
+		}
 		return err
 	}
 	return nil
@@ -282,7 +284,7 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 		return false, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		r.logger.Error("propping",
+		r.logger.Warn("propping",
 			"GCM returned non success message",
 			LogFields{"error": resp.Status})
 		r.setLastErr(GCMError(resp.StatusCode))

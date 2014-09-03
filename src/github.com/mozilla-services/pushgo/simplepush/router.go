@@ -125,20 +125,20 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
-		r.logger.Error("router", "Could not parse ctimeout",
+		r.logger.Critical("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
 		return err
 	}
 	if r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout); err != nil {
-		r.logger.Error("router", "Could not parse rwtimeout",
+		r.logger.Critical("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
 		return err
 	}
 
 	if r.listener, err = conf.Listener.Listen(); err != nil {
-		r.logger.Error("router", "Could not attach listener",
+		r.logger.Critical("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -199,7 +199,7 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
-		r.logger.Warn("router", "No discovery service set; unable to route message",
+		r.logger.Error("router", "No discovery service set; unable to route message",
 			LogFields{"uaid": uaid, "chid": chid})
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
@@ -225,8 +225,10 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 	ok, err := r.notifyAll(contacts, uaid, msg)
 	endTime := time.Now()
 	if err != nil {
-		r.logger.Error("router", "Could not post to server",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(WARNING) {
+			r.logger.Warn("router", "Could not post to server",
+				LogFields{"error": err.Error()})
+		}
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
@@ -259,8 +261,8 @@ func (r *Router) formatURL(contact, uaid string) (string, error) {
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
 func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool, err error) {
-	if r.logger.ShouldLog(DEBUG) {
-		r.logger.Debug("router", "Sending push...", LogFields{"msg": string(msg),
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("router", "Sending push...", LogFields{"msg": string(msg),
 			"servers": strings.Join(contacts, ", ")})
 	}
 	for fromIndex := 0; !ok && fromIndex < len(contacts); {
@@ -304,7 +306,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {
-		r.logger.Warn("router", "Router request failed", LogFields{"error": err.Error()})
+		r.logger.Error("router", "Router request failed", LogFields{"error": err.Error()})
 		return
 	}
 	if r.logger.ShouldLog(DEBUG) {
@@ -316,7 +318,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := r.rclient.Do(req)
 	if err != nil {
-		r.logger.Warn("router", "Router send failed", LogFields{"error": err.Error()})
+		r.logger.Error("router", "Router send failed", LogFields{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
@@ -324,7 +326,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact
 		r.logger.Debug("router", "Denied", LogFields{"server": contact})
 		return
 	}
-	r.logger.Debug("router", "Server accepted", LogFields{"server": contact})
+	r.logger.Info("router", "Server accepted", LogFields{"server": contact})
 	select {
 	case <-stop:
 	case result <- true:
