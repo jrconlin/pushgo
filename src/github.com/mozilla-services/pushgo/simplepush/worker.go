@@ -12,7 +12,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
@@ -37,7 +36,6 @@ type Worker struct {
 	maxChannels  int
 	lastPing     time.Time
 	pingInt      time.Duration
-	wg           *sync.WaitGroup
 	metrics      *Metrics
 	helloTimeout time.Duration
 }
@@ -85,7 +83,6 @@ func NewWorker(app *Application) *Worker {
 		stopped:      false,
 		pingInt:      app.clientMinPing,
 		maxChannels:  app.Store().MaxChannels(),
-		wg:           new(sync.WaitGroup),
 		helloTimeout: app.clientHelloTimeout,
 	}
 }
