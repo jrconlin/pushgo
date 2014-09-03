@@ -396,15 +396,13 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
 		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
-
 		self.metrics.Increment("socket.disconnect")
-		self.metrics.GaugeDelta("socket.connected", -1)
 	}()
 
 	self.metrics.Increment("socket.connect")
-	self.metrics.GaugeDelta("socket.connected", 1)
 
 	NewWorker(self.app).Run(&sock)
+
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}

@@ -290,7 +290,7 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, configFile)
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := new(Serv)
+			serv := NewServer()
 			configStruct := serv.ConfigStruct()
 			if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
 				return nil, err

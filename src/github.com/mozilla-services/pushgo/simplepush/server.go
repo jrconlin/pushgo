@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -41,6 +42,12 @@ type ServerConfig struct {
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
 
+func NewServer() *Serv {
+	return &Serv{
+		closeSignal: make(chan bool),
+	}
+}
+
 type Serv struct {
 	app          *Application
 	logger       *SimpleLogger
@@ -53,6 +60,10 @@ type Serv struct {
 	hostname     string
 	port         int
 	fullHostname string
+	isClosing    bool
+	closeSignal  chan bool
+	closeLock    sync.Mutex
+	lastErr      error
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -110,6 +121,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 		}
 	}
 
+	go self.sendClientCount()
 	return
 }
 
@@ -387,6 +399,31 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	args["uaid"] = ret["uaid"]
 	return result, args
+}
+
+func (self *Serv) Close() (err error) {
+	defer self.closeLock.Unlock()
+	self.closeLock.Lock()
+	if self.isClosing {
+		return self.lastErr
+	}
+	close(self.closeSignal)
+	err = self.listener.Close()
+	self.isClosing = true
+	self.lastErr = err
+	return err
+}
+
+func (self *Serv) sendClientCount() {
+	ticker := time.NewTicker(1 * time.Second)
+	for ok := true; ok; {
+		select {
+		case ok = <-self.closeSignal:
+		case <-ticker.C:
+			self.metrics.Gauge("update.client.connections", int64(self.app.ClientCount()))
+		}
+	}
+	ticker.Stop()
 }
 
 // o4fs
