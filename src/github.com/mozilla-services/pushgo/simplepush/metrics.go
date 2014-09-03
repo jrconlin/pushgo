@@ -30,14 +30,13 @@ type MetricsConfig struct {
 
 type Metrics struct {
 	sync.RWMutex
-	counter   map[string]int64 // counters
-	timer     timer            // timers
-	gauge     map[string]int64
-	gaugeLock sync.Mutex
-	prefix    string // prefix for
-	logger    *SimpleLogger
-	statsd    *statsd.Client
-	born      time.Time
+	counter map[string]int64 // counters
+	timer   timer            // timers
+	gauge   map[string]int64
+	prefix  string // prefix for
+	logger  *SimpleLogger
+	statsd  *statsd.Client
+	born    time.Time
 }
 
 func (m *Metrics) ConfigStruct() interface{} {
@@ -174,8 +173,6 @@ func (m *Metrics) Gauge(metric string, value int64) {
 			return
 		}
 		// Gauges cannot be set to negative values; sign prefixes indicate deltas.
-		defer m.gaugeLock.Unlock()
-		m.gaugeLock.Lock()
 		if err := statsd.Gauge(metric, 0, 1.0); err != nil {
 			return
 		}
