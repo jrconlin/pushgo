@@ -230,13 +230,17 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
-	r.metrics.Timer("router.handled", endTime.Sub(startTime))
+	var counterName, timerName string
 	if ok {
-		r.metrics.Increment("router.broadcast.hit")
-		r.metrics.Timer("updates.routed.hits", endTime.Sub(timer))
+		counterName = "router.broadcast.hit"
+		timerName = "updates.routed.hits"
 	} else {
-		r.metrics.Increment("router.broadcast.miss")
+		counterName = "router.broadcast.miss"
+		timerName = "updates.routed.misses"
 	}
+	r.metrics.Increment(counterName)
+	r.metrics.Timer(timerName, endTime.Sub(timer))
+	r.metrics.Timer("router.handled", endTime.Sub(startTime))
 	return nil
 }
 

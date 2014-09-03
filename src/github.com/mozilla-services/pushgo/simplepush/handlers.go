@@ -366,7 +366,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	timer := time.Now()
 	if self.app.ClientCount() > int(self.max_connections) {
 		websocket.JSON.Send(ws, JsMap{
 			"status": http.StatusServiceUnavailable,
@@ -377,7 +376,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Socket: ws,
 		Store:  self.store,
 		Logger: self.logger,
-		Born:   timer}
+		Born:   time.Now()}
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("handler", "websocket connection", LogFields{
