@@ -195,10 +195,12 @@ func (r *Router) Close() (err error) {
 
 // SendUpdate routes an update packet to the correct server.
 func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
+	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
 		r.logger.Warn("router", "No discovery service set; unable to route message",
 			LogFields{"uaid": uaid, "chid": chid})
+		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
 	msg, err := json.Marshal(&Routable{
@@ -210,19 +212,35 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 	if err != nil {
 		r.logger.Error("router", "Could not compose routing message",
 			LogFields{"error": err.Error()})
+		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		r.logger.Error("router", "Could not query discovery service for contacts",
 			LogFields{"error": err.Error()})
+		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
-	if _, err = r.notifyAll(contacts, uaid, msg); err != nil {
+	ok, err := r.notifyAll(contacts, uaid, msg)
+	endTime := time.Now()
+	if err != nil {
 		r.logger.Error("router", "Could not post to server",
 			LogFields{"error": err.Error()})
+		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
+	var counterName, timerName string
+	if ok {
+		counterName = "router.broadcast.hit"
+		timerName = "updates.routed.hits"
+	} else {
+		counterName = "router.broadcast.miss"
+		timerName = "updates.routed.misses"
+	}
+	r.metrics.Increment(counterName)
+	r.metrics.Timer(timerName, endTime.Sub(timer))
+	r.metrics.Timer("router.handled", endTime.Sub(startTime))
 	return nil
 }
 

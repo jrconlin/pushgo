@@ -104,7 +104,7 @@ func (t *TestServer) load() (*Application, error) {
 			return locator, nil
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := new(Serv)
+			serv := NewServer()
 			servConf := serv.ConfigStruct().(*ServerConfig)
 			servConf.Addr = t.ServAddr
 			if len(servConf.Addr) == 0 {

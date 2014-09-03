@@ -104,21 +104,21 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Load the Proprietary Ping element. Deps: Logger
-	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
-		return nil, err
-	}
-	propping := obj.(PropPinger)
-	if err = app.SetPropPinger(propping); err != nil {
-		return nil, err
-	}
-
 	// Next, metrics, Deps: Logger
 	if obj, err = l.loadPlugin(PluginMetrics, app); err != nil {
 		return nil, err
 	}
 	metrics := obj.(*Metrics)
 	if err = app.SetMetrics(metrics); err != nil {
+		return nil, err
+	}
+
+	// Load the Proprietary Ping element. Deps: Logger, Metrics
+	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
+		return nil, err
+	}
+	propping := obj.(PropPinger)
+	if err = app.SetPropPinger(propping); err != nil {
 		return nil, err
 	}
 
@@ -290,7 +290,7 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, configFile)
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := new(Serv)
+			serv := NewServer()
 			configStruct := serv.ConfigStruct()
 			if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
 				return nil, err

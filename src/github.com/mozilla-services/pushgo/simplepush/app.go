@@ -238,13 +238,19 @@ func (a *Application) AddClient(uaid string, client *Client) {
 }
 
 func (a *Application) RemoveClient(uaid string) {
+	var ok bool
 	a.clientMux.Lock()
-	delete(a.clients, uaid)
+	if _, ok = a.clients[uaid]; ok {
+		delete(a.clients, uaid)
+	}
 	a.clientMux.Unlock()
-	atomic.AddInt32(a.clientCount, -1)
+	if ok {
+		atomic.AddInt32(a.clientCount, -1)
+	}
 }
 
 func (a *Application) Stop() {
+	a.server.Close()
 	a.router.Close()
 	a.store.Close()
 }

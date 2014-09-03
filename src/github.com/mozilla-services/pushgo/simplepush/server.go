@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -41,6 +42,12 @@ type ServerConfig struct {
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
 
+func NewServer() *Serv {
+	return &Serv{
+		closeSignal: make(chan bool),
+	}
+}
+
 type Serv struct {
 	app          *Application
 	logger       *SimpleLogger
@@ -53,6 +60,10 @@ type Serv struct {
 	hostname     string
 	port         int
 	fullHostname string
+	isClosing    bool
+	closeSignal  chan bool
+	closeLock    sync.Mutex
+	lastErr      error
 }
 
 func (self *Serv) ConfigStruct() interface{} {
@@ -110,6 +121,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 		}
 	}
 
+	go self.sendClientCount()
 	return
 }
 
@@ -184,7 +196,6 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	}
 	self.app.AddClient(uaid, client)
 	self.logger.Info("dash", "Client registered", nil)
-	self.metrics.Increment("updates.client.connect")
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -203,6 +214,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// For that matter, you may wish to store the Proprietary wake data to
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
+	now := time.Now()
 	uaid := sock.Uaid
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
@@ -212,12 +224,9 @@ func (self *Serv) Bye(sock *PushWS) {
 		self.logger.Info("dash", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
-				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
+				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
-	self.metrics.Timer("socket.lifespan",
-		time.Now().Unix()-sock.Born.Unix())
 	self.app.RemoveClient(uaid)
-	self.metrics.Increment("updates.client.disconnect")
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
@@ -390,6 +399,31 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	args["uaid"] = ret["uaid"]
 	return result, args
+}
+
+func (self *Serv) Close() (err error) {
+	defer self.closeLock.Unlock()
+	self.closeLock.Lock()
+	if self.isClosing {
+		return self.lastErr
+	}
+	close(self.closeSignal)
+	err = self.listener.Close()
+	self.isClosing = true
+	self.lastErr = err
+	return err
+}
+
+func (self *Serv) sendClientCount() {
+	ticker := time.NewTicker(1 * time.Second)
+	for ok := true; ok; {
+		select {
+		case ok = <-self.closeSignal:
+		case <-ticker.C:
+			self.metrics.Gauge("update.client.connections", int64(self.app.ClientCount()))
+		}
+	}
+	ticker.Stop()
 }
 
 // o4fs

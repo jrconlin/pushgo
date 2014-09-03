@@ -149,8 +149,12 @@ func proxyNotification(proto, host, path string, vers int64) (err error) {
 // -- REST
 func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
-	var err error
-	var version int64
+	timer := time.Now()
+	var (
+		err        error
+		version    int64
+		uaid, chid string
+	)
 
 	if self.app.ClientCount() > int(self.max_connections) {
 		http.Error(resp, "{\"error\": \"Server unavailable\"}",
@@ -159,16 +163,31 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	timer := time.Now()
+	defer func(err *error) {
+		now := time.Now()
+		ok := *err == nil
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
+		}
+		if len(uaid) > 0 && len(chid) > 0 && self.logger.ShouldLog(INFO) {
+			self.logger.Info("dash", "Client Update complete",
+				LogFields{
+					"uaid":       uaid,
+					"path":       req.URL.Path,
+					"channelID":  chid,
+					"successful": strconv.FormatBool(ok),
+					"duration":   strconv.FormatInt(int64(now.Sub(timer)), 10)})
+		}
+		if ok {
+			self.metrics.Timer("updates.handled", now.Sub(timer))
+		}
+	}(&err)
 	filter := regexp.MustCompile("[^\\w-\\.\\=]")
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
 			LogFields{"path": req.URL.Path})
 	}
 
-	defer func() {
-		self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
-	}()
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
 		self.metrics.Increment("updates.appserver.invalid")
@@ -212,7 +231,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		var err error
 		bpk, err := Decode(token, pk)
 		if err != nil {
-			self.logger.Error("update",
+			self.logger.Debug("update",
 				"Could not decode token",
 				LogFields{"primarykey": pk,
 					"remoteAddr": req.RemoteAddr,
@@ -238,7 +257,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	uaid, chid, ok := self.store.KeyToIDs(pk)
+	uaid, chid, ok = self.store.KeyToIDs(pk)
 	if !ok {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("update",
@@ -311,22 +330,13 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				LogFields{"error": err.Error()})
 		} else {
 			// Neat! Might as well return.
+			self.metrics.Increment("updates.appserver.received")
 			resp.Header().Set("Content-Type", "application/json")
 			resp.Write([]byte("{}"))
 			return
 		}
 	}
 	if self.logger.ShouldLog(INFO) {
-		defer func(uaid, chid, path string, timer time.Time, err error) {
-			self.logger.Info("dash", "Client Update complete",
-				LogFields{
-					"uaid":       uaid,
-					"path":       req.URL.Path,
-					"channelID":  chid,
-					"successful": strconv.FormatBool(err == nil),
-					"duration":   strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10)})
-		}(uaid, chid, req.URL.Path, timer, err)
-
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			LogFields{"uaid": uaid, "channelID": chid,
@@ -341,12 +351,13 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 				"version":   strconv.FormatInt(version, 10),
 				"error":     err.Error()})
 		status, _ := sperrors.ErrToStatus(err)
+		self.metrics.Increment("updates.appserver.error")
 		http.Error(resp, "Could not update channel version", status)
 		return
 	}
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
-	self.metrics.Increment("updates.received")
+	self.metrics.Increment("updates.appserver.received")
 	// Ping the appropriate server
 	if client, ok := self.app.GetClient(uaid); ok {
 		self.app.Server().RequestFlush(client, chid, int64(version))
@@ -361,12 +372,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 			"error":  "Server Unavailable"})
 		return
 	}
-	timer := time.Now()
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,
 		Logger: self.logger,
-		Born:   timer}
+		Born:   time.Now()}
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("handler", "websocket connection", LogFields{
@@ -376,6 +386,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		})
 	}
 	defer func() {
+		now := time.Now()
 		if r := recover(); r != nil {
 			debug.PrintStack()
 			self.logger.Error("main", "Unknown error",
@@ -383,9 +394,14 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		}
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
+		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
+		self.metrics.Increment("socket.disconnect")
 	}()
 
+	self.metrics.Increment("socket.connect")
+
 	NewWorker(self.app).Run(&sock)
+
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}
@@ -402,11 +418,13 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
+		self.metrics.Increment("updates.routed.invalid")
 		return
 	}
 	// if uid is not present, or doesn't exist in the known clients...
 	if !ok || !self.app.ClientExists(uaid) {
 		http.Error(resp, "UID Not Found", http.StatusNotFound)
+		self.metrics.Increment("updates.routed.unknown")
 		return
 	}
 	// We know of this one.
@@ -414,6 +432,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.logger.Warn("router", "Routed update contained no body",
 			LogFields{"uaid": uaid})
 		http.Error(resp, "Missing body", http.StatusNotAcceptable)
+		self.metrics.Increment("updates.routed.invalid")
 		return
 	}
 	defer req.Body.Close()
@@ -425,11 +444,13 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 			"Could not read update body",
 			LogFields{"error": err.Error()})
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		self.metrics.Increment("updates.routed.invalid")
 		return
 	}
 	if v, ok := jdata["chid"]; !ok {
 		self.logger.Error("router", "Missing chid", LogFields{"uaid": uaid})
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		self.metrics.Increment("updates.routed.invalid")
 		return
 	} else {
 		chid = v.(string)
@@ -438,6 +459,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.logger.Error("router",
 			"Missing time", nil)
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		self.metrics.Increment("updates.routed.invalid")
 		return
 	} else {
 		ts, err = time.Parse(time.RFC3339Nano, v.(string))
@@ -448,6 +470,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 					"chid": chid,
 					"time": v.(string)})
 			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+			self.metrics.Increment("updates.routed.invalid")
 			return
 		}
 	}
@@ -466,9 +489,11 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 			"Could not update local user",
 			LogFields{"error": err.Error()})
 		http.Error(resp, "Server Error", http.StatusInternalServerError)
+		self.metrics.Increment("updates.routed.error")
 		return
 	}
 	http.Error(resp, "Ok", http.StatusOK)
+	self.metrics.Increment("updates.routed.received")
 	return
 }
 

@@ -89,7 +89,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 			// Notify the main worker loop in case it didn't see the
 			// connection drop
 			log.Printf("Stopping %s %dns...", sock.Uaid,
-				time.Now().Sub(sock.Born).Nanoseconds())
+				time.Now().Sub(sock.Born))
 			return
 		}
 		err = websocket.Message.Receive(socket, &raw)
@@ -522,19 +522,17 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 // Dump any records associated with the UAID.
 func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) (err error) {
 	// flush pending data back to Client
-	messageType := "notification"
 	timer := time.Now()
+	messageType := "notification"
 	defer func(timer time.Time, sock *PushWS) {
-		if sock.Logger != nil {
+		now := time.Now()
+		if sock.Logger.ShouldLog(INFO) {
 			sock.Logger.Info("timer",
 				"Client flush completed",
-				LogFields{"duration": strconv.FormatInt(time.Now().Sub(timer).Nanoseconds(), 10),
+				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
 					"uaid": sock.Uaid})
 		}
-		if self.metrics != nil {
-			self.metrics.Timer("client.flush",
-				time.Now().Unix()-timer.Unix())
-		}
+		self.metrics.Timer("client.flush", now.Sub(timer))
 	}(timer, sock)
 	if sock.Uaid == "" {
 		self.logger.Error("worker",
@@ -594,7 +592,8 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 }
 
 func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
-	if self.pingInt > 0 && !self.lastPing.IsZero() && time.Now().Sub(self.lastPing) < self.pingInt {
+	now := time.Now()
+	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		source := sock.Socket.Config().Origin
 		self.logger.Error("dash", "Client sending too many pings",
 			LogFields{"source": source.String()})
@@ -602,7 +601,7 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		self.metrics.Increment("updates.client.too_many_pings")
 		return sperrors.TooManyPingsError
 	}
-	self.lastPing = time.Now()
+	self.lastPing = now
 	data, _ := buffer.(JsMap)
 	if self.app.pushLongPongs {
 		websocket.JSON.Send(sock.Socket, JsMap{
