@@ -117,8 +117,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 				time.Now().Sub(sock.Born))
 			return
 		}
-		err = websocket.Message.Receive(socket, &raw)
-		if err != nil {
+		if err = websocket.Message.Receive(socket, &raw); err != nil {
 			self.stopped = true
 			self.logger.Error("worker",
 				"Websocket Error",
@@ -465,8 +464,7 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	if !id.Valid(appid) {
 		return sperrors.InvalidDataError
 	}
-	err = sock.Store.Register(sock.Uaid, appid, 0)
-	if err != nil {
+	if err = sock.Store.Register(sock.Uaid, appid, 0); err != nil {
 		self.logger.Error("worker",
 			fmt.Sprintf("ERROR: Register failed %s", err),
 			nil)
@@ -565,8 +563,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	// if we have a channel, don't flush. we can get them later in the ACK
 	if len(channel) == 0 {
 		var expired []string
-		updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0))
-		if err != nil {
+		if updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0)); err != nil {
 			self.logger.Error("worker", "Failed to flush Update to client.",
 				LogFields{"uaid": sock.Uaid, "error": err.Error()})
 			return err

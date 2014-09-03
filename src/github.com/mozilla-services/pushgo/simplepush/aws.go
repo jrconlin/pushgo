@@ -36,14 +36,14 @@ func GetAWSPublicHostname() (hostname string, err error) {
 	if err != nil {
 		return
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		var hostBytes []byte
-		hostBytes, err = ioutil.ReadAll(resp.Body)
-		if err == nil {
-			hostname = string(hostBytes)
-		}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
 	}
-	return
+	hostBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	return string(hostBytes), nil
 }
 
 // GetElastiCacheEndpoints queries the ElastiCache Auto Discovery service

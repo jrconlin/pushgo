@@ -182,8 +182,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	svers := req.FormValue("version")
 	if svers != "" {
-		version, err = strconv.ParseInt(svers, 10, 64)
-		if err != nil || version < 0 {
+		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
 			resp.Header().Set("Content-Type", "application/json")
 			resp.WriteHeader(http.StatusBadRequest)
 			resp.Write([]byte(`"Invalid Version"`))
@@ -289,20 +288,16 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if err == nil && len(connect) > 0 {
 		// TODO: store the prop ping?
 		c_js := make(JsMap)
-		err = json.Unmarshal([]byte(connect), &c_js)
-		if err != nil {
+		if err = json.Unmarshal([]byte(connect), &c_js); err != nil {
 			self.logger.Warn("update",
 				"Could not resolve Proprietary Ping connection string",
 				LogFields{"error": err.Error(),
 					"connect": connect})
-		} else {
-			err = self.propping.Register(c_js, uaid)
-			if err != nil {
-				self.logger.Warn("update",
-					"Could not generate Proprietary Ping",
-					LogFields{"error": err.Error(),
-						"connect": connect})
-			}
+		} else if err = self.propping.Register(c_js, uaid); err != nil {
+			self.logger.Warn("update",
+				"Could not generate Proprietary Ping",
+				LogFields{"error": err.Error(),
+					"connect": connect})
 		}
 	}
 
@@ -426,8 +421,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
 	jdata := make(JsMap)
-	err = decoder.Decode(&jdata)
-	if err != nil {
+	if err = decoder.Decode(&jdata); err != nil {
 		self.logger.Error("router",
 			"Could not read update body",
 			LogFields{"error": err.Error()})
@@ -447,18 +441,15 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 		self.metrics.Increment("updates.routed.invalid")
 		return
-	} else {
-		ts, err = time.Parse(time.RFC3339Nano, v)
-		if err != nil {
-			self.logger.Error("router", "Could not parse time",
-				LogFields{"error": err.Error(),
-					"uaid": uaid,
-					"chid": chid,
-					"time": v})
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			self.metrics.Increment("updates.routed.invalid")
-			return
-		}
+	} else if ts, err = time.Parse(time.RFC3339Nano, v); err != nil {
+		self.logger.Error("router", "Could not parse time",
+			LogFields{"error": err.Error(),
+				"uaid": uaid,
+				"chid": chid,
+				"time": v})
+		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+		self.metrics.Increment("updates.routed.invalid")
+		return
 	}
 	if v, ok := jdata["version"].(float64); !ok {
 		self.logger.Warn("router",
@@ -469,8 +460,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	err = self.app.Server().Update(chid, uaid, vers, ts)
-	if err != nil {
+	if err = self.app.Server().Update(chid, uaid, vers, ts); err != nil {
 		self.logger.Error("router",
 			"Could not update local user",
 			LogFields{"error": err.Error()})

@@ -269,13 +269,11 @@ func (s *EmceeStore) Status() (success bool, err error) {
 		return false, err
 	}
 	defer s.releaseWithout(client, &err)
-	err = client.Set(key, "test", 6*time.Second)
-	if err != nil {
+	if err = client.Set(key, "test", 6*time.Second); err != nil {
 		return false, err
 	}
 	var val string
-	err = client.Get(key, &val)
-	if err != nil || val != "test" {
+	if err = client.Get(key, &val); err != nil || val != "test" {
 		return false, ErrStatusFailed
 	}
 	client.Delete(key, 0)
@@ -289,8 +287,7 @@ func (s *EmceeStore) Exists(suaid string) bool {
 	if err != nil {
 		return false
 	}
-	_, err = s.fetchAppIDArray(uaid)
-	if err != nil && !isMissing(err) {
+	if _, err = s.fetchAppIDArray(uaid); err != nil && !isMissing(err) {
 		s.logger.Warn("emcee", "Exists encountered unknown error",
 			LogFields{"error": err.Error()})
 	}
@@ -321,8 +318,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	if err != nil {
 		return sperrors.InvalidPrimaryKeyError
 	}
-	err = s.storeRec(key, rec)
-	if err != nil {
+	if err = s.storeRec(key, rec); err != nil {
 		return err
 	}
 	return nil
@@ -368,8 +364,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 				Version:     uint64(version),
 				LastTouched: time.Now().UTC().Unix(),
 			}
-			err = s.storeRec(key, newRecord)
-			if err != nil {
+			if err = s.storeRec(key, newRecord); err != nil {
 				return err
 			}
 			return nil
@@ -381,8 +376,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 		"channelID": hex.EncodeToString(chid),
 		"version":   strconv.FormatInt(version, 10),
 	})
-	err = s.storeRegister(uaid, chid, version)
-	if err != nil {
+	if err = s.storeRegister(uaid, chid, version); err != nil {
 		return err
 	}
 	return nil
@@ -483,8 +477,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if err != nil {
 		return err
 	}
-	err = client.Delete(encodeKey(key), 0)
-	if err == nil || isMissing(err) {
+	if err = client.Delete(encodeKey(key), 0); err == nil || isMissing(err) {
 		return nil
 	}
 	return err
@@ -673,8 +666,7 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 		return nil, err
 	}
 	defer s.releaseWithout(client, &err)
-	err = client.Get(encodeKey(uaid), &result)
-	if err != nil {
+	if err = client.Get(encodeKey(uaid), &result); err != nil {
 		return nil, err
 	}
 	return
@@ -683,9 +675,8 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 // Returns a duplicate-free list of subscriptions associated with the device
 // ID.
 func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
-	result, err = s.fetchChannelIDs(uaid)
-	if err != nil {
-		return nil, err
+	if result, err = s.fetchChannelIDs(uaid); err != nil {
+		return
 	}
 	// pare out duplicates.
 	for i, chid := range result {
@@ -724,8 +715,7 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	}
 	defer s.releaseWithout(client, &err)
 	result := new(ChannelRecord)
-	err = client.Get(keyString, result)
-	if err != nil && !isMissing(err) {
+	if err = client.Get(keyString, result); err != nil && !isMissing(err) {
 		s.logger.Error("emcee", "Get Failed", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
@@ -763,8 +753,7 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	}
 	defer s.releaseWithout(client, &err)
 	keyString := encodeKey(pk)
-	err = client.Set(keyString, rec, ttl)
-	if err != nil {
+	if err = client.Set(keyString, rec, ttl); err != nil {
 		s.logger.Warn("emcee", "Failure to set item", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),

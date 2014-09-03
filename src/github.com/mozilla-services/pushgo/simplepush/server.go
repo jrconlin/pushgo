@@ -75,16 +75,17 @@ func (self *Serv) ConfigStruct() interface{} {
 
 func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*ServerConfig)
+
 	self.app = app
 	self.logger = app.Logger()
 	self.metrics = app.Metrics()
 	self.store = app.Store()
 	self.key = app.TokenKey()
-	self.template, err = template.New("Push").Parse(conf.PushEndpoint)
-	if err != nil {
+
+	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
 		self.logger.Critical("server", "Could not parse push endpoint template",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
 
 	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
@@ -97,7 +98,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	if err != nil {
 		self.logger.Error("server", "Could not attach listener",
 			LogFields{"error": err.Error()})
-		return
+		return err
 	}
 
 	addr := self.listener.Addr().(*net.TCPAddr)
@@ -122,7 +123,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	}
 
 	go self.sendClientCount()
-	return
+	return nil
 }
 
 func (self *Serv) Listener() net.Listener {
@@ -251,8 +252,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	// if there is a key, encrypt the token
 	if len(self.key) != 0 {
 		btoken := []byte(token)
-		token, err = Encode(self.key, btoken)
-		if err != nil {
+		if token, err = Encode(self.key, btoken); err != nil {
 			self.logger.Error("server", "Token Encoding error",
 				LogFields{"uaid": sock.Uaid,
 					"channelID": chid})
@@ -338,14 +338,12 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 		goto updateError
 	}
 
-	err = self.store.Update(pk, vers)
-	if err != nil {
+	if err = self.store.Update(pk, vers); err != nil {
 		reason = "Failed to update channel"
 		goto updateError
 	}
 
-	err = self.RequestFlush(client, chid, vers)
-	if err == nil {
+	if err = self.RequestFlush(client, chid, vers); err == nil {
 		return
 	}
 	reason = "Failed to flush"
