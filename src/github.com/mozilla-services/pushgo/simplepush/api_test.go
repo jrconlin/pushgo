@@ -2,9 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package client
+package simplepush
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,44 +18,65 @@ import (
 
 	ws "code.google.com/p/go.net/websocket"
 
+	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"
 )
 
-const (
-	// Origin specifies the URI of the Simple Push WebSocket server. Can be
-	// obtained via `app.FullHostname()`.
-	Origin = "ws://localhost:8080"
+var (
+	// Server is a test Simple Push server.
+	Server = &TestServer{LogLevel: 0}
+)
 
+const (
 	// AllowDupes indicates whether the Simple Push server under test allows
-	// duplicate registrations. TODO: Expose as an `app` configuration flag.
+	// duplicate registrations. TODO: Expose as an Application flag.
 	AllowDupes = true
 
-	// validId is a placeholder device ID used by `typeTest`.
+	// validId is a placeholder device ID used by typeTest.
 	validId = "57954545-c1bc-4fc4-9c1a-cd186d861336"
+
+	// NilId is used to simulate a nil packet ID, as Conn.Send() will
+	// close the connection with an error if Request.Id() == nil. getId()
+	// converts NilId to nil.
+	NilId client.PacketType = -1
 )
+
+func getId(r client.Request) (id interface{}) {
+	if id = r.Id(); id == NilId {
+		return nil
+	}
+	return
+}
+
+func generateIdSize(size int) (results string, err error) {
+	bytes := make([]byte, size)
+	if _, err = rand.Read(bytes); err != nil {
+		return
+	}
+	return hex.EncodeToString(bytes), nil
+}
 
 // CustomRegister is a custom channel registration packet that supports
 // arbitrary types for the channel ID.
 type CustomRegister struct {
 	ChannelId interface{}
-	replies   chan Reply
+	replies   chan client.Reply
 	errors    chan error
 }
 
-func (*CustomRegister) Type() PacketType        { return Register }
-func (*CustomRegister) CanReply() bool          { return true }
-func (*CustomRegister) Sync() bool              { return false }
-func (r *CustomRegister) Id() interface{}       { return r.ChannelId }
-func (r *CustomRegister) Reply(reply Reply)     { r.replies <- reply }
-func (r *CustomRegister) Error(err error)       { r.errors <- err }
-func (r *CustomRegister) getErrors() chan error { return r.errors }
+func (CustomRegister) Type() client.PacketType    { return client.Register }
+func (CustomRegister) CanReply() bool             { return true }
+func (CustomRegister) Sync() bool                 { return false }
+func (r CustomRegister) Id() interface{}          { return r.ChannelId }
+func (r CustomRegister) Reply(reply client.Reply) { r.replies <- reply }
+func (r CustomRegister) Error(err error)          { r.errors <- err }
 
-func (r *CustomRegister) Close() {
+func (r CustomRegister) Close() {
 	close(r.replies)
 	close(r.errors)
 }
 
-func (r *CustomRegister) Do() (reply Reply, err error) {
+func (r CustomRegister) Do() (reply client.Reply, err error) {
 	select {
 	case reply = <-r.replies:
 	case err = <-r.errors:
@@ -61,38 +84,37 @@ func (r *CustomRegister) Do() (reply Reply, err error) {
 	return
 }
 
-func (r *CustomRegister) MarshalJSON() ([]byte, error) {
+func (r CustomRegister) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		MessageType PacketType  `json:"messageType"`
-		ChannelId   interface{} `json:"channelID"`
+		MessageType client.PacketType `json:"messageType"`
+		ChannelId   interface{}       `json:"channelID"`
 	}{r.Type(), getId(r)})
 }
 
 // CustomHelo is a custom handshake packet that specifies an extra field and
 // supports arbitrary types for the message type, device ID, and channel IDs.
 type CustomHelo struct {
-	MessageType interface{}   `json:"messageType"`
-	DeviceId    interface{}   `json:"uaid"`
-	ChannelIds  []interface{} `json:"channelIDs"`
-	Extra       string        `json:"customKey,omitempty"`
-	replies     chan Reply
+	MessageType interface{}
+	DeviceId    interface{}
+	ChannelIds  []interface{}
+	Extra       string
+	replies     chan client.Reply
 	errors      chan error
 }
 
-func (*CustomHelo) Type() PacketType        { return Helo }
-func (*CustomHelo) CanReply() bool          { return true }
-func (*CustomHelo) Sync() bool              { return true }
-func (h *CustomHelo) Id() interface{}       { return h.DeviceId }
-func (h *CustomHelo) Reply(reply Reply)     { h.replies <- reply }
-func (h *CustomHelo) Error(err error)       { h.errors <- err }
-func (h *CustomHelo) getErrors() chan error { return h.errors }
+func (CustomHelo) Type() client.PacketType    { return client.Helo }
+func (CustomHelo) CanReply() bool             { return true }
+func (CustomHelo) Sync() bool                 { return true }
+func (h CustomHelo) Id() interface{}          { return h.DeviceId }
+func (h CustomHelo) Reply(reply client.Reply) { h.replies <- reply }
+func (h CustomHelo) Error(err error)          { h.errors <- err }
 
-func (h *CustomHelo) Close() {
+func (h CustomHelo) Close() {
 	close(h.replies)
 	close(h.errors)
 }
 
-func (h *CustomHelo) Do() (reply Reply, err error) {
+func (h CustomHelo) Do() (reply client.Reply, err error) {
 	select {
 	case reply = <-h.replies:
 	case err = <-h.errors:
@@ -100,52 +122,37 @@ func (h *CustomHelo) Do() (reply Reply, err error) {
 	return
 }
 
-// ClientInvalidACK wraps a `ClientACK` packet in a synchronous request packet
-// with a fabricated message ID to track error replies.
-type ClientInvalidACK struct {
-	ClientACK
+func (h CustomHelo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		MessageType interface{}   `json:"messageType"`
+		DeviceId    interface{}   `json:"uaid"`
+		ChannelIds  []interface{} `json:"channelIDs"`
+		Extra       string        `json:"customKey,omitempty"`
+	}{h.MessageType, getId(h), h.ChannelIds, h.Extra})
 }
 
-func (*ClientInvalidACK) Id() interface{} { return ACKId }
-func (*ClientInvalidACK) CanReply() bool  { return true }
-func (*ClientInvalidACK) Sync() bool      { return true }
+// ClientInvalidACK wraps a ClientACK in a synchronous request packet with a
+// fabricated message ID to track error replies.
+type ClientInvalidACK struct {
+	client.Request
+}
+
+func (ClientInvalidACK) Sync() bool { return true }
 
 // ServerInvalidACK tracks invalid acknowledgement replies. The reply packet
-// payload contains the data sent in the `ClientACK` packet.
+// payload contains the data sent in the ClientACK.
 type ServerInvalidACK struct {
-	Updates    []Update
+	Updates    []client.Update
 	StatusCode int
 }
 
-func (*ServerInvalidACK) Type() PacketType  { return ACK }
-func (*ServerInvalidACK) HasRequest() bool  { return true }
-func (*ServerInvalidACK) Sync() bool        { return true }
-func (a *ServerInvalidACK) Id() interface{} { return ACKId }
-func (a *ServerInvalidACK) Status() int     { return a.StatusCode }
+func (ServerInvalidACK) Type() client.PacketType { return client.ACK }
+func (ServerInvalidACK) HasRequest() bool        { return true }
+func (ServerInvalidACK) Sync() bool              { return true }
+func (a ServerInvalidACK) Id() interface{}       { return client.ACKId }
+func (a ServerInvalidACK) Status() int           { return a.StatusCode }
 
-// ClientTracked wraps a packet with reply tracking support.
-type ClientTracked struct {
-	replies chan Reply
-	requestWithErrors
-}
-
-func (*ClientTracked) CanReply() bool      { return true }
-func (t *ClientTracked) Reply(reply Reply) { t.replies <- reply }
-
-func (t *ClientTracked) Close() {
-	t.requestWithErrors.Close()
-	close(t.replies)
-}
-
-func (t *ClientTracked) Do() (reply Reply, err error) {
-	select {
-	case reply = <-t.replies:
-	case err = <-t.getErrors():
-	}
-	return
-}
-
-// ServerUnregister is a reply to a `ClientUnregister` request. Simple Push
+// ServerUnregister is a reply to a ClientUnregister request. Simple Push
 // servers are not required to support deregistration, so deregistration
 // packets are not tracked by default.
 type ServerUnregister struct {
@@ -153,58 +160,70 @@ type ServerUnregister struct {
 	ChannelId  string
 }
 
-func (*ServerUnregister) Type() PacketType  { return Unregister }
-func (*ServerUnregister) HasRequest() bool  { return true }
-func (*ServerUnregister) Sync() bool        { return false }
-func (u *ServerUnregister) Id() interface{} { return u.ChannelId }
-func (u *ServerUnregister) Status() int     { return u.StatusCode }
+func (ServerUnregister) Type() client.PacketType { return client.Unregister }
+func (ServerUnregister) HasRequest() bool        { return true }
+func (ServerUnregister) Sync() bool              { return false }
+func (u ServerUnregister) Id() interface{}       { return u.ChannelId }
+func (u ServerUnregister) Status() int           { return u.StatusCode }
 
-// MultipleRegister is a malformed `ClientRegister` packet that specifies
+// MultipleRegister is a malformed ClientRegister packet that specifies
 // multiple channel IDs in the payload.
 type MultipleRegister struct {
-	ClientRegister
+	client.ClientRegister
 }
 
-func (r *MultipleRegister) MarshalJSON() ([]byte, error) {
+func (r MultipleRegister) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		MessageType PacketType `json:"messageType"`
-		ChannelIds  []string   `json:"channelIDs"`
+		MessageType client.PacketType `json:"messageType"`
+		ChannelIds  []string          `json:"channelIDs"`
 	}{r.Type(), []string{r.ChannelId}})
 }
 
-func decodeUnregisterReply(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &ServerError{"unregister", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{"unregister", c.Origin(), errorText, statusCode}
 	}
 	channelId, hasChannelId := fields["channelID"].(string)
 	if !hasChannelId {
-		return nil, &IncompleteError{"register", c.Origin(), "channelID"}
+		return nil, &client.IncompleteError{"register", c.Origin(), "channelID"}
 	}
-	reply := &ServerUnregister{
+	reply := ServerUnregister{
 		StatusCode: statusCode,
 		ChannelId:  channelId,
 	}
 	return reply, nil
 }
 
-func decodeServerInvalidACK(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) == 0 {
 		return nil, nil
 	}
 	updates, hasUpdates := fields["updates"].([]interface{})
 	if !hasUpdates {
-		return nil, &IncompleteError{"notification", c.Origin(), "updates"}
+		return nil, &client.IncompleteError{"ack", c.Origin(), "updates"}
 	}
-	reply := new(ServerInvalidACK)
-	reply.Updates = make([]Update, len(updates))
+	reply := ServerInvalidACK{
+		Updates:    make([]client.Update, len(updates)),
+		StatusCode: statusCode,
+	}
 	for index, field := range updates {
-		update, err := c.decodeUpdate(field)
-		if err != nil {
-			return nil, err
+		var (
+			update    map[string]interface{}
+			channelId string
+			version   float64
+			ok        bool
+		)
+		if update, ok = field.(map[string]interface{}); !ok {
+			return nil, &client.IncompleteError{"ack", c.Origin(), "update"}
 		}
-		reply.Updates[index] = update
+		if channelId, ok = update["channelID"].(string); !ok {
+			return nil, &client.IncompleteError{"ack", c.Origin(), "channelID"}
+		}
+		if version, ok = update["version"].(float64); !ok {
+			return nil, &client.IncompleteError{"ack", c.Origin(), "version"}
+		}
+		reply.Updates[index] = client.Update{channelId, int64(version)}
 	}
-	reply.StatusCode = statusCode
 	return reply, nil
 }
 
@@ -221,28 +240,32 @@ func isValidEndpoint(endpoint string) bool {
 
 // Sending channel IDs with an unknown device ID should return a new device ID.
 func TestHeloReset(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
 	deviceId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: "hello",
 		DeviceId:    deviceId,
 		ChannelIds:  []interface{}{"1", "2"},
-		replies:     make(chan Reply),
+		replies:     make(chan client.Reply),
 		errors:      make(chan error),
 	}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
 	}
-	helo, ok := reply.(*ServerHelo)
+	helo, ok := reply.(client.ServerHelo)
 	if !ok {
 		t.Fatalf("Type assertion failed for reply: %#v", reply)
 	}
@@ -262,18 +285,22 @@ type typeTest struct {
 }
 
 func (t typeTest) Run() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: t.messageType,
 		DeviceId:    t.deviceId,
 		ChannelIds:  []interface{}{"1", "2"},
 		Extra:       "custom value",
-		replies:     make(chan Reply),
+		replies:     make(chan client.Reply),
 		errors:      make(chan error),
 	}
 	reply, err := conn.WriteRequest(request)
@@ -281,7 +308,7 @@ func (t typeTest) Run() error {
 		if err != nil {
 			return fmt.Errorf("On test %v, error writing handshake request: %#v", t.name, err)
 		}
-		helo, ok := reply.(*ServerHelo)
+		helo, ok := reply.(client.ServerHelo)
 		if !ok {
 			return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.name, reply)
 		}
@@ -300,7 +327,7 @@ func (t typeTest) Run() error {
 		return fmt.Errorf("On test %v, error writing handshake: got %#v; want io.EOF", t.name, err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for close error: %#v", t.name, err)
 	}
@@ -362,8 +389,8 @@ var typeTests = []typeTest{
 	typeTest{`message type = "null"`, "null", validId, 401},
 	typeTest{`device ID = "nil"`, "hello", "nil", 503},
 	typeTest{`message type = "nil"`, "nil", validId, 401},
-	typeTest{"device ID = nil", "hello", nilId, 401},
-	typeTest{"message type = nil", nilId, validId, 401},
+	typeTest{"device ID = nil", "hello", NilId, 401},
+	typeTest{"message type = nil", NilId, validId, 401},
 
 	// Quoted strings.
 	typeTest{"quoted string as device ID", "hello", `"foo bar"`, 503},
@@ -371,7 +398,7 @@ var typeTests = []typeTest{
 }
 
 func TestMessageTypes(t *testing.T) {
-	longId, err := GenerateIdSize("", 64000)
+	longId, err := generateIdSize(64000)
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
@@ -393,7 +420,11 @@ func TestDuplicateRegister(t *testing.T) {
 		t.Log("Duplicate channel IDs not supported; skipping test")
 		return
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -420,23 +451,23 @@ func TestPrematureRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &ClientRegister{
-		ChannelId: channelId,
-		replies:   make(chan Reply),
-		errors:    make(chan error),
-	}
+	request := client.NewRegister(channelId)
 	_, err = conn.WriteRequest(request)
 	if err != io.EOF {
 		t.Fatalf("Error writing premature registration request: got %#v; want io.EOF", err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		t.Fatalf("Type assertion failed for close error: %#v", err)
 	}
@@ -454,7 +485,11 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -484,23 +519,23 @@ func TestMultipleRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &MultipleRegister{ClientRegister{
-		channelId,
-		make(chan Reply),
-		make(chan error),
-	}}
+	request := MultipleRegister{client.NewRegister(channelId).(client.ClientRegister)}
 	_, err = conn.WriteRequest(request)
 	if err != io.EOF {
 		t.Fatalf("Error writing registration request: got %#v; want io.EOF", err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		t.Fatalf("Type assertion failed for close error: %#v", err)
 	}
@@ -520,31 +555,35 @@ func (t idTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.name, err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomHelo{
+	request := CustomHelo{
 		MessageType: "hello",
 		DeviceId:    deviceId,
 		ChannelIds:  []interface{}{t.channelId},
-		replies:     make(chan Reply),
+		replies:     make(chan client.Reply),
 		errors:      make(chan error),
 	}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		return fmt.Errorf("On test %v, error writing handshake: %#v", t.name, err)
 	}
-	helo, ok := reply.(*ServerHelo)
+	helo, ok := reply.(client.ServerHelo)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.name, reply)
 	}
 	if helo.StatusCode != 200 {
 		return fmt.Errorf("On test %v, unexpected status code: got %#v; want 200", t.name, helo.StatusCode)
 	}
-	// The Simple Push server requires the `channelIDs` field to be present in
+	// The Simple Push server requires the channelIDs field to be present in
 	// the handshake, but does not validate its contents, since any queued
 	// messages will be immediately flushed to the client.
 	if helo.DeviceId == deviceId {
@@ -554,15 +593,19 @@ func (t idTest) TestHelo() error {
 }
 
 func (t idTest) TestRegister() error {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CustomRegister{
+	request := CustomRegister{
 		ChannelId: t.channelId,
-		replies:   make(chan Reply),
+		replies:   make(chan client.Reply),
 		errors:    make(chan error),
 	}
 	reply, err := conn.WriteRequest(request)
@@ -579,7 +622,7 @@ func (t idTest) TestRegister() error {
 		return fmt.Errorf("On test %v, error writing registration request: got %#v; want io.EOF", t.name, err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for close error: %#v", t.name, err)
 	}
@@ -606,7 +649,7 @@ var idTests = []idTest{
 	idTest{`"None"`, "None", 401},
 	idTest{`"null"`, "null", 401},
 	idTest{`"nil"`, "nil", 401},
-	idTest{"nil", nilId, 401},
+	idTest{"nil", NilId, 401},
 	idTest{"quoted string", `"foo bar"`, 401},
 	idTest{"null character", "\x00", 401},
 	idTest{"control characters", "\x01\x00\x12\x59", 401},
@@ -633,26 +676,24 @@ func TestPrematureUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("unregister", DecoderFunc(decodeUnregisterReply))
-	request := &ClientTracked{
-		replies: make(chan Reply),
-		requestWithErrors: &ClientUnregister{
-			ChannelId: channelId,
-			errors:    make(chan error),
-		},
-	}
+	conn.RegisterDecoder("unregister", client.DecoderFunc(decodeUnregisterReply))
+	request := client.NewUnregister(channelId, true)
 	_, err = conn.WriteRequest(request)
 	if err != io.EOF {
 		t.Fatalf("Error writing deregistration request: got %#v; want io.EOF", err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		t.Fatalf("Type assertion failed for close error: %#v", err)
 	}
@@ -662,7 +703,11 @@ func TestPrematureUnregister(t *testing.T) {
 }
 
 func TestUnregister(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -672,15 +717,9 @@ func TestUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error subscribing to channel: %#v", err)
 	}
-	conn.RegisterDecoder("unregister", DecoderFunc(decodeUnregisterReply))
+	conn.RegisterDecoder("unregister", client.DecoderFunc(decodeUnregisterReply))
 	for index := 0; index < 2; index++ {
-		request := &ClientTracked{
-			replies: make(chan Reply),
-			requestWithErrors: &ClientUnregister{
-				ChannelId: channelId,
-				errors:    make(chan error),
-			},
-		}
+		request := client.NewUnregister(channelId, true)
 		reply, err := conn.WriteRequest(request)
 		if err != nil {
 			t.Fatalf("Error writing deregistration request (attempt %d): %#v", index, err)
@@ -692,12 +731,16 @@ func TestUnregister(t *testing.T) {
 }
 
 func TestUnregisterRace(t *testing.T) {
-	socket, err := ws.Dial(Origin, "", Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	socket, err := ws.Dial(origin, "", origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	// Spool all notifications, including those received on dregistered channels.
-	conn := NewConn(socket, true)
+	conn := client.NewConn(socket, true)
 	defer conn.Close()
 	if _, err = conn.WriteHelo(""); err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
@@ -722,31 +765,31 @@ func TestUnregisterRace(t *testing.T) {
 			pendingTimer <-chan time.Time
 		)
 		for ok := true; ok; {
-			var packet HasType
+			var packet client.Packet
 			select {
 			case ok = <-signal:
 			case <-timeout:
 				ok = false
-				errors <- ErrTimedOut
+				errors <- client.ErrTimedOut
 
 			case <-pendingTimer:
 				ok = false
 
-			// Read the update, but don't call `AcceptUpdate()`.
-			case packet, ok = <-conn.packets:
+			// Read the update, but don't call AcceptUpdate().
+			case packet, ok = <-conn.Packets:
 				if !ok {
-					err = ErrChanClosed
+					err = client.ErrChanClosed
 					break
 				}
 				var (
-					updates    ServerUpdates
+					updates    client.ServerUpdates
 					hasUpdates bool
 				)
-				if updates, hasUpdates = packet.(ServerUpdates); !hasUpdates {
+				if updates, hasUpdates = packet.(client.ServerUpdates); !hasUpdates {
 					break
 				}
 				var (
-					update    Update
+					update    client.Update
 					hasUpdate bool
 				)
 				for _, update = range updates {
@@ -781,7 +824,7 @@ func TestUnregisterRace(t *testing.T) {
 		defer notifyWait.Done()
 		select {
 		case <-signal:
-		case errors <- Notify(endpoint, version):
+		case errors <- client.Notify(endpoint, version):
 		}
 	}()
 	go func() {
@@ -797,20 +840,21 @@ func TestUnregisterRace(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("ping", DecoderFunc(decodePing))
+	conn.RegisterDecoder("ping", client.DecoderFunc(decodePing))
 	var pingWait sync.WaitGroup
 	writePing := func() {
 		defer pingWait.Done()
-		reply, err := conn.WriteRequest(&ClientTracked{
-			replies:           make(chan Reply),
-			requestWithErrors: make(ClientPing),
-		})
+		reply, err := conn.WriteRequest(client.NewPing(true))
 		if err != nil {
 			t.Errorf("Error writing ping request: %#v", err)
 			return
@@ -840,24 +884,21 @@ func TestPrematureACK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("ack", DecoderFunc(decodeServerInvalidACK))
-	updates := []Update{
-		Update{channelId, time.Now().UTC().Unix()},
+	conn.RegisterDecoder("ack", client.DecoderFunc(decodeServerInvalidACK))
+	updates := []client.Update{
+		client.Update{channelId, time.Now().UTC().Unix()},
 	}
-	clientACK := ClientACK{
-		updates,
-		make(chan error),
-	}
-	request := &ClientTracked{
-		replies:           make(chan Reply),
-		requestWithErrors: &ClientInvalidACK{clientACK},
-	}
+	request := ClientInvalidACK{client.NewACK(updates, true)}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		t.Fatalf("Error writing acknowledgement: %#v", err)
@@ -865,7 +906,7 @@ func TestPrematureACK(t *testing.T) {
 	if reply.Status() != 401 {
 		t.Errorf("Incorrect status code: got %#v, wanted 401", reply.Status())
 	}
-	if r, ok := reply.(*ServerInvalidACK); ok {
+	if r, ok := reply.(ServerInvalidACK); ok {
 		if len(r.Updates) != len(updates) {
 			t.Errorf("Incorrect update count: got %#v; want %#v", len(r.Updates), len(updates))
 		} else {
@@ -886,13 +927,17 @@ func TestPrematureACK(t *testing.T) {
 }
 
 func TestACK(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	err = PushThrough(conn, 1, 1)
+	err = client.PushThrough(conn, 1, 1)
 	if err != nil {
 		t.Fatalf("Error sending and acknowledge update: %#v", err)
 	}

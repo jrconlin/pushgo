@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package client
+package simplepush
 
 import (
 	"encoding/json"
@@ -11,16 +11,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"
 )
 
-var ErrInvalidCaseTest = &ClientError{"Invalid case test type."}
+var ErrInvalidCaseTest = &client.ClientError{"Invalid case test type."}
 
-// CaseTestType is used by `Case{ClientPing, ACK}.MarshalJSON()` to generate
+// CaseTestType is used by Case{ClientPing, ACK}.MarshalJSON() to generate
 // different JSON representations of the underlying ping or ACK packet. If
-// a packet doesn't support a particular representation (e.g., `CaseACK`
-// doesn't support any of the `FieldType*` test types), its `MarshalJSON()`
-// method will return ``ErrInvalidCaseTest`.
+// a packet doesn't support a particular representation (e.g., CaseACK
+// doesn't support any of the FieldType* test types), MarshalJSON() should
+// return ErrInvalidCaseTest.
 type CaseTestType int
 
 const (
@@ -53,16 +54,16 @@ func (t CaseTestType) String() string {
 	return "unknown case test type"
 }
 
-func decodePing(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodePing(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &ServerError{"ping", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{"ping", c.Origin(), errorText, statusCode}
 	}
-	return &ServerPing{statusCode}, nil
+	return ServerPing{statusCode}, nil
 }
 
-func decodeCaseACK(c *Conn, fields Fields, statusCode int, errorText string) (HasType, error) {
+func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &ServerError{"ack", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{"ack", c.Origin(), errorText, statusCode}
 	}
 	return nil, nil
 }
@@ -74,18 +75,18 @@ type caseTest struct {
 }
 
 func (t caseTest) TestPing() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("ping", DecoderFunc(decodePing))
-	request := &CaseClientPing{
-		CaseTestType: t.CaseTestType,
-		replies:      make(chan Reply),
-		ClientPing:   make(ClientPing),
-	}
+	conn.RegisterDecoder("ping", client.DecoderFunc(decodePing))
+	request := CaseClientPing{t.CaseTestType, client.NewPing(true)}
 	reply, err := conn.WriteRequest(request)
 	if err != nil {
 		return fmt.Errorf("On test %v, error writing ping packet: %#v", t.CaseTestType, err)
@@ -97,20 +98,18 @@ func (t caseTest) TestPing() error {
 }
 
 func (t caseTest) TestACK() error {
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	conn.RegisterDecoder("ack", DecoderFunc(decodeCaseACK))
-	request := &CaseACK{
-		CaseTestType: t.CaseTestType,
-		replies:      make(chan Reply),
-		ClientACK: ClientACK{
-			errors: make(chan error),
-		},
-	}
+	conn.RegisterDecoder("ack", client.DecoderFunc(decodeCaseACK))
+	request := CaseACK{t.CaseTestType, client.NewACK(nil, true)}
 	_, err = conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
@@ -122,7 +121,7 @@ func (t caseTest) TestACK() error {
 		return fmt.Errorf("On test %v, error writing acknowledgement: got %#v; want io.EOF", t.CaseTestType, err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for close error: %#v", t.CaseTestType, err)
 	}
@@ -141,27 +140,23 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		return fmt.Errorf("On test %v, error dialing origin: %#v", t.CaseTestType, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
-	request := &CaseHelo{
-		t.CaseTestType,
-		ClientHelo{
-			DeviceId:   deviceId,
-			ChannelIds: []string{channelId},
-			replies:    make(chan Reply),
-			errors:     make(chan error),
-		},
-	}
+	request := CaseHelo{t.CaseTestType, client.NewHelo(deviceId, []string{channelId}).(client.ClientHelo)}
 	reply, err := conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
 			return fmt.Errorf("On test %v, error writing handshake request: %#v", t.CaseTestType, err)
 		}
-		helo, ok := reply.(*ServerHelo)
+		helo, ok := reply.(client.ServerHelo)
 		if !ok {
 			return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.CaseTestType, reply)
 		}
@@ -183,7 +178,7 @@ func (t caseTest) TestHelo() error {
 		return fmt.Errorf("On test %v, error writing handshake: got %#v; want io.EOF", t.CaseTestType, err)
 	}
 	err = conn.Close()
-	clientErr, ok := err.(Error)
+	clientErr, ok := err.(client.Error)
 	if !ok {
 		return fmt.Errorf("On test %v, type assertion failed for close error: %#v", t.CaseTestType, err)
 	}
@@ -195,48 +190,33 @@ func (t caseTest) TestHelo() error {
 
 type CaseACK struct {
 	CaseTestType
-	replies chan Reply
-	ClientACK
+	client.Request
 }
 
-func (*CaseACK) CanReply() bool      { return true }
-func (*CaseACK) Sync() bool          { return true }
-func (a *CaseACK) Reply(reply Reply) { a.replies <- reply }
+func (CaseACK) Sync() bool { return true }
 
-func (a *CaseACK) Close() {
-	a.ClientACK.Close()
-	close(a.replies)
-}
-
-func (a *CaseACK) Do() (reply Reply, err error) {
-	select {
-	case reply = <-a.replies:
-	case err = <-a.getErrors():
-	}
-	return
-}
-
-func (a *CaseACK) MarshalJSON() ([]byte, error) {
+func (a CaseACK) MarshalJSON() ([]byte, error) {
 	var results interface{}
 	messageType := a.Type().String()
+	packet := a.Request.(client.ClientACK)
 	switch a.CaseTestType {
 	case ValueTypeUpper:
 		results = struct {
-			MessageType string   `json:"messageType"`
-			Updates     []Update `json:"updates"`
-		}{strings.ToUpper(messageType), a.Updates}
+			MessageType string          `json:"messageType"`
+			Updates     []client.Update `json:"updates"`
+		}{strings.ToUpper(messageType), packet.Updates}
 
 	case ValueTypeCap:
 		results = struct {
-			MessageType string   `json:"messageType"`
-			Updates     []Update `json:"updates"`
-		}{strings.ToUpper(messageType[:1]) + strings.ToLower(messageType[1:]), a.Updates}
+			MessageType string          `json:"messageType"`
+			Updates     []client.Update `json:"updates"`
+		}{strings.ToUpper(messageType[:1]) + strings.ToLower(messageType[1:]), packet.Updates}
 
 	case ValueTypeEmpty:
 		results = struct {
-			MessageType string   `json:"messageType"`
-			Updates     []Update `json:"updates"`
-		}{"", a.Updates}
+			MessageType string          `json:"messageType"`
+			Updates     []client.Update `json:"updates"`
+		}{"", packet.Updates}
 
 	default:
 		return nil, ErrInvalidCaseTest
@@ -246,28 +226,16 @@ func (a *CaseACK) MarshalJSON() ([]byte, error) {
 
 type CaseClientPing struct {
 	CaseTestType
-	replies chan Reply
-	ClientPing
+	client.Request
 }
 
-func (p *CaseClientPing) CanReply() bool    { return true }
-func (p *CaseClientPing) Sync() bool        { return true }
-func (p *CaseClientPing) Reply(reply Reply) { p.replies <- reply }
+func (p CaseClientPing) Sync() bool { return true }
 
-func (p *CaseClientPing) Close() {
-	p.ClientPing.Close()
-	close(p.replies)
+func (p CaseClientPing) Close() {
+	p.Request.Close()
 }
 
-func (p *CaseClientPing) Do() (reply Reply, err error) {
-	select {
-	case reply = <-p.replies:
-	case err = <-p.getErrors():
-	}
-	return
-}
-
-func (p *CaseClientPing) MarshalJSON() ([]byte, error) {
+func (p CaseClientPing) MarshalJSON() ([]byte, error) {
 	switch p.CaseTestType {
 	case ValueTypeUpper:
 		return []byte(`{"messageType":"PING"}`), nil
@@ -285,18 +253,18 @@ type ServerPing struct {
 	StatusCode int
 }
 
-func (*ServerPing) Type() PacketType { return Ping }
-func (*ServerPing) Id() interface{}  { return PingId }
-func (*ServerPing) HasRequest() bool { return true }
-func (*ServerPing) Sync() bool       { return true }
-func (p *ServerPing) Status() int    { return p.StatusCode }
+func (ServerPing) Type() client.PacketType { return client.Ping }
+func (ServerPing) Id() interface{}         { return client.PingId }
+func (ServerPing) HasRequest() bool        { return true }
+func (ServerPing) Sync() bool              { return true }
+func (p ServerPing) Status() int           { return p.StatusCode }
 
 type CaseHelo struct {
 	CaseTestType
-	ClientHelo
+	client.ClientHelo
 }
 
-func (h *CaseHelo) MarshalJSON() ([]byte, error) {
+func (h CaseHelo) MarshalJSON() ([]byte, error) {
 	var results interface{}
 	messageType := h.Type().String()
 	switch h.CaseTestType {

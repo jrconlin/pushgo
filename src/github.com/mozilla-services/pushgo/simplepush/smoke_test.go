@@ -2,28 +2,33 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package client
+package simplepush
 
 import (
 	"io"
 	"sync"
 	"testing"
 
+	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
 	// maxChannels is the maximum number of channels allowed in the opening
 	// handshake. Clients that specify more channels will receive a new device
-	// ID. Can be obtained via `app.Store.MaxChannels()`.
+	// ID. Can be obtained via server.Application.Store().MaxChannels.
 	maxChannels = 500
 )
 
-var channelIds = MustGenerateIds(maxChannels + 1)
+var channelIds = id.MustGenerate(maxChannels + 1)
 
 func TestPush(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
 	// Send 50 messages on 3 channels.
-	if err := DoTest(Origin, 3, 50); err != nil {
+	if err := client.DoTest(origin, 3, 50); err != nil {
 		t.Fatalf("Smoke test failed: %#v", err)
 	}
 }
@@ -33,7 +38,11 @@ func TestDuplicateHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -67,7 +76,11 @@ func TestMultiRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -85,7 +98,7 @@ func TestMultiRegister(t *testing.T) {
 		t.Fatalf("Error writing malformed registration request: got %#v; want io.EOF", err)
 	}
 	err = conn.Close()
-	if clientErr, ok := err.(Error); ok && clientErr.Status() != 401 {
+	if clientErr, ok := err.(client.Error); ok && clientErr.Status() != 401 {
 		t.Errorf("Unexpected close error status: got %#v; want 401", clientErr.Status())
 	} else if !ok {
 		t.Fatalf("Type assertion failed for close error: %#v", err)
@@ -93,11 +106,15 @@ func TestMultiRegister(t *testing.T) {
 }
 
 func TestChannelTooLong(t *testing.T) {
-	channelId, err := GenerateIdSize("", 32)
+	channelId, err := generateIdSize(32)
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -108,7 +125,7 @@ func TestChannelTooLong(t *testing.T) {
 		t.Fatalf("Error writing registration request with large channel ID: got %#v; want io.EOF", err)
 	}
 	err = conn.Close()
-	if clientErr, ok := err.(Error); ok && clientErr.Status() != 401 {
+	if clientErr, ok := err.(client.Error); ok && clientErr.Status() != 401 {
 		t.Errorf("Unexpected close error status: got %#v; want 401", clientErr.Status())
 	} else if !ok {
 		t.Fatalf("Type assertion failed for close error: %#v", err)
@@ -120,7 +137,11 @@ func TestTooManyChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	conn, err := DialOrigin(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -136,7 +157,11 @@ func TestTooManyChannels(t *testing.T) {
 }
 
 func TestRegisterSeparate(t *testing.T) {
-	conn, err := Dial(Origin)
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}

@@ -7,6 +7,8 @@ package simplepush
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"net"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -30,6 +32,9 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
+	Addr               string
+	SslCertFile        string `toml:"ssl_cert_file"`
+	SslKeyFile         string `toml:"ssl_key_file"`
 	PushEndpoint       string `toml:"push_endpoint_template"`
 	PushLongPongs      int    `toml:"push_long_pongs"`
 	ClientMinPing      string `toml:"client_min_ping"`
@@ -37,17 +42,22 @@ type ServerConfig struct {
 }
 
 type Serv struct {
-	app      *Application
-	logger   *SimpleLogger
-	metrics  *Metrics
-	store    Store
-	key      []byte
-	template *template.Template
-	prop     PropPinger
+	app          *Application
+	logger       *SimpleLogger
+	listener     net.Listener
+	metrics      *Metrics
+	store        Store
+	key          []byte
+	template     *template.Template
+	prop         PropPinger
+	hostname     string
+	port         int
+	fullHostname string
 }
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
+		Addr:         ":8080",
 		PushEndpoint: "{{.CurrentHost}}/update/{{.Token}}",
 	}
 }
@@ -65,7 +75,50 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 			LogFields{"error": err.Error()})
 		return
 	}
+
+	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
+	if usingSSL {
+		self.logger.Info("server", "Using TLS", nil)
+		self.listener, err = ListenTLS(conf.Addr, conf.SslCertFile, conf.SslKeyFile)
+	} else {
+		self.listener, err = Listen(conf.Addr)
+	}
+	if err != nil {
+		self.logger.Error("server", "Could not attach listener",
+			LogFields{"error": err.Error()})
+		return
+	}
+
+	addr := self.listener.Addr().(*net.TCPAddr)
+	self.hostname = app.Hostname()
+	if len(self.hostname) == 0 {
+		self.hostname = addr.IP.String()
+	}
+	self.port = addr.Port
+
+	if usingSSL {
+		if self.port == 443 {
+			self.fullHostname = fmt.Sprintf("https://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("https://%s:%d", self.hostname, self.port)
+		}
+	} else {
+		if self.port == 80 {
+			self.fullHostname = fmt.Sprintf("http://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("http://%s:%d", self.hostname, self.port)
+		}
+	}
+
 	return
+}
+
+func (self *Serv) Listener() net.Listener {
+	return self.listener
+}
+
+func (self *Serv) FullHostname() string {
+	return self.fullHostname
 }
 
 // A client connects!
@@ -206,7 +259,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.app.FullHostname(),
+		self.FullHostname(),
 	}); err != nil {
 		self.logger.Error("server",
 			"Could not generate Push Endpoint",

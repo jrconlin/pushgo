@@ -135,22 +135,31 @@ func (t *TestClient) subscribe() error {
 
 func (t *TestClient) notifyAll() error {
 	var notifyWait sync.WaitGroup
-	signal, errors := make(chan bool), make(chan error)
+	stop, errors := make(chan bool), make(chan error)
+	defer close(stop)
 	// Listen for incoming messages.
 	notifyWait.Add(1)
 	go func() {
 		defer notifyWait.Done()
+		err := t.waitAll(stop)
+		if err == nil {
+			return
+		}
 		select {
-		case <-signal:
-		case errors <- t.waitAll(signal):
+		case <-stop:
+		case errors <- err:
 		}
 	}()
 	// Notify each registered channel.
 	notifyOne := func(endpoint string, version int64) {
 		defer notifyWait.Done()
+		err := Notify(endpoint, version)
+		if err == nil {
+			return
+		}
 		select {
-		case <-signal:
-		case errors <- Notify(endpoint, version):
+		case <-stop:
+		case errors <- err:
 		}
 	}
 	t.Lock()
@@ -167,13 +176,7 @@ func (t *TestClient) notifyAll() error {
 		notifyWait.Wait()
 		close(errors)
 	}()
-	for err := range errors {
-		if err != nil {
-			close(signal)
-			return err
-		}
-	}
-	return nil
+	return <-errors
 }
 
 func (t *TestClient) waitAll(signal chan bool) (err error) {
@@ -185,7 +188,7 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 	// be changed to exit as soon as the latest version is received.
 	expected, actual := len(t.endpoints)*t.Updates, 0
 	for ok := true; ok; {
-		var packet HasType
+		var packet Packet
 		if actual >= expected {
 			break
 		}
@@ -195,7 +198,7 @@ func (t *TestClient) waitAll(signal chan bool) (err error) {
 			ok = false
 			err = ErrTimedOut
 
-		case packet, ok = <-t.conn.packets:
+		case packet, ok = <-t.conn.Packets:
 			if !ok {
 				break
 			}
