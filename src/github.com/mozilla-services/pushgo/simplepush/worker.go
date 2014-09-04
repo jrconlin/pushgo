@@ -277,48 +277,56 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		websocket.JSON.Send(sock.Socket, resp)
 		return nil
 	} */
+	var channelIDs []interface{}
 	if data["channelIDs"] == nil {
 		// Must include "channelIDs" (even if empty)
 		self.logger.Debug("worker", "Missing ChannelIDs", nil)
 		return sperrors.MissingDataError
 	}
-	if len(sock.Uaid) > 0 &&
-		len(suggestedUAID) > 0 &&
-		sock.Uaid != suggestedUAID {
-		// if there's already a Uaid for this channel, don't accept a new one
+	if len(sock.Uaid) > 0 {
+		if len(suggestedUAID) == 0 || sock.Uaid == suggestedUAID {
+			// Duplicate handshake with omitted or identical device ID.
+			goto registerDevice
+		}
+		// if there's already a Uaid for this device, don't accept a new one
 		self.logger.Debug("worker", "Conflicting UAIDs", nil)
 		return sperrors.InvalidChannelError
 	}
-	if len(suggestedUAID) > 0 && !id.Valid(suggestedUAID) {
+	if forceReset = len(suggestedUAID) == 0; forceReset {
+		self.logger.Debug("worker", "Generating new UAID for device", nil)
+		goto registerDevice
+	}
+	if !id.Valid(suggestedUAID) {
 		self.logger.Debug("worker", "Invalid character in UAID", nil)
 		return sperrors.InvalidChannelError
 	}
-	if len(sock.Uaid) == 0 {
-		// if there's no UAID for the socket, accept or create a new one.
-		sock.Uaid = suggestedUAID
-		forceReset = len(sock.Uaid) == 0
-		if !forceReset {
-			forceReset = self.app.ClientExists(sock.Uaid)
-		}
-		if !forceReset {
-			channelIDs, _ := data["channelIDs"].([]interface{})
-			// are there a suspicious number of channels?
-			if len(channelIDs) > self.maxChannels {
-				forceReset = true
-			}
-			if !forceReset {
-				forceReset = !sock.Store.Exists(sock.Uaid)
-			}
-		}
+	// if there's no UAID for the socket, accept or create a new one.
+	if forceReset = self.app.ClientExists(suggestedUAID); forceReset {
+		self.logger.Warn("worker", "UAID collision; resetting UAID for device",
+			LogFields{"uaid": suggestedUAID})
+		goto registerDevice
 	}
-	if forceReset {
+	channelIDs, _ = data["channelIDs"].([]interface{})
+	// are there a suspicious number of channels?
+	if forceReset = len(channelIDs) > self.maxChannels; forceReset {
 		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Resetting UAID for device",
-				LogFields{"uaid": sock.Uaid})
+			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID",
+				LogFields{"uaid": suggestedUAID,
+					"channels":    strconv.Itoa(len(channelIDs)),
+					"maxChannels": strconv.Itoa(self.maxChannels)})
 		}
-		if len(sock.Uaid) > 0 {
-			sock.Store.DropAll(sock.Uaid)
-		}
+		sock.Store.DropAll(suggestedUAID)
+		goto registerDevice
+	}
+	if forceReset = !sock.Store.Exists(sock.Uaid) && len(channelIDs) > 0; forceReset {
+		self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
+			LogFields{"uaid": suggestedUAID})
+		goto registerDevice
+	}
+	sock.Uaid = suggestedUAID
+
+registerDevice:
+	if forceReset {
 		sock.Uaid, _ = id.Generate()
 	}
 	// register any proprietary connection requirements

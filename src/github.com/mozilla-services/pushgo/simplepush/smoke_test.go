@@ -33,6 +33,30 @@ func TestPush(t *testing.T) {
 	}
 }
 
+func TestHandshakeWithId(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	deviceId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating device ID: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
+	if err != nil {
+		t.Fatalf("Error dialing origin: %#v", err)
+	}
+	defer conn.Close()
+	defer conn.Purge()
+	actualId, err := conn.WriteHelo(deviceId)
+	if err != nil {
+		t.Fatalf("Error writing handshake request: %#v", err)
+	}
+	if actualId != deviceId {
+		t.Errorf("Mismatched device IDs: got %#v; want %#v", actualId, deviceId)
+	}
+}
+
 func TestDuplicateHandshake(t *testing.T) {
 	deviceId, err := id.Generate()
 	if err != nil {
@@ -52,8 +76,8 @@ func TestDuplicateHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing initial handshake request: %#v", err)
 	}
-	if firstId == deviceId {
-		t.Errorf("Want new device ID for initial handshake; got %#v", firstId)
+	if firstId != deviceId {
+		t.Errorf("Mismatched device ID for initial handshake: got %#v; want %#v", firstId, deviceId)
 	}
 	secondId, err := conn.WriteHelo(firstId)
 	if err != nil {
