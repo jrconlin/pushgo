@@ -214,15 +214,15 @@ func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int
 			ok        bool
 		)
 		if update, ok = field.(map[string]interface{}); !ok {
-			return nil, &client.IncompleteError{"ack", c.Origin(), "update"}
+			return nil, &client.IncompleteError{MessageType: "ack", Origin: c.Origin(), Field: "update"}
 		}
 		if channelId, ok = update["channelID"].(string); !ok {
-			return nil, &client.IncompleteError{"ack", c.Origin(), "channelID"}
+			return nil, &client.IncompleteError{MessageType: "ack", Origin: c.Origin(), Field: "channelID"}
 		}
 		if version, ok = update["version"].(float64); !ok {
-			return nil, &client.IncompleteError{"ack", c.Origin(), "version"}
+			return nil, &client.IncompleteError{MessageType: "ack", Origin: c.Origin(), Field: "version"}
 		}
-		reply.Updates[index] = client.Update{channelId, int64(version)}
+		reply.Updates[index] = client.Update{ChannelId: channelId, Version: int64(version)}
 	}
 	return reply, nil
 }

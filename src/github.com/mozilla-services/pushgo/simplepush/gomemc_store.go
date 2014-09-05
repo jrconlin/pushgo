@@ -365,10 +365,10 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = s.client.Delete(encodeKey(key)); err == nil || err == mc.ErrCacheMiss {
-		return nil
+	if err = s.client.Delete(encodeKey(key)); err != nil && err != mc.ErrCacheMiss {
+		return err
 	}
-	return err
+	return nil
 }
 
 // FetchAll returns all channel updates and expired channels for a device ID
