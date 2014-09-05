@@ -98,10 +98,10 @@ type Store interface {
 	// FetchPing retrieves proprietary ping information (e.g., GCM request data)
 	// for the given device. The returned value is an opaque string parsed by the
 	// ping handler.
-	FetchPing(suaid string) (string, error)
+	FetchPing(suaid string) ([]byte, error)
 
 	// PutPing stores a proprietary ping info blob for the given device.
-	PutPing(suaid, connect string) error
+	PutPing(suaid string, pingData []byte) error
 
 	// DropPing removes all proprietary ping info for the given device.
 	DropPing(suaid string) error
