@@ -393,10 +393,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 // Boy Golly, sure would be nice to put this in router.go, huh?
 // well, thanks to go being picky about circular references, you can't.
 func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
-	var err error
-	var chid string
-	var ts time.Time
-	var vers int64
+	var (
+		err error
+		ts  time.Time
+	)
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
@@ -420,47 +420,28 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
-	jdata := make(JsMap)
-	if err = decoder.Decode(&jdata); err != nil {
+	request := new(Routable)
+	if err = decoder.Decode(request); err != nil {
 		self.logger.Error("router",
 			"Could not read update body",
 			LogFields{"error": err.Error()})
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
+		goto invalidBody
 	}
-	if chid, ok = jdata["chid"].(string); !ok {
-		self.logger.Error("router", "Missing chid", LogFields{"uaid": uaid})
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
+	if len(request.ChannelID) == 0 {
+		self.logger.Error("router", "Missing channel ID", LogFields{"uaid": uaid})
+		goto invalidBody
 	}
-	if v, ok := jdata["time"].(string); !ok {
-		self.logger.Error("router",
-			"Missing time", nil)
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	} else if ts, err = time.Parse(time.RFC3339Nano, v); err != nil {
+	if ts, err = time.Parse(time.RFC3339Nano, request.Time); err != nil {
 		self.logger.Error("router", "Could not parse time",
 			LogFields{"error": err.Error(),
 				"uaid": uaid,
-				"chid": chid,
-				"time": v})
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	}
-	if v, ok := jdata["version"].(float64); !ok {
-		self.logger.Warn("router",
-			"Missing version", nil)
-		vers = int64(time.Now().UTC().Unix())
-	} else {
-		vers = int64(v)
+				"chid": request.ChannelID,
+				"time": request.Time})
+		goto invalidBody
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	if err = self.app.Server().Update(chid, uaid, vers, ts); err != nil {
+	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, ts); err != nil {
 		self.logger.Error("router",
 			"Could not update local user",
 			LogFields{"error": err.Error()})
@@ -471,6 +452,10 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	resp.Write([]byte("Ok"))
 	self.metrics.Increment("updates.routed.received")
 	return
+
+invalidBody:
+	http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+	self.metrics.Increment("updates.routed.invalid")
 }
 
 func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
