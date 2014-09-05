@@ -25,16 +25,6 @@ type ApplicationConfig struct {
 	ClientMinPing      string `toml:"client_min_ping_interval"`
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs"`
-	Gcm                GCMConfig
-}
-
-type GCMConfig struct {
-	TTL         int    `toml:"ttl"`
-	CollapseKey string `toml:"collapse_key"`
-	ProjectId   string `toml:"project_id"`
-	DryRun      bool   `toml:"dry_run"`
-	ApiKey      string `toml:"api_key"`
-	Url         string `toml:"url"`
 }
 
 type Application struct {

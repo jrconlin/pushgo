@@ -282,43 +282,31 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	// is there a Proprietary Ping for this?
-	//TODO: This should return JsMap, err
-	connect, err := self.store.FetchPing(uaid)
-	if err == nil && len(connect) > 0 {
-		// TODO: store the prop ping?
-		c_js := make(JsMap)
-		if err = json.Unmarshal([]byte(connect), &c_js); err != nil {
-			self.logger.Warn("update",
-				"Could not resolve Proprietary Ping connection string",
-				LogFields{"error": err.Error(),
-					"connect": connect})
-		} else if err = self.propping.Register(c_js, uaid); err != nil {
-			self.logger.Warn("update",
-				"Could not generate Proprietary Ping",
-				LogFields{"error": err.Error(),
-					"connect": connect})
-		}
-	}
-
 	// At this point we should have a valid endpoint in the URL
 	self.metrics.Increment("updates.appserver.incoming")
 
+	// is there a Proprietary Ping for this?
+	if self.propping == nil {
+		goto sendUpdate
+	}
+	if ok, err = self.propping.Send(uaid, version); err != nil {
+		self.logger.Warn("update",
+			"Could not generate Proprietary Ping",
+			LogFields{"error": err.Error(),
+				"uaid": uaid})
+		goto sendUpdate
+	}
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
-	if self.propping != nil && self.propping.CanBypassWebsocket() {
-		if err = self.propping.Send(version); err == nil {
-			// Neat! Might as well return.
-			self.metrics.Increment("updates.appserver.received")
-			resp.Header().Set("Content-Type", "application/json")
-			resp.Write([]byte("{}"))
-			return
-		}
-		self.logger.Warn("update",
-			"Could not force to proprietary ping",
-			LogFields{"error": err.Error()})
+	if ok && self.propping.CanBypassWebsocket() {
+		// Neat! Might as well return.
+		self.metrics.Increment("updates.appserver.received")
+		resp.Header().Set("Content-Type", "application/json")
+		resp.Write([]byte("{}"))
+		return
 	}
 
+sendUpdate:
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("update",
 			"setting version for ChannelID",
