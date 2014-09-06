@@ -136,6 +136,7 @@ type GCMPing struct {
 	PropPinger
 	config *GCMPingConfig
 	app    *Application
+	client *http.Client
 }
 
 type GCMPingConfig struct {
@@ -163,6 +164,7 @@ func (r *GCMPing) ConfigStruct() interface{} {
 func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.app = app
 	r.config = config.(*GCMPingConfig)
+	r.client = new(http.Client)
 	return nil
 }
 
@@ -179,7 +181,7 @@ func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 		return ConfigurationErr
 	}
 
-	regid, ok := connect["regid"]
+	regid, ok := connect["regid"].(string)
 	if !ok {
 		r.app.Logger().Error("gcmping",
 			"No user registration ID present. Cannot send message",
@@ -193,7 +195,7 @@ func (r *GCMPing) Register(connect JsMap, uaid string) (err error) {
 	connect["gcm_url"] = r.config.URL
 	connect["ttl"] = r.config.TTL
 	connect["project_id"] = r.config.ProjectID
-	r.config.RegID = regid.(string)
+	r.config.RegID = regid
 	r.config.UAID = uaid
 	full_connect, err := json.Marshal(connect)
 	if err != nil {
@@ -221,12 +223,12 @@ func (r *GCMPing) Send(vers int64) error {
 	// google docs lie. You MUST send the regid as an array, even if it's one
 	// element.
 	regs := [1]string{r.config.RegID}
-	data, err := json.Marshal(JsMap{
-		"registration_ids": regs,
-		"collapse_key":     r.config.CollapseKey,
-		"time_to_live":     r.config.TTL,
-		"dry_run":          r.config.DryRun,
-	})
+	data, err := json.Marshal(struct {
+		Regs        [1]string `json:"registration_ids"`
+		CollapseKey string    `json:"collapse_key"`
+		TTL         uint64    `json:"time_to_live"`
+		DryRun      bool      `json:"dry_run"`
+	}{regs, r.config.CollapseKey, r.config.TTL, r.config.DryRun})
 	if err != nil {
 		r.app.Logger().Error("propping",
 			"Could not marshal request for GCM post",
@@ -244,8 +246,7 @@ func (r *GCMPing) Send(vers int64) error {
 	req.Header.Add("Project_id", r.config.ProjectID)
 	req.Header.Add("Content-Type", "application/json")
 	r.app.Metrics().Increment("propretary.ping.gcm")
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := r.client.Do(req)
 	if err != nil {
 		r.app.Logger().Error("propping",
 			"Failed to send GCM message",

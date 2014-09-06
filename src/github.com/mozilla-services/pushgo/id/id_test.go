@@ -41,15 +41,15 @@ func TestDecodeString(t *testing.T) {
 		t.Fatalf("DecodeString() failed to decode valid unhyphenated ID %#v: %#v", encodedId, err)
 	}
 	if !bytes.Equal(decodedBytes, decodedId) {
-		t.Errorf("DecodeString() decoded unhyphenated ID incorrectly: got %#v; want %#v", hyphenatedBytes)
+		t.Errorf("DecodeString() decoded unhyphenated ID incorrectly: got %#v; want %#v", decodedBytes, decodedId)
 	}
 	_, err = DecodeString(encodedShortId)
 	if err != ErrInvalid {
-		t.Errorf("DecodeString() returned result for invalid short ID %#v: got %#v; want id.ErrInvalid", err)
+		t.Errorf("DecodeString() returned result for invalid short ID %#v: got %#v; want id.ErrInvalid", encodedShortId, err)
 	}
 	_, err = DecodeString(encodedLongId)
 	if err != ErrInvalid {
-		t.Errorf("DecodeString() returned result for invalid long ID %#v: got %#v; want id.ErrInvalid", err)
+		t.Errorf("DecodeString() returned result for invalid long ID %#v: got %#v; want id.ErrInvalid", encodedLongId, err)
 	}
 }
 

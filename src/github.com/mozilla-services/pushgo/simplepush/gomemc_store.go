@@ -202,8 +202,7 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 		return err
 	}
 	if chids.IndexOf(chid) < 0 {
-		err = s.storeAppIDArray(uaid, append(chids, chid))
-		if err != nil {
+		if err = s.storeAppIDArray(uaid, append(chids, chid)); err != nil {
 			return err
 		}
 	}
@@ -215,8 +214,7 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 		rec.State = StateLive
 		rec.Version = uint64(version)
 	}
-	err = s.storeRec(key, rec)
-	if err != nil {
+	if err = s.storeRec(key, rec); err != nil {
 		return err
 	}
 	return nil
@@ -367,11 +365,10 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if err != nil {
 		return err
 	}
-	err = s.client.Delete(encodeKey(key))
-	if err == nil || err == mc.ErrCacheMiss {
-		return nil
+	if err = s.client.Delete(encodeKey(key)); err != nil && err != mc.ErrCacheMiss {
+		return err
 	}
-	return err
+	return nil
 }
 
 // FetchAll returns all channel updates and expired channels for a device ID
@@ -587,8 +584,7 @@ func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 		})
 		return nil, err
 	}
-	err = json.Unmarshal(raw.Value, result)
-	if err != nil {
+	if err = json.Unmarshal(raw.Value, result); err != nil {
 		s.logger.Error("gomemc", "Could not unmarshal rec", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),

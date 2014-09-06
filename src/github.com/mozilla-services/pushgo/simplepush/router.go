@@ -34,7 +34,6 @@ var ErrNoLocator = errors.New("Discovery service not configured")
 
 // Routable is the update payload sent to each contact.
 type Routable struct {
-	DeviceID  string `json:"uaid"`
 	ChannelID string `json:"chid"`
 	Version   int64  `json:"version"`
 	Time      string `json:"time"`
@@ -204,7 +203,6 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 		return ErrNoLocator
 	}
 	msg, err := json.Marshal(&Routable{
-		DeviceID:  uaid,
 		ChannelID: chid,
 		Version:   version,
 		Time:      timer.Format(time.RFC3339Nano),

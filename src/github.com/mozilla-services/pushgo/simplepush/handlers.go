@@ -5,16 +5,13 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
@@ -34,6 +31,16 @@ type Handler struct {
 	max_connections int
 	token_key       []byte
 	propping        PropPinger
+}
+
+type ServerStatus struct {
+	Healthy      bool   `json:"ok"`
+	Clients      int    `json:"clientCount"`
+	MaxClients   int    `json:"maxClients"`
+	StoreHealthy bool   `json:"mcstatus"`
+	Goroutines   int    `json:"goroutines"`
+	Error        string `json:"error,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -59,6 +66,7 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 	if err != nil {
 		self.logger.Error("handler", "Could not generate metrics report",
 			LogFields{"error": err.Error()})
+		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
 	}
@@ -74,17 +82,19 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := self.app.ClientCount()
-	OK := "OK"
-	if clientCount >= int(self.max_connections) {
-		OK = "NOPE"
+	ok := clientCount >= self.max_connections
+	statusText := "OK"
+	if !ok {
+		statusText = "NOPE"
 	}
-	reply := fmt.Sprintf("{\"status\":\"%s\",\"clients\":%d}",
-		OK, clientCount)
-	if OK != "OK" {
-		http.Error(resp, reply, http.StatusServiceUnavailable)
-	} else {
-		resp.Write([]byte(reply))
+	reply := []byte(fmt.Sprintf(`{"status":"%s","clients":%d}`,
+		statusText, clientCount))
+
+	resp.Header().Set("Content-Type", "application/json")
+	if !ok {
+		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
+	resp.Write(reply)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
@@ -93,7 +103,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	var msg string
 
 	clientCount := self.app.ClientCount()
-	if okClients = clientCount > int(self.max_connections); !okClients {
+	if okClients = clientCount < self.max_connections; !okClients {
 		msg += "Exceeding max_connections, "
 	}
 	mcStatus, err := self.store.Status()
@@ -101,49 +111,24 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 		msg += fmt.Sprintf(" Memcache error %s,", err)
 	}
 	ok := okClients && mcStatus
-	gcount := runtime.NumGoroutine()
-	repMap := JsMap{"ok": ok,
-		"clientCount": clientCount,
-		"maxClients":  self.max_connections,
-		"mcstatus":    mcStatus,
-		"goroutines":  gcount,
+	status := &ServerStatus{
+		Healthy:      ok,
+		Clients:      clientCount,
+		MaxClients:   self.max_connections,
+		StoreHealthy: mcStatus,
+		Goroutines:   runtime.NumGoroutine(),
+		Message:      msg,
 	}
 	if err != nil {
-		repMap["error"] = err.Error()
+		status.Error = err.Error()
 	}
-	if msg != "" {
-		repMap["message"] = msg
-	}
-	reply, err := json.Marshal(repMap)
+	reply, err := json.Marshal(status)
 
-	if ok {
-		resp.Write(reply)
-	} else {
-		http.Error(resp, string(reply), http.StatusServiceUnavailable)
+	resp.Header().Set("Content-Type", "application/json")
+	if !ok {
+		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
-}
-
-func proxyNotification(proto, host, path string, vers int64) (err error) {
-
-	// I have tried a number of variations on this, but while it's possible
-	// to add Form values to this request, they're never actually sent out.
-	// Thus, I'm using the URL arguments option. Which sucks.
-	req, err := http.NewRequest("PUT",
-		fmt.Sprintf("%s://%s%s?version=%d", proto, host, path, vers), nil)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
-		return nil
-	}
-	rbody, err := ioutil.ReadAll(resp.Body)
-	return errors.New(fmt.Sprintf("Proxy failed. Returned (%d)\n %s",
-		resp.StatusCode, rbody))
+	resp.Write(reply)
 }
 
 // -- REST
@@ -156,9 +141,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		uaid, chid string
 	)
 
-	if self.app.ClientCount() > int(self.max_connections) {
-		http.Error(resp, "{\"error\": \"Server unavailable\"}",
-			http.StatusServiceUnavailable)
+	if self.app.ClientCount() >= self.max_connections {
+		resp.Header().Set("Content-Type", "application/json")
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Write([]byte(`{"error": "Server unavailable"}`))
 		self.metrics.Increment("updates.appserver.too_many_connections")
 		return
 	}
@@ -182,7 +168,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.metrics.Timer("updates.handled", now.Sub(timer))
 		}
 	}(&err)
-	filter := regexp.MustCompile("[^\\w-\\.\\=]")
+
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("update", "Handling Update",
 			LogFields{"path": req.URL.Path})
@@ -196,9 +182,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	svers := req.FormValue("version")
 	if svers != "" {
-		version, err = strconv.ParseInt(svers, 10, 64)
-		if err != nil || version < 0 {
-			http.Error(resp, "\"Invalid Version\"", http.StatusBadRequest)
+		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
+			resp.Header().Set("Content-Type", "application/json")
+			resp.WriteHeader(http.StatusBadRequest)
+			resp.Write([]byte(`"Invalid Version"`))
 			self.metrics.Increment("updates.appserver.invalid")
 			return
 		}
@@ -242,10 +229,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			return
 		}
 
-		pk = strings.TrimSpace(string(bpk))
+		pk = string(bytes.TrimSpace(bpk))
 	}
 
-	if filter.Find([]byte(pk)) != nil {
+	if !validPK(pk) {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("update",
 				"Invalid token for update",
@@ -289,6 +276,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
 			resp.Write([]byte("{}"))
 		} else {
+			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 		}
 		return
@@ -300,20 +288,16 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if err == nil && len(connect) > 0 {
 		// TODO: store the prop ping?
 		c_js := make(JsMap)
-		err = json.Unmarshal([]byte(connect), &c_js)
-		if err != nil {
+		if err = json.Unmarshal([]byte(connect), &c_js); err != nil {
 			self.logger.Warn("update",
 				"Could not resolve Proprietary Ping connection string",
 				LogFields{"error": err.Error(),
 					"connect": connect})
-		} else {
-			err = self.propping.Register(c_js, uaid)
-			if err != nil {
-				self.logger.Warn("update",
-					"Could not generate Proprietary Ping",
-					LogFields{"error": err.Error(),
-						"connect": connect})
-			}
+		} else if err = self.propping.Register(c_js, uaid); err != nil {
+			self.logger.Warn("update",
+				"Could not generate Proprietary Ping",
+				LogFields{"error": err.Error(),
+					"connect": connect})
 		}
 	}
 
@@ -323,29 +307,27 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
 	if self.propping != nil && self.propping.CanBypassWebsocket() {
-		err = self.propping.Send(version)
-		if err != nil {
-			self.logger.Warn("update",
-				"Could not force to proprietary ping",
-				LogFields{"error": err.Error()})
-		} else {
+		if err = self.propping.Send(version); err == nil {
 			// Neat! Might as well return.
 			self.metrics.Increment("updates.appserver.received")
 			resp.Header().Set("Content-Type", "application/json")
 			resp.Write([]byte("{}"))
 			return
 		}
+		self.logger.Warn("update",
+			"Could not force to proprietary ping",
+			LogFields{"error": err.Error()})
 	}
+
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("update",
 			"setting version for ChannelID",
 			LogFields{"uaid": uaid, "channelID": chid,
 				"version": strconv.FormatInt(version, 10)})
 	}
-	err = self.store.Update(pk, version)
 
-	if err != nil {
-		self.logger.Error("update", "Could not update channel",
+	if err = self.store.Update(pk, version); err != nil {
+		self.logger.Warn("update", "Could not update channel",
 			LogFields{"UAID": uaid,
 				"channelID": chid,
 				"version":   strconv.FormatInt(version, 10),
@@ -366,10 +348,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if self.app.ClientCount() > int(self.max_connections) {
-		websocket.JSON.Send(ws, JsMap{
-			"status": http.StatusServiceUnavailable,
-			"error":  "Server Unavailable"})
+	if self.app.ClientCount() >= self.max_connections {
+		websocket.JSON.Send(ws, struct {
+			Status int    `json:"status"`
+			Error  string `json:"error"`
+		}{http.StatusServiceUnavailable, "Server Unavailable"})
 		return
 	}
 	sock := PushWS{Uaid: "",
@@ -380,7 +363,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("handler", "websocket connection", LogFields{
-			"UserAgent":  strings.Join(ws.Request().Header["User-Agent"], ","),
+			"UserAgent":  ws.Request().Header.Get("User-Agent"),
 			"URI":        ws.Request().RequestURI,
 			"RemoteAddr": ws.Request().RemoteAddr,
 		})
@@ -410,10 +393,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 // Boy Golly, sure would be nice to put this in router.go, huh?
 // well, thanks to go being picky about circular references, you can't.
 func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
-	var err error
-	var chid string
-	var ts time.Time
-	var vers int64
+	var (
+		err error
+		ts  time.Time
+	)
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
@@ -437,54 +420,28 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
-	jdata := make(JsMap)
-	err = decoder.Decode(&jdata)
-	if err != nil {
+	request := new(Routable)
+	if err = decoder.Decode(request); err != nil {
 		self.logger.Error("router",
 			"Could not read update body",
 			LogFields{"error": err.Error()})
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
+		goto invalidBody
 	}
-	if v, ok := jdata["chid"]; !ok {
-		self.logger.Error("router", "Missing chid", LogFields{"uaid": uaid})
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	} else {
-		chid = v.(string)
+	if len(request.ChannelID) == 0 {
+		self.logger.Error("router", "Missing channel ID", LogFields{"uaid": uaid})
+		goto invalidBody
 	}
-	if v, ok := jdata["time"]; !ok {
-		self.logger.Error("router",
-			"Missing time", nil)
-		http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	} else {
-		ts, err = time.Parse(time.RFC3339Nano, v.(string))
-		if err != nil {
-			self.logger.Error("router", "Could not parse time",
-				LogFields{"error": err.Error(),
-					"uaid": uaid,
-					"chid": chid,
-					"time": v.(string)})
-			http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-			self.metrics.Increment("updates.routed.invalid")
-			return
-		}
-	}
-	if v, ok := jdata["version"]; !ok {
-		self.logger.Warn("router",
-			"Missing version", nil)
-		vers = int64(time.Now().UTC().Unix())
-	} else {
-		vers = int64(v.(float64))
+	if ts, err = time.Parse(time.RFC3339Nano, request.Time); err != nil {
+		self.logger.Error("router", "Could not parse time",
+			LogFields{"error": err.Error(),
+				"uaid": uaid,
+				"chid": request.ChannelID,
+				"time": request.Time})
+		goto invalidBody
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	err = self.app.Server().Update(chid, uaid, vers, ts)
-	if err != nil {
+	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, ts); err != nil {
 		self.logger.Error("router",
 			"Could not update local user",
 			LogFields{"error": err.Error()})
@@ -492,9 +449,13 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.metrics.Increment("updates.routed.error")
 		return
 	}
-	http.Error(resp, "Ok", http.StatusOK)
+	resp.Write([]byte("Ok"))
 	self.metrics.Increment("updates.routed.received")
 	return
+
+invalidBody:
+	http.Error(resp, "Invalid body", http.StatusNotAcceptable)
+	self.metrics.Increment("updates.routed.invalid")
 }
 
 func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
@@ -504,6 +465,19 @@ func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
 
 func (r *Handler) PropPinger() PropPinger {
 	return r.propping
+}
+
+func validPK(pk string) bool {
+	for i := 0; i < len(pk); i++ {
+		b := pk[i]
+		if b >= 'A' && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' && b != '.' && b != '=' {
+			return false
+		}
+	}
+	return true
 }
 
 // o4fs

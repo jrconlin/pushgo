@@ -13,6 +13,8 @@ PLATFORM=$(shell uname)
 # Setup commands and env vars if there is no system go linked into bin/go
 PATH := $(HERE)/bin:$(PATH)
 
+PACKAGE = github.com/mozilla-services/pushgo
+
 .PHONY: all build clean test simplepush memcached
 
 all: build
@@ -56,7 +58,10 @@ simplepush:
 	$(GODEP) go build -o simplepush github.com/mozilla-services/pushgo
 
 test:
-	$(GODEP) go test github.com/mozilla-services/pushgo/simplepush github.com/mozilla-services/pushgo/id
+	$(GODEP) go test $(addprefix $(PACKAGE)/,id simplepush)
+
+vet:
+	$(GODEP) go vet $(addprefix $(PACKAGE)/,client id simplepush)
 
 clean:
 	rm -rf bin $(DEPS)
