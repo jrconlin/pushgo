@@ -23,14 +23,14 @@ import (
 type HandlerConfig struct{}
 
 type Handler struct {
-	app             *Application
-	logger          *SimpleLogger
-	store           Store
-	router          *Router
-	metrics         *Metrics
-	max_connections int
-	token_key       []byte
-	propping        PropPinger
+	app           *Application
+	logger        *SimpleLogger
+	store         Store
+	router        *Router
+	metrics       *Metrics
+	maxGoroutines int
+	tokenKey      []byte
+	propping      PropPinger
 }
 
 type ServerStatus struct {
@@ -53,8 +53,8 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.store = app.Store()
 	self.metrics = app.Metrics()
 	self.router = app.Router()
-	self.max_connections = app.MaxConnections()
-	self.token_key = app.TokenKey()
+	self.maxGoroutines = app.MaxGoroutines()
+	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
 	return nil
 }
@@ -82,7 +82,7 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	// return "OK" only if all is well.
 	// TODO: make sure all is well.
 	clientCount := self.app.ClientCount()
-	ok := clientCount >= self.max_connections
+	ok := clientCount >= self.maxGoroutines
 	statusText := "OK"
 	if !ok {
 		statusText = "NOPE"
@@ -103,8 +103,8 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	var msg string
 
 	clientCount := self.app.ClientCount()
-	if okClients = clientCount < self.max_connections; !okClients {
-		msg += "Exceeding max_connections, "
+	if okClients = clientCount < self.maxGoroutines; !okClients {
+		msg += "Exceeding active goroutine limit, "
 	}
 	mcStatus, err := self.store.Status()
 	if !mcStatus {
@@ -114,7 +114,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	status := &ServerStatus{
 		Healthy:      ok,
 		Clients:      clientCount,
-		MaxClients:   self.max_connections,
+		MaxClients:   self.maxGoroutines,
 		StoreHealthy: mcStatus,
 		Goroutines:   runtime.NumGoroutine(),
 		Message:      msg,
@@ -141,7 +141,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		uaid, chid string
 	)
 
-	if self.app.ClientCount() >= self.max_connections {
+	if self.app.ClientCount() >= self.maxGoroutines {
 		resp.Header().Set("Content-Type", "application/json")
 		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte(`{"error": "Server unavailable"}`))
@@ -212,7 +212,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if token := self.token_key; len(token) > 0 {
+	if token := self.tokenKey; len(token) > 0 {
 		// Note: dumping the []uint8 keys can produce terminal glitches
 		self.logger.Debug("main", "Decoding...", nil)
 		var err error
@@ -336,7 +336,7 @@ sendUpdate:
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if self.app.ClientCount() >= self.max_connections {
+	if self.app.ClientCount() >= self.maxGoroutines {
 		websocket.JSON.Send(ws, struct {
 			Status int    `json:"status"`
 			Error  string `json:"error"`

@@ -20,7 +20,8 @@ import (
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
-	MaxConnections     int    `toml:"max_connections" env:"max_conns"`
+	MaxGoroutines      int    `toml:"max_connections" env:"max_goroutines"`
+	KeepAlivePeriod    string `toml:"keep_alive_period" env:"keep_alive_period"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
@@ -31,7 +32,8 @@ type Application struct {
 	hostname           string
 	host               string
 	port               int
-	maxConnnections    int
+	maxGoroutines      int
+	keepAlivePeriod    time.Duration
 	clientMinPing      time.Duration
 	clientHelloTimeout time.Duration
 	pushLongPongs      bool
@@ -52,7 +54,8 @@ func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
-		MaxConnections:     1000,
+		MaxGoroutines:      1000,
+		KeepAlivePeriod:    "3m",
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
@@ -81,17 +84,22 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	}
 
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
-		err = fmt.Errorf("Unable to parse 'client_min_ping_interval: %s",
+		err = fmt.Errorf("Unable to parse 'client_min_ping_interval': %s",
 			err.Error())
 		return
 	}
 	if a.clientHelloTimeout, err = time.ParseDuration(conf.ClientHelloTimeout); err != nil {
-		err = fmt.Errorf("Unable to parse 'client_hello_timeout: %s",
+		err = fmt.Errorf("Unable to parse 'client_hello_timeout': %s",
+			err.Error())
+		return
+	}
+	if a.keepAlivePeriod, err = time.ParseDuration(conf.KeepAlivePeriod); err != nil {
+		err = fmt.Errorf("Unable to parse 'keep_alive_period': %s",
 			err.Error())
 		return
 	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.maxConnnections = conf.MaxConnections
+	a.maxGoroutines = conf.MaxGoroutines
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
 	count := int32(0)
@@ -171,8 +179,12 @@ func (a *Application) Hostname() string {
 	return a.hostname
 }
 
-func (a *Application) MaxConnections() int {
-	return a.maxConnnections
+func (a *Application) MaxGoroutines() int {
+	return a.maxGoroutines
+}
+
+func (a *Application) KeepAlivePeriod() time.Duration {
+	return a.keepAlivePeriod
 }
 
 func (a *Application) Logger() *SimpleLogger {

@@ -88,9 +88,9 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
 	if usingSSL {
 		self.logger.Info("server", "Using TLS", nil)
-		self.listener, err = ListenTLS(conf.Addr, conf.SslCertFile, conf.SslKeyFile)
+		self.listener, err = ListenTLS(conf.Addr, conf.SslCertFile, conf.SslKeyFile, app.MaxGoroutines(), app.KeepAlivePeriod())
 	} else {
-		self.listener, err = Listen(conf.Addr)
+		self.listener, err = Listen(conf.Addr, app.MaxGoroutines(), app.KeepAlivePeriod())
 	}
 	if err != nil {
 		self.logger.Error("server", "Could not attach listener",

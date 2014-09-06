@@ -133,7 +133,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
-	if r.listener, err = Listen(conf.Addr); err != nil {
+	if r.listener, err = Listen(conf.Addr, app.MaxGoroutines(), app.KeepAlivePeriod()); err != nil {
 		r.logger.Error("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err

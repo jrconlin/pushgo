@@ -7,41 +7,58 @@ package simplepush
 import (
 	"crypto/tls"
 	"net"
+	"runtime"
 	"time"
 )
 
-// TCPKeepAliveListener sets a keep-alive timer on an incoming connection.
-// This is a reimplementation of the unexported tcpKeepAliveListener struct
-// from package net/http, copyright 2009, The Go Authors.
-type TCPKeepAliveListener struct {
+// TooBusyError is a temporary error returned when too many goroutines are
+// active at once. The server will sleep before accepting new connections,
+// allowing existing goroutines to finish.
+type TooBusyError struct{}
+
+func (e TooBusyError) Error() string   { return "Too many requests" }
+func (e TooBusyError) Timeout() bool   { return false }
+func (e TooBusyError) Temporary() bool { return true }
+
+var errTooBusy error = TooBusyError{}
+
+// RateLimitedListener rejects incoming connections if the server is
+// overloaded, and sets a keep-alive timer on accepted connections. Based on
+// tcpKeepAliveListener from package net/http, copyright 2009, The Go Authors.
+type RateLimitedListener struct {
 	*net.TCPListener
+	maxGoroutines   int
+	keepAlivePeriod time.Duration
 }
 
 // Accept implements net.Listener.Addr.
-func (listener TCPKeepAliveListener) Accept() (conn net.Conn, err error) {
+func (listener RateLimitedListener) Accept() (conn net.Conn, err error) {
+	if runtime.NumGoroutine() >= listener.maxGoroutines {
+		return nil, errTooBusy
+	}
 	socket, err := listener.AcceptTCP()
 	if err != nil {
-		return
+		return nil, err
 	}
 	socket.SetKeepAlive(true)
-	socket.SetKeepAlivePeriod(3 * time.Minute)
+	socket.SetKeepAlivePeriod(listener.keepAlivePeriod)
 	return socket, nil
 }
 
 // Listen returns an active HTTP listener. This is identical to ListenAndServe
 // from package net/http, but listens on a random port if addr is omitted, and
 // does not call http.Server.Serve. Copyright 2009, The Go Authors.
-func Listen(addr string) (net.Listener, error) {
+func Listen(addr string, maxGoroutines int, keepAlivePeriod time.Duration) (net.Listener, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	return TCPKeepAliveListener{listener.(*net.TCPListener)}, nil
+	return RateLimitedListener{listener.(*net.TCPListener), maxGoroutines, keepAlivePeriod}, nil
 }
 
 // ListenTLS returns an active HTTPS listener. Based on ListenAndServeTLS from
 // package net/http, copyright 2009, The Go Authors.
-func ListenTLS(addr, certFile, keyFile string) (net.Listener, error) {
+func ListenTLS(addr, certFile, keyFile string, maxGoroutines int, keepAlivePeriod time.Duration) (net.Listener, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -54,7 +71,7 @@ func ListenTLS(addr, certFile, keyFile string) (net.Listener, error) {
 		NextProtos:   []string{"http/1.1"},
 		Certificates: []tls.Certificate{cert},
 	}
-	return tls.NewListener(TCPKeepAliveListener{listener.(*net.TCPListener)}, config), nil
+	return tls.NewListener(RateLimitedListener{listener.(*net.TCPListener), maxGoroutines, keepAlivePeriod}, config), nil
 }
 
 // TimeoutDialer returns a dialer function suitable for use with an
