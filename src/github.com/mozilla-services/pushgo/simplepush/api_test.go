@@ -553,15 +553,15 @@ type idTest struct {
 func (t idTest) TestHelo() error {
 	deviceId, err := id.Generate()
 	if err != nil {
-		return fmt.Errorf("On test %v, error generating device ID: %#v", t.name, err)
+		return fmt.Errorf("On handshake test %v, error generating device ID: %#v", t.name, err)
 	}
 	origin, err := Server.Origin()
 	if err != nil {
-		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+		return fmt.Errorf("On handshake test %v, error initializing test server: %#v", t.name, err)
 	}
 	conn, err := client.DialOrigin(origin)
 	if err != nil {
-		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
+		return fmt.Errorf("On handshake test %v, error dialing origin: %#v", t.name, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
@@ -573,21 +573,35 @@ func (t idTest) TestHelo() error {
 		errors:      make(chan error),
 	}
 	reply, err := conn.WriteRequest(request)
-	if err != nil {
-		return fmt.Errorf("On test %v, error writing handshake: %#v", t.name, err)
+	if t.statusCode >= 200 && t.statusCode < 300 {
+		if err != nil {
+			return fmt.Errorf("On handshake test %v, error writing request: %#v", t.name, err)
+		}
+		helo, ok := reply.(client.ServerHelo)
+		if !ok {
+			return fmt.Errorf("On handshake test %v, type assertion failed for reply: %#v", t.name, reply)
+		}
+		if helo.StatusCode != 200 {
+			return fmt.Errorf("On handshake test %v, unexpected status code: got %#v; want 200", t.name, helo.StatusCode)
+		}
+		// The Simple Push server requires the channelIDs field to be present in
+		// the handshake, but does not validate its contents, since any queued
+		// messages will be immediately flushed to the client.
+		if helo.DeviceId == deviceId {
+			return fmt.Errorf("On handshake test %v, want new device ID; got %#v", t.name, deviceId)
+		}
+		return nil
 	}
-	helo, ok := reply.(client.ServerHelo)
+	if err != io.EOF {
+		return fmt.Errorf("On handshake test %v, error writing request: got %#v; want io.EOF", t.name, err)
+	}
+	err = conn.Close()
+	clientErr, ok := err.(client.Error)
 	if !ok {
-		return fmt.Errorf("On test %v, type assertion failed for handshake reply: %#v", t.name, reply)
+		return fmt.Errorf("On handshake test %v, type assertion failed for close error: %#v", t.name, err)
 	}
-	if helo.StatusCode != 200 {
-		return fmt.Errorf("On test %v, unexpected status code: got %#v; want 200", t.name, helo.StatusCode)
-	}
-	// The Simple Push server requires the channelIDs field to be present in
-	// the handshake, but does not validate its contents, since any queued
-	// messages will be immediately flushed to the client.
-	if helo.DeviceId == deviceId {
-		return fmt.Errorf("On test %v, want new device ID; got %#v", t.name, deviceId)
+	if clientErr.Status() != t.statusCode {
+		return fmt.Errorf("On handshake test %v, unexpected close error status: got %#v; want %#v", t.name, clientErr.Status(), t.statusCode)
 	}
 	return nil
 }
@@ -595,11 +609,11 @@ func (t idTest) TestHelo() error {
 func (t idTest) TestRegister() error {
 	origin, err := Server.Origin()
 	if err != nil {
-		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
+		return fmt.Errorf("On registration test %v, error initializing test server: %#v", t.name, err)
 	}
 	conn, err := client.Dial(origin)
 	if err != nil {
-		return fmt.Errorf("On test %v, error dialing origin: %#v", t.name, err)
+		return fmt.Errorf("On registration test %v, error dialing origin: %#v", t.name, err)
 	}
 	defer conn.Close()
 	defer conn.Purge()
@@ -611,28 +625,28 @@ func (t idTest) TestRegister() error {
 	reply, err := conn.WriteRequest(request)
 	if t.statusCode >= 200 && t.statusCode < 300 {
 		if err != nil {
-			return fmt.Errorf("On test %v, error writing registration request: %#v", t.name, err)
+			return fmt.Errorf("On registration test %v, error writing request: %#v", t.name, err)
 		}
 		if reply.Status() != t.statusCode {
-			return fmt.Errorf("On test %v, unexpected status code: got %#v; want %#v", t.name, reply.Status(), t.statusCode)
+			return fmt.Errorf("On registration test %v, unexpected status code: got %#v; want %#v", t.name, reply.Status(), t.statusCode)
 		}
 		return nil
 	}
 	if err != io.EOF {
-		return fmt.Errorf("On test %v, error writing registration request: got %#v; want io.EOF", t.name, err)
+		return fmt.Errorf("On registration test %v, error writing request: got %#v; want io.EOF", t.name, err)
 	}
 	err = conn.Close()
 	clientErr, ok := err.(client.Error)
 	if !ok {
-		return fmt.Errorf("On test %v, type assertion failed for close error: %#v", t.name, err)
+		return fmt.Errorf("On registration test %v, type assertion failed for close error: %#v", t.name, err)
 	}
 	if clientErr.Status() != t.statusCode {
-		return fmt.Errorf("On test %v, unexpected close error status: got %#v; want %#v", t.name, clientErr.Status(), t.statusCode)
+		return fmt.Errorf("On registration test %v, unexpected close error status: got %#v; want %#v", t.name, clientErr.Status(), t.statusCode)
 	}
 	return nil
 }
 
-var idTests = []idTest{
+var registerIdTests = []idTest{
 	idTest{"invalid ID", "invalid_uaid", 401},
 	idTest{"leading and trailing whitespace", " fooey barrey ", 401},
 	idTest{"special characters", `!@#$%^&*()-+`, 401},
@@ -656,15 +670,40 @@ var idTests = []idTest{
 }
 
 func TestRegisterInvalidIds(t *testing.T) {
-	for _, test := range idTests {
+	for _, test := range registerIdTests {
 		if err := test.TestRegister(); err != nil {
 			t.Error(err)
 		}
 	}
 }
 
+// The Simple Push server does not validate the contents of the channelIDs
+// field, so handshakes containing invalid channel IDs should succeed.
+var heloIdTests = []idTest{
+	idTest{"invalid channel ID", "invalid_uaid", 200},
+	idTest{"leading and trailing whitespace in channel ID", " fooey barrey ", 200},
+	idTest{"special characters in channel ID", `!@#$%^&*()-+`, 200},
+	idTest{`channel ID = "0"`, "0", 200},
+	idTest{`channel ID = "1"`, "1", 200},
+	idTest{"negative integer string as channel ID", "-66000", 200},
+	idTest{"negative integer as channel ID", -66000, 200},
+	idTest{`channel ID = "True"`, "True", 200},
+	idTest{`channel ID = "False"`, "False", 200},
+	idTest{`channel ID = "true"`, "true", 200},
+	idTest{`channel ID = "false"`, "false", 200},
+	idTest{"channel ID = true", true, 200},
+	idTest{"channel ID = false", false, 200},
+	idTest{`channel ID = "None"`, "None", 200},
+	idTest{`channel ID = "null"`, "null", 200},
+	idTest{`channel ID = "nil"`, "nil", 200},
+	idTest{"channel ID = nil", NilId, 200},
+	idTest{"quoted string as channel ID", `"foo bar"`, 200},
+	idTest{"null character in channel ID", "\x00", 200},
+	idTest{"control characters in channel ID", "\x01\x00\x12\x59", 200},
+}
+
 func TestHeloInvalidIds(t *testing.T) {
-	for _, test := range idTests {
+	for _, test := range heloIdTests {
 		if err := test.TestHelo(); err != nil {
 			t.Error(err)
 		}
