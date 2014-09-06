@@ -491,28 +491,28 @@ func (s *GomemcStore) DropAll(suaid string) error {
 
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements Store.FetchPing().
-func (s *GomemcStore) FetchPing(suaid string) (connect string, err error) {
+func (s *GomemcStore) FetchPing(suaid string) (pingData []byte, err error) {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return "", sperrors.InvalidDataError
+		return nil, sperrors.InvalidDataError
 	}
 	raw, err := s.client.Get(s.PingPrefix + hex.EncodeToString(uaid))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(raw.Value), nil
+	return raw.Value, nil
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
 // memcached. Implements Store.PutPing().
-func (s *GomemcStore) PutPing(suaid string, connect string) error {
+func (s *GomemcStore) PutPing(suaid string, pingData []byte) error {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
 	}
 	return s.client.Set(&mc.Item{
 		Key:        s.PingPrefix + hex.EncodeToString(uaid),
-		Value:      []byte(connect),
+		Value:      pingData,
 		Expiration: 0})
 }
 
