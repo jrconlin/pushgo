@@ -611,23 +611,23 @@ func (s *EmceeStore) DropAll(suaid string) error {
 
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements Store.FetchPing().
-func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
+func (s *EmceeStore) FetchPing(suaid string) (pingData []byte, err error) {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return "", sperrors.InvalidDataError
+		return nil, sperrors.InvalidDataError
 	}
 	client, err := s.getClient()
 	if err != nil {
 		return
 	}
 	defer s.releaseWithout(client, &err)
-	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &connect)
+	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &pingData)
 	return
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
 // memcached. Implements Store.PutPing().
-func (s *EmceeStore) PutPing(suaid string, connect string) error {
+func (s *EmceeStore) PutPing(suaid string, pingData []byte) error {
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
@@ -637,7 +637,7 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 		return err
 	}
 	defer s.releaseWithout(client, &err)
-	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), connect, 0)
+	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), pingData, 0)
 }
 
 // DropPing removes all proprietary ping info for the given device ID.

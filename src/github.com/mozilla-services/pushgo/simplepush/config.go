@@ -113,21 +113,21 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Load the Proprietary Ping element. Deps: Logger, Metrics
-	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
-		return nil, err
-	}
-	propping := obj.(PropPinger)
-	if err = app.SetPropPinger(propping); err != nil {
-		return nil, err
-	}
-
 	// Next, storage, Deps: Logger, Metrics
 	if obj, err = l.loadPlugin(PluginStore, app); err != nil {
 		return nil, err
 	}
 	store := obj.(Store)
 	if err = app.SetStore(store); err != nil {
+		return nil, err
+	}
+
+	// Load the Proprietary Ping element. Deps: Logger, Metrics, Storage
+	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
+		return nil, err
+	}
+	propping := obj.(PropPinger)
+	if err = app.SetPropPinger(propping); err != nil {
 		return nil, err
 	}
 

@@ -56,8 +56,8 @@ func (*NoStore) Unregister(string, string) error                        { return
 func (*NoStore) Drop(string, string) error                              { return nil }
 func (*NoStore) FetchAll(string, time.Time) ([]Update, []string, error) { return nil, nil, nil }
 func (*NoStore) DropAll(string) error                                   { return nil }
-func (*NoStore) FetchPing(string) (string, error)                       { return "", nil }
-func (*NoStore) PutPing(string, string) error                           { return nil }
+func (*NoStore) FetchPing(string) ([]byte, error)                       { return nil, nil }
+func (*NoStore) PutPing(string, []byte) error                           { return nil }
 func (*NoStore) DropPing(string) error                                  { return nil }
 
 func init() {

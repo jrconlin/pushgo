@@ -26,9 +26,8 @@ import (
 type Client struct {
 	// client descriptor info.
 	Worker *Worker
-	PushWS PushWS     `json:"-"`
-	UAID   string     `json:"uaid"`
-	Prop   PropPinger `json:"-"`
+	PushWS PushWS `json:"-"`
+	UAID   string `json:"uaid"`
 }
 
 // Basic global server options
@@ -80,6 +79,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.logger = app.Logger()
 	self.metrics = app.Metrics()
 	self.store = app.Store()
+	self.prop = app.PropPinger()
 	self.key = app.TokenKey()
 
 	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
@@ -137,8 +137,6 @@ func (self *Serv) FullHostname() string {
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop PropPinger
-	var err error
 
 	args := cmd.Arguments
 	if self.logger.ShouldLog(INFO) {
@@ -175,14 +173,11 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		delete(args, "uaid")
 	}
 
-	if connect, ok := args["connect"]; ok && connect != nil {
-		ppingCopy := self.app.PropPinger()
-		if err = ppingCopy.Register(connect.(map[string]interface{}), uaid); err != nil {
+	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
+		if err := self.prop.Register(uaid, connect); err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
 				LogFields{"error": err.Error(),
-					"connect": connect.(string)})
-		} else {
-			self.prop = ppingCopy
+					"connect": string(connect)})
 		}
 	}
 
@@ -193,7 +188,6 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		Worker: worker,
 		PushWS: *sock,
 		UAID:   uaid,
-		Prop:   prop,
 	}
 	self.app.AddClient(uaid, client)
 	self.logger.Info("dash", "Client registered", nil)
@@ -294,8 +288,8 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 				LogFields{"error": r.(error).Error(),
 					"uaid": client.UAID})
 			debug.PrintStack()
-			if client != nil && client.Prop != nil {
-				client.Prop.Send(version)
+			if client != nil && self.prop != nil {
+				self.prop.Send(client.UAID, version)
 			}
 		}
 		return
