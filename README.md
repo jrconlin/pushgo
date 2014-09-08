@@ -20,19 +20,27 @@ recording, closed channel responses for third party servers, etc.)
 If you require offline storage (e.g. for mobile device usage), we
 currently recommend memcache storage.
 
-## Installation
-To install this server:
+You will need to have Go installed on your system, and the GOROOT and
+PATH should be set appropriately for 'go' to be found.
+
+## Compiling
+To compile this server:
 
 1. extract this directory into target directory
-2. Run install.bash
-3. You'll need the following servers running:
-4. Modify the config.ini
+2. Run: make
+3. Run: make simplepush
+4. Copy config.sample.ini to config.ini, and edit appropriately
 
-If you're not planning on doing development work (see previous notes
-about how this is beta), you may want to build and run the executable
-with the ''' run ''' command
+Step 3 should be re-run whenever code has been changed and the server
+should be recompiled.
 
-This will build "pushgo" as an executable.
+If you would like to use an existing go on your system:
+1. Create a bin directory in the target directory
+2. Symlink your go binary into the bin directory you made
+3. Run the make commands starting at step 2 from above
+
+This will build "simplepush" as an executable.
+
 
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
@@ -45,6 +53,20 @@ This server currently has no facility for UDP pings. This is a
 proprietary function (which, unsurprisingly, works remarkably poorly
 with non-local networks). There is currently no "dashboard" for
 element management.
+
+This server currently uses one of two methods to connect to memcache.
+memcache_gomc uses the store_emcee.go file, and ties to libmemcache.
+This library provides a great deal of control over how the server
+communicates and uses memcache, however it does require compiling
+a local version of libmemcache, which can add difficulty. The
+alternate method "memcache_memcachego", uses store_gomemc.go, and uses
+a golang based memcache client. While fully functional, we've not
+tested this under full load.
+
+If you wish, you can prevent either of these libraries from being
+compiled into your executable by changing the extension for either of
+these files from ".go" to ".go.skip". This may help you get a demo
+server running quickly.
 
 ## Use
 That's neat and all, but what does this do?

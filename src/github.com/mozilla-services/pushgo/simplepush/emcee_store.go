@@ -5,9 +5,7 @@
 package simplepush
 
 import (
-	"bytes"
 	"container/list"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -19,85 +17,32 @@ import (
 
 	mc "github.com/ianoshen/gomc"
 
+	"github.com/mozilla-services/pushgo/id"
 	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
-// ChannelState represents the state of a channel record.
-type ChannelState int8
+// Wraps a memcached client with a flag to signal whether the connection is
+// bad and should not be returned to the pool.
+type release struct {
+	mc.Client
+	isFailed bool
+}
 
-// Channel record states.
-const (
-	StateDeleted ChannelState = iota
-	StateLive
-	StateRegistered
-)
-
-func (s ChannelState) String() string {
-	switch s {
-	case StateDeleted:
-		return "deleted"
-	case StateLive:
-		return "live"
-	case StateRegistered:
-		return "registered"
+// Determines whether the given error is a connection-level error. Connections
+// that emit these errors will not be released to the pool.
+func isFatalError(err error) bool {
+	if err == nil {
+		return false
 	}
-	return ""
-}
-
-// Common adapter errors.
-var (
-	ErrPoolSaturated StorageError = "Connection pool saturated"
-	ErrStatusFailed  StorageError = "Invalid value returned"
-	ErrUnknownUAID   StorageError = "Unknown UAID for host"
-	ErrNoNodes       StorageError = "No memcached nodes available"
-)
-
-// ChannelRecord represents a channel record persisted to memcached.
-type ChannelRecord struct {
-	State       ChannelState
-	Version     uint64
-	LastTouched int64
-}
-
-// ChannelIDs is a list of decoded channel IDs.
-type ChannelIDs [][]byte
-
-// Len returns the length of the channel ID slice. Implements
-// `sort.Interface.Len()`.
-func (l ChannelIDs) Len() int {
-	return len(l)
-}
-
-// Swap swaps two channel ID slices at the corresponding indices. Implements
-// `sort.Interface.Swap()`.
-func (l ChannelIDs) Swap(i, j int) {
-	l[i], l[j] = l[j], l[i]
-}
-
-// Less indicates whether one channel ID slice lexicographically precedes the
-// other. Implements `sort.Interface.Less()`.
-func (l ChannelIDs) Less(i, j int) bool {
-	return bytes.Compare(l[i], l[j]) < 0
-}
-
-// IndexOf returns the location of a channel ID slice in the slice of channel
-// IDs, or -1 if the ID isn't present in the containing slice.
-func (l ChannelIDs) IndexOf(val []byte) int {
-	for index, v := range l {
-		if bytes.Equal(v, val) {
-			return index
-		}
+	// Error strings taken from `libmemcached/strerror.cc`.
+	switch err.Error() {
+	case "NOT STORED":
+	case "NOT FOUND":
+	case "A KEY LENGTH OF ZERO WAS PROVIDED":
+	case "A BAD KEY WAS PROVIDED/CHARACTERS OUT OF RANGE":
+		return false
 	}
-	return -1
-}
-
-// Returns a new slice with the string at position pos removed or
-// an equivalent slice if the pos is not in the bounds of the slice
-func remove(list [][]byte, pos int) (res [][]byte) {
-	if pos < 0 || pos == len(list) {
-		return list
-	}
-	return append(list[:pos], list[pos+1:]...)
+	return true
 }
 
 // Determines whether the given error is a memcached "missing key" error.
@@ -105,36 +50,11 @@ func isMissing(err error) bool {
 	return strings.Contains("NOT FOUND", err.Error())
 }
 
-// Converts a `(uaid, chid)` tuple to a binary primary key.
-func toBinaryKey(uaid, chid []byte) ([]byte, error) {
-	key := make([]byte, 32)
-	aoff := 16 - len(uaid)
-	if aoff < 0 {
-		aoff = 0
-	}
-	boff := 32 - len(chid)
-	if boff < 16 {
-		boff = 16
-	}
-	copy(key[aoff:], uaid)
-	copy(key[boff:], chid)
-	return key, nil
-}
-
-// Converts a binary primary key into a Base64-encoded string suitable for
-// storage in memcached.
-func encodeKey(key []byte) string {
-	// Sadly, can't use full byte chars for key values, so have to encode
-	// to base64. Ideally, this would just be
-	// return string(key)
-	return base64.StdEncoding.EncodeToString(key)
-}
-
 // NewEmcee creates an unconfigured memcached adapter.
 func NewEmcee() *EmceeStore {
 	s := &EmceeStore{
 		closeSignal:  make(chan bool),
-		releases:     make(chan mc.Client),
+		releases:     make(chan release),
 		acquisitions: make(chan chan mc.Client),
 	}
 	s.closeWait.Add(1)
@@ -152,15 +72,15 @@ type EmceeDriverConf struct {
 	// to 400.
 	MaxConns int `toml:"max_pool"`
 
-	// RecvTimeout is the socket receive timeout (`SO_RCVTIMEO`) used by the
+	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
 	RecvTimeout string `toml:"recv_timeout"`
 
-	// SendTimeout is the socket send timeout (`SO_SNDTIMEO`) used by the
+	// SendTimeout is the socket send timeout (SO_SNDTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
 	SendTimeout string `toml:"send_timeout"`
 
-	// PollTimeout is the `poll()` timeout used by the memcached driver. Supports
+	// PollTimeout is the poll(2) timeout used by the memcached driver. Supports
 	// millisecond granularity; defaults to 5 seconds.
 	PollTimeout string `toml:"poll_timeout"`
 
@@ -189,7 +109,7 @@ type EmceeStore struct {
 	closeSignal   chan bool
 	closeLock     sync.Mutex
 	isClosing     bool
-	releases      chan mc.Client
+	releases      chan release
 	acquisitions  chan chan mc.Client
 	lastErr       error
 }
@@ -197,14 +117,16 @@ type EmceeStore struct {
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
 	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
+	MaxChannels               int             `toml:"max_channels"`
 	Driver                    EmceeDriverConf `toml:"memcache"`
 	Db                        DbConf
 }
 
 // ConfigStruct returns a configuration object with defaults. Implements
-// `HasConfigStruct.ConfigStruct()`.
+// HasConfigStruct.ConfigStruct().
 func (*EmceeStore) ConfigStruct() interface{} {
 	return &EmceeConf{
+		MaxChannels: 200,
 		Driver: EmceeDriverConf{
 			Hosts:        []string{"127.0.0.1:11211"},
 			MaxConns:     400,
@@ -219,17 +141,19 @@ func (*EmceeStore) ConfigStruct() interface{} {
 			TimeoutDel:    24 * 60 * 60,
 			HandleTimeout: "5s",
 			PingPrefix:    "_pc-",
-			MaxChannels:   200,
 		},
 	}
 }
 
 // Init initializes the memcached adapter with the given configuration.
-// Implements `HasConfigStruct.Init()`.
+// Implements HasConfigStruct.Init().
 func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EmceeConf)
 	s.logger = app.Logger()
+
 	s.defaultHost = app.Hostname()
+	s.maxChannels = conf.MaxChannels
+
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
 		s.Hosts = conf.Driver.Hosts
 	} else {
@@ -243,8 +167,8 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	s.MaxConns = conf.Driver.MaxConns
-	s.maxChannels = conf.Db.MaxChannels
 	s.PingPrefix = conf.Db.PingPrefix
+
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
 		s.logger.Error("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
@@ -290,19 +214,19 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 		s.fatal(err)
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 
 	return nil
 }
 
 // MaxChannels returns the maximum number of channel registrations allowed per
-// client. Implements `Store.MaxChannels()`.
+// client. Implements Store.MaxChannels().
 func (s *EmceeStore) MaxChannels() int {
 	return s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
-// errors. Safe to call multiple times. Implements `Store.Close()`.
+// errors. Safe to call multiple times. Implements Store.Close().
 func (s *EmceeStore) Close() (err error) {
 	err, ok := s.stop()
 	if !ok {
@@ -313,7 +237,7 @@ func (s *EmceeStore) Close() (err error) {
 }
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
-// readable primary key. Implements `Store.KeyToIDs()`.
+// readable primary key. Implements Store.KeyToIDs().
 func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
@@ -324,7 +248,7 @@ func (*EmceeStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
-// `Store.IDsToKey()`.
+// Store.IDsToKey().
 func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
 		return "", false
@@ -333,9 +257,9 @@ func (*EmceeStore) IDsToKey(suaid, schid string) (string, bool) {
 }
 
 // Status queries whether memcached is available for reading and writing.
-// Implements `Store.Status()`.
+// Implements Store.Status().
 func (s *EmceeStore) Status() (success bool, err error) {
-	fakeID, err := GenUUID4()
+	fakeID, err := id.Generate()
 	if err != nil {
 		return false, err
 	}
@@ -344,14 +268,12 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	defer s.releaseClient(client)
-	err = client.Set(key, "test", 6*time.Second)
-	if err != nil {
+	defer s.releaseWithout(client, &err)
+	if err = client.Set(key, "test", 6*time.Second); err != nil {
 		return false, err
 	}
 	var val string
-	err = client.Get(key, &val)
-	if err != nil || val != "test" {
+	if err = client.Get(key, &val); err != nil || val != "test" {
 		return false, ErrStatusFailed
 	}
 	client.Delete(key, 0)
@@ -359,20 +281,23 @@ func (s *EmceeStore) Status() (success bool, err error) {
 }
 
 // Exists returns a Boolean indicating whether a device has previously
-// registered with the Simple Push server. Implements `Store.Exists()`.
+// registered with the Simple Push server. Implements Store.Exists().
 func (s *EmceeStore) Exists(suaid string) bool {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return false
 	}
-	_, err = s.fetchAppIDArray(uaid)
+	if _, err = s.fetchAppIDArray(uaid); err != nil && !isMissing(err) {
+		s.logger.Warn("emcee", "Exists encountered unknown error",
+			LogFields{"error": err.Error()})
+	}
 	return err == nil
 }
 
 // Stores a new channel record in memcached.
 func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	if chids.IndexOf(chid) < 0 {
@@ -393,25 +318,24 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	if err != nil {
 		return sperrors.InvalidPrimaryKeyError
 	}
-	err = s.storeRec(key, rec)
-	if err != nil {
+	if err = s.storeRec(key, rec); err != nil {
 		return err
 	}
 	return nil
 }
 
 // Register creates and stores a channel record for the given device ID and
-// channel ID. If the channel `version` is > 0, the record will be marked as
-// active. Implements `Store.Register()`.
+// channel ID. If version > 0, the record will be marked as active. Implements
+// Store.Register().
 func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeRegister(uaid, chid, version)
@@ -440,8 +364,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 				Version:     uint64(version),
 				LastTouched: time.Now().UTC().Unix(),
 			}
-			err = s.storeRec(key, newRecord)
-			if err != nil {
+			if err = s.storeRec(key, newRecord); err != nil {
 				return err
 			}
 			return nil
@@ -453,15 +376,14 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 		"channelID": hex.EncodeToString(chid),
 		"version":   strconv.FormatInt(version, 10),
 	})
-	err = s.storeRegister(uaid, chid, version)
-	if err != nil {
+	if err = s.storeRegister(uaid, chid, version); err != nil {
 		return err
 	}
 	return nil
 }
 
 // Update updates the version for the given device ID and channel ID.
-// Implements `Store.Update()`.
+// Implements Store.Update().
 func (s *EmceeStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
@@ -472,10 +394,10 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeUpdate(uaid, chid, version)
@@ -484,7 +406,7 @@ func (s *EmceeStore) Update(key string, version int64) (err error) {
 // Marks a memcached channel record as expired.
 func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	pos := chids.IndexOf(chid)
@@ -498,7 +420,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
 	}
-	// TODO: Allow `MaxRetries` to be configurable.
+	// TODO: Allow MaxRetries to be configurable.
 	for x := 0; x < 3; x++ {
 		channel, err := s.fetchRec(key)
 		if err != nil {
@@ -517,63 +439,62 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 }
 
 // Unregister marks the channel ID associated with the given device ID
-// as inactive. Implements `Store.Unregister()`.
+// as inactive. Implements Store.Unregister().
 func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	return s.storeUnregister(uaid, chid)
 }
 
 // Drop removes a channel ID associated with the given device ID from
-// memcached. Deregistration calls should use `Unregister()` instead.
-// Implements `Store.Drop()`.
+// memcached. Deregistration calls should call s.Unregister() instead.
+// Implements Store.Drop().
 func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if len(schid) == 0 {
 		return sperrors.NoChannelError
 	}
 	var uaid, chid []byte
-	if uaid, err = DecodeID(suaid); err != nil || len(uaid) == 0 {
+	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
 		return sperrors.InvalidDataError
 	}
-	if chid, err = DecodeID(schid); err != nil || len(chid) == 0 {
+	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
 		return sperrors.InvalidChannelError
 	}
 	client, err := s.getClient()
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
 		return err
 	}
-	err = client.Delete(encodeKey(key), 0)
-	if err == nil || isMissing(err) {
+	if err = client.Delete(encodeKey(key), 0); err == nil || isMissing(err) {
 		return nil
 	}
 	return err
 }
 
 // FetchAll returns all channel updates and expired channels for a device ID
-// since the specified cutoff time. Implements `Store.FetchAll()`.
+// since the specified cutoff time. Implements Store.FetchAll().
 func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
 		return nil, nil, sperrors.InvalidDataError
 	}
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return nil, nil, err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return nil, nil, err
 	}
 
@@ -594,7 +515,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
@@ -638,7 +559,7 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 				"uaid": deviceString,
 				"chid": channelString,
 			})
-			schid, err := EncodeID(chid)
+			schid, err := id.Encode(chid)
 			if err != nil {
 				s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
 					"uaid": deviceString,
@@ -660,21 +581,21 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 }
 
 // DropAll removes all channel records for the given device ID. Implements
-// `Store.DropAll()`.
+// Store.DropAll().
 func (s *EmceeStore) DropAll(suaid string) error {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
-	if err != nil {
+	if err != nil && !isMissing(err) {
 		return err
 	}
 	client, err := s.getClient()
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
@@ -689,25 +610,25 @@ func (s *EmceeStore) DropAll(suaid string) error {
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
-// from memcached. Implements `Store.FetchPing()`.
-func (s *EmceeStore) FetchPing(suaid string) (connect string, err error) {
-	uaid, err := DecodeID(suaid)
+// from memcached. Implements Store.FetchPing().
+func (s *EmceeStore) FetchPing(suaid string) (pingData []byte, err error) {
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return "", sperrors.InvalidDataError
+		return nil, sperrors.InvalidDataError
 	}
 	client, err := s.getClient()
 	if err != nil {
 		return
 	}
-	defer s.releaseClient(client)
-	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &connect)
+	defer s.releaseWithout(client, &err)
+	err = client.Get(s.PingPrefix+hex.EncodeToString(uaid), &pingData)
 	return
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
-// memcached. Implements `Store.PutPing()`.
-func (s *EmceeStore) PutPing(suaid string, connect string) error {
-	uaid, err := DecodeID(suaid)
+// memcached. Implements Store.PutPing().
+func (s *EmceeStore) PutPing(suaid string, pingData []byte) error {
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return err
 	}
@@ -715,14 +636,14 @@ func (s *EmceeStore) PutPing(suaid string, connect string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
-	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), connect, 0)
+	defer s.releaseWithout(client, &err)
+	return client.Set(s.PingPrefix+hex.EncodeToString(uaid), pingData, 0)
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
-// Implements `Store.DropPing()`.
+// Implements Store.DropPing().
 func (s *EmceeStore) DropPing(suaid string) error {
-	uaid, err := DecodeID(suaid)
+	uaid, err := id.DecodeString(suaid)
 	if err != nil {
 		return sperrors.InvalidDataError
 	}
@@ -730,7 +651,7 @@ func (s *EmceeStore) DropPing(suaid string) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	return client.Delete(s.PingPrefix+hex.EncodeToString(uaid), 0)
 }
 
@@ -744,15 +665,8 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
-	err = client.Get(encodeKey(uaid), &result)
-	if err != nil {
-		// TODO: Returning successful responses for missing keys causes `Exists()` to
-		// return `true` for all device IDs. Verify if correcting this behavior
-		// breaks existing clients.
-		if isMissing(err) {
-			return nil, nil
-		}
+	defer s.releaseWithout(client, &err)
+	if err = client.Get(encodeKey(uaid), &result); err != nil {
 		return nil, err
 	}
 	return
@@ -761,9 +675,8 @@ func (s *EmceeStore) fetchChannelIDs(uaid []byte) (result ChannelIDs, err error)
 // Returns a duplicate-free list of subscriptions associated with the device
 // ID.
 func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error) {
-	result, err = s.fetchChannelIDs(uaid)
-	if err != nil {
-		return nil, err
+	if result, err = s.fetchChannelIDs(uaid); err != nil {
+		return
 	}
 	// pare out duplicates.
 	for i, chid := range result {
@@ -784,7 +697,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	// sort the array
 	sort.Sort(chids)
 	return client.Set(encodeKey(uaid), chids, 0)
@@ -800,10 +713,9 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	result := new(ChannelRecord)
-	err = client.Get(keyString, result)
-	if err != nil && !isMissing(err) {
+	if err = client.Get(keyString, result); err != nil && !isMissing(err) {
 		s.logger.Error("emcee", "Get Failed", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
@@ -839,10 +751,9 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if err != nil {
 		return err
 	}
-	defer s.releaseClient(client)
+	defer s.releaseWithout(client, &err)
 	keyString := encodeKey(pk)
-	err = client.Set(keyString, rec, ttl)
-	if err != nil {
+	if err = client.Set(keyString, rec, ttl); err != nil {
 		s.logger.Warn("emcee", "Failure to set item", LogFields{
 			"primarykey": keyString,
 			"error":      err.Error(),
@@ -852,11 +763,11 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 }
 
 // Releases an acquired memcached connection.
-func (s *EmceeStore) releaseClient(client mc.Client) {
+func (s *EmceeStore) releaseWithout(client mc.Client, err *error) {
 	if client == nil {
 		return
 	}
-	s.releases <- client
+	s.releases <- release{client, err != nil && isFatalError(*err)}
 }
 
 // Acquires a memcached connection from the connection pool.
@@ -922,16 +833,17 @@ func (s *EmceeStore) run() {
 	for ok := true; ok; {
 		select {
 		case ok = <-s.closeSignal:
-		case client := <-s.releases:
-			if capacity >= s.MaxConns {
+		case release := <-s.releases:
+			if release.isFailed || capacity >= s.MaxConns {
 				// Maximum pool size exceeded (e.g., connection manually added to the pool
 				// via `newClient()` and `releaseClient()`).
-				client.Close()
+				release.Close()
+				if release.isFailed {
+					capacity--
+				}
 				break
 			}
-			// TODO: Ensure that the `mc.Client` instance is in a valid state to avoid
-			// releasing bad client connections to the pool.
-			clients.PushBack(client)
+			clients.PushBack(release.Client)
 
 		case acquisition := <-s.acquisitions:
 			if clients.Len() > 0 {
@@ -968,8 +880,8 @@ func (s *EmceeStore) run() {
 	}
 }
 
-// Acquires `s.closeLock`, closes the pool, and releases the lock, reporting
-// any errors to the caller. `ok` indicates whether the caller should wait
+// Acquires s.closeLock, closes the pool, and releases the lock, reporting
+// any errors to the caller. ok indicates whether the caller should wait
 // for the pool to close before returning.
 func (s *EmceeStore) stop() (err error, ok bool) {
 	defer s.closeLock.Unlock()
@@ -980,8 +892,8 @@ func (s *EmceeStore) stop() (err error, ok bool) {
 	return s.signalClose(), true
 }
 
-// Acquires `s.closeLock`, closes the connection pool, and releases the lock,
-// storing the given error in the `lastErr` field.
+// Acquires s.closeLock, closes the connection pool, and releases the lock,
+// storing the given error in s.lastErr.
 func (s *EmceeStore) fatal(err error) {
 	defer s.closeLock.Unlock()
 	s.closeLock.Lock()
@@ -992,7 +904,7 @@ func (s *EmceeStore) fatal(err error) {
 }
 
 // Closes the pool and exits the run loop. Assumes the caller holds
-// `s.closeLock`.
+// s.closeLock.
 func (s *EmceeStore) signalClose() (err error) {
 	if s.isClosing {
 		return
@@ -1003,5 +915,5 @@ func (s *EmceeStore) signalClose() (err error) {
 }
 
 func init() {
-	AvailableStores["memcache"] = func() HasConfigStruct { return NewEmcee() }
+	AvailableStores["memcache_gomc"] = func() HasConfigStruct { return NewEmcee() }
 }

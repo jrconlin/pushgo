@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cactus/go-statsd-client/statsd"
@@ -30,13 +29,14 @@ type MetricsConfig struct {
 }
 
 type Metrics struct {
-	dict   map[string]int64 // counters
-	timer  timer            // timers
-	prefix string           // prefix for
-	logger *SimpleLogger
-	statsd *statsd.Client
-	born   time.Time
-	metrex *sync.Mutex
+	sync.RWMutex
+	counter map[string]int64 // counters
+	timer   timer            // timers
+	gauge   map[string]int64
+	prefix  string // prefix for
+	logger  *SimpleLogger
+	statsd  *statsd.Client
+	born    time.Time
 }
 
 func (m *Metrics) ConfigStruct() interface{} {
@@ -62,11 +62,11 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 		}
 	}
 
-	m.dict = make(map[string]int64)
+	m.counter = make(map[string]int64)
 	m.timer = make(timer)
+	m.gauge = make(map[string]int64)
 	m.prefix = conf.Prefix
 	m.born = time.Now()
-	m.metrex = new(sync.Mutex)
 	return
 }
 
@@ -78,42 +78,44 @@ func (m *Metrics) Prefix(newPrefix string) {
 }
 
 func (m *Metrics) Snapshot() map[string]interface{} {
-	defer m.metrex.Unlock()
-	m.metrex.Lock()
 	var pfx string
 	if len(m.prefix) > 0 {
 		pfx = m.prefix + "."
 	}
 	oldMetrics := make(map[string]interface{})
 	// copy the old metrics
-	for k, v := range m.dict {
+	m.RLock()
+	for k, v := range m.counter {
 		oldMetrics[pfx+"counter."+k] = v
 	}
 	for k, v := range m.timer {
 		oldMetrics[pfx+"avg."+k] = v.Avg
 	}
+	for k, v := range m.gauge {
+		oldMetrics[pfx+"gauge."+k] = v
+	}
+	m.RUnlock()
 	oldMetrics[pfx+"server.age"] = time.Now().Unix() - m.born.Unix()
 	return oldMetrics
 }
 
-func (m *Metrics) IncrementBy(metric string, count int) {
-	defer m.metrex.Unlock()
-	m.metrex.Lock()
-	met, ok := m.dict[metric]
-	if !ok {
-		m.dict[metric] = int64(0)
-		met = m.dict[metric]
+func (m *Metrics) IncrementBy(metric string, count int64) {
+	m.Lock()
+	met := m.counter[metric] + count
+	m.counter[metric] = met
+	m.Unlock()
+
+	if m.logger.ShouldLog(INFO) {
+		m.logger.Info("metrics", "counter."+metric,
+			LogFields{"value": strconv.FormatInt(met, 10),
+				"type": "counter"})
 	}
-	atomic.AddInt64(&met, int64(count))
-	m.dict[metric] = met
-	m.logger.Info("metrics", "counter."+metric,
-		LogFields{"value": strconv.FormatInt(met, 10),
-			"type": "counter"})
-	if m.statsd != nil {
+
+	if statsd := m.statsd; statsd != nil {
 		if count >= 0 {
-			m.statsd.Inc(metric, int64(count), 1.0)
+			statsd.Inc(metric, count, 1.0)
 		} else {
-			m.statsd.Dec(metric, int64(count), 1.0)
+			statsd.Dec(metric, count, 1.0)
 		}
 	}
 }
@@ -126,12 +128,14 @@ func (m *Metrics) Decrement(metric string) {
 	m.IncrementBy(metric, -1)
 }
 
-func (m *Metrics) Timer(metric string, value int64) {
-	defer m.metrex.Unlock()
-	m.metrex.Lock()
+func (m *Metrics) Timer(metric string, duration time.Duration) {
+	// etcd supports millisecond granularity.
+	value := int64(duration / time.Millisecond)
+
+	m.Lock()
 	if t, ok := m.timer[metric]; !ok {
 		m.timer[metric] = trec{
-			Count: uint64(1),
+			Count: 1,
 			Avg:   float64(value),
 		}
 	} else {
@@ -140,11 +144,55 @@ func (m *Metrics) Timer(metric string, value int64) {
 		t.Avg = t.Avg + (float64(value)-t.Avg)/float64(t.Count)
 		m.timer[metric] = t
 	}
+	m.Unlock()
 
-	m.logger.Info("metrics", "timer."+metric,
-		LogFields{"value": strconv.FormatInt(value, 10),
-			"type": "timer"})
+	if m.logger.ShouldLog(INFO) {
+		m.logger.Info("metrics", "timer."+metric,
+			LogFields{"value": strconv.FormatInt(value, 10),
+				"type": "timer"})
+	}
 	if m.statsd != nil {
 		m.statsd.Timing(metric, value, 1.0)
+	}
+}
+
+func (m *Metrics) Gauge(metric string, value int64) {
+	m.Lock()
+	m.gauge[metric] = value
+	m.Unlock()
+
+	if m.logger.ShouldLog(INFO) {
+		m.logger.Info("metrics", "gauge."+metric,
+			LogFields{"value": strconv.FormatInt(value, 10),
+				"type": "gauge"})
+	}
+
+	if statsd := m.statsd; statsd != nil {
+		if value >= 0 {
+			statsd.Gauge(metric, value, 1.0)
+			return
+		}
+		// Gauges cannot be set to negative values; sign prefixes indicate deltas.
+		if err := statsd.Gauge(metric, 0, 1.0); err != nil {
+			return
+		}
+		statsd.GaugeDelta(metric, value, 1.0)
+	}
+}
+
+func (m *Metrics) GaugeDelta(metric string, delta int64) {
+	m.Lock()
+	gauge := m.gauge[metric]
+	m.gauge[metric] = gauge + delta
+	m.Unlock()
+
+	if m.logger.ShouldLog(INFO) {
+		m.logger.Info("metrics", "gauge."+metric,
+			LogFields{"value": strconv.FormatInt(gauge, 10),
+				"type": "gauge"})
+	}
+
+	if m.statsd != nil {
+		m.statsd.GaugeDelta(metric, delta, 1.0)
 	}
 }

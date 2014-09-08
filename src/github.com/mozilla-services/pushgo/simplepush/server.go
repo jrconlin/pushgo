@@ -5,11 +5,18 @@
 package simplepush
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"net"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
+	"text/template"
 	"time"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -19,51 +26,117 @@ import (
 type Client struct {
 	// client descriptor info.
 	Worker *Worker
-	PushWS PushWS     `json:"-"`
-	UAID   string     `json:"uaid"`
-	Prop   PropPinger `json:"-"`
+	PushWS PushWS `json:"-"`
+	UAID   string `json:"uaid"`
 }
 
 // Basic global server options
 type ServerConfig struct {
-	PushEndpoint       string `toml:"push_endpoint"`
+	Addr               string
+	SslCertFile        string `toml:"ssl_cert_file"`
+	SslKeyFile         string `toml:"ssl_key_file"`
+	PushEndpoint       string `toml:"push_endpoint_template"`
 	PushLongPongs      int    `toml:"push_long_pongs"`
 	ClientMinPing      string `toml:"client_min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout"`
 }
 
+func NewServer() *Serv {
+	return &Serv{
+		closeSignal: make(chan bool),
+	}
+}
+
 type Serv struct {
 	app          *Application
 	logger       *SimpleLogger
+	listener     net.Listener
 	metrics      *Metrics
 	store        Store
 	key          []byte
-	pushEndpoint string
+	template     *template.Template
 	prop         PropPinger
+	hostname     string
+	port         int
+	fullHostname string
+	isClosing    bool
+	closeSignal  chan bool
+	closeLock    sync.Mutex
+	lastErr      error
 }
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
-		PushEndpoint: "<current_host>/update/<token>",
+		Addr:         ":8080",
+		PushEndpoint: "{{.CurrentHost}}/update/{{.Token}}",
 	}
 }
 
 func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*ServerConfig)
+
 	self.app = app
 	self.logger = app.Logger()
 	self.metrics = app.Metrics()
 	self.store = app.Store()
+	self.prop = app.PropPinger()
 	self.key = app.TokenKey()
-	self.pushEndpoint = conf.PushEndpoint
-	return
+
+	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
+		self.logger.Critical("server", "Could not parse push endpoint template",
+			LogFields{"error": err.Error()})
+		return err
+	}
+
+	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
+	if usingSSL {
+		self.logger.Info("server", "Using TLS", nil)
+		self.listener, err = ListenTLS(conf.Addr, conf.SslCertFile, conf.SslKeyFile)
+	} else {
+		self.listener, err = Listen(conf.Addr)
+	}
+	if err != nil {
+		self.logger.Error("server", "Could not attach listener",
+			LogFields{"error": err.Error()})
+		return err
+	}
+
+	addr := self.listener.Addr().(*net.TCPAddr)
+	self.hostname = app.Hostname()
+	if len(self.hostname) == 0 {
+		self.hostname = addr.IP.String()
+	}
+	self.port = addr.Port
+
+	if usingSSL {
+		if self.port == 443 {
+			self.fullHostname = fmt.Sprintf("https://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("https://%s:%d", self.hostname, self.port)
+		}
+	} else {
+		if self.port == 80 {
+			self.fullHostname = fmt.Sprintf("http://%s", self.hostname)
+		} else {
+			self.fullHostname = fmt.Sprintf("http://%s:%d", self.hostname, self.port)
+		}
+	}
+
+	go self.sendClientCount()
+	return nil
+}
+
+func (self *Serv) Listener() net.Listener {
+	return self.listener
+}
+
+func (self *Serv) FullHostname() string {
+	return self.fullHostname
 }
 
 // A client connects!
 func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
-	var prop PropPinger
-	var err error
 
 	args := cmd.Arguments
 	if self.logger.ShouldLog(INFO) {
@@ -84,7 +157,7 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 	// New connects overwrite previous connections.
 	// Raw client
 	if args["uaid"] == "" {
-		uaid, _ = GenUUID4()
+		uaid, _ = id.Generate()
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server",
 				"Generating new UAID",
@@ -100,14 +173,11 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		delete(args, "uaid")
 	}
 
-	if connect, ok := args["connect"]; ok && connect != nil {
-		ppingCopy := self.app.PropPinger()
-		if err = ppingCopy.Register(connect.(map[string]interface{}), uaid); err != nil {
+	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
+		if err := self.prop.Register(uaid, connect); err != nil {
 			self.logger.Warn("server", "Could not set proprietary info",
 				LogFields{"error": err.Error(),
-					"connect": connect.(string)})
-		} else {
-			self.prop = ppingCopy
+					"connect": string(connect)})
 		}
 	}
 
@@ -118,11 +188,9 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 		Worker: worker,
 		PushWS: *sock,
 		UAID:   uaid,
-		Prop:   prop,
 	}
 	self.app.AddClient(uaid, client)
 	self.logger.Info("dash", "Client registered", nil)
-	self.metrics.Increment("updates.client.connect")
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
@@ -141,6 +209,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// For that matter, you may wish to store the Proprietary wake data to
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
+	now := time.Now()
 	uaid := sock.Uaid
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
@@ -150,12 +219,9 @@ func (self *Serv) Bye(sock *PushWS) {
 		self.logger.Info("dash", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
-				"duration": strconv.FormatInt(time.Now().Sub(sock.Born).Nanoseconds(), 10)})
+				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
-	self.metrics.Timer("socket.lifespan",
-		time.Now().Unix()-sock.Born.Unix())
 	self.app.RemoveClient(uaid)
-	self.metrics.Increment("updates.client.disconnect")
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
@@ -171,8 +237,6 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	var err error
 	args := cmd.Arguments
 	args["status"] = 200
-	var endPoint string
-	endPoint = self.pushEndpoint
 	// Generate the call back URL
 	chid, _ := args["channelID"].(string)
 	token, ok := self.store.IDsToKey(sock.Uaid, chid)
@@ -182,8 +246,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	// if there is a key, encrypt the token
 	if len(self.key) != 0 {
 		btoken := []byte(token)
-		token, err = Encode(self.key, btoken)
-		if err != nil {
+		if token, err = Encode(self.key, btoken); err != nil {
 			self.logger.Error("server", "Token Encoding error",
 				LogFields{"uaid": sock.Uaid,
 					"channelID": chid})
@@ -191,18 +254,28 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		}
 
 	}
+
 	// cheezy variable replacement.
-	endPoint = strings.Replace(endPoint, "<token>", token, -1)
-	endPoint = strings.Replace(endPoint, "<current_host>", self.app.FullHostname(), -1)
-	args["push.endpoint"] = endPoint
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("server",
-			"Generated Endpoint",
-			LogFields{"uaid": sock.Uaid,
-				"channelID": chid,
-				"token":     token,
-				"endpoint":  endPoint})
+	endpoint := new(bytes.Buffer)
+	if err = self.template.Execute(endpoint, struct {
+		Token       string
+		CurrentHost string
+	}{
+		token,
+		self.FullHostname(),
+	}); err != nil {
+		self.logger.Error("server",
+			"Could not generate Push Endpoint",
+			LogFields{"error": err.Error()})
+		return 500, nil
 	}
+	args["push.endpoint"] = endpoint.String()
+	self.logger.Info("server",
+		"Generated Push Endpoint",
+		LogFields{"uaid": sock.Uaid,
+			"channelID": chid,
+			"token":     token,
+			"endpoint":  args["push.endpoint"].(string)})
 	return 200, args
 }
 
@@ -215,8 +288,8 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 				LogFields{"error": r.(error).Error(),
 					"uaid": client.UAID})
 			debug.PrintStack()
-			if client != nil && client.Prop != nil {
-				client.Prop.Send(version)
+			if client != nil && self.prop != nil {
+				self.prop.Send(client.UAID, version)
 			}
 		}
 		return
@@ -259,14 +332,12 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 		goto updateError
 	}
 
-	err = self.store.Update(pk, vers)
-	if err != nil {
+	if err = self.store.Update(pk, vers); err != nil {
 		reason = "Failed to update channel"
 		goto updateError
 	}
 
-	err = self.RequestFlush(client, chid, vers)
-	if err == nil {
+	if err = self.RequestFlush(client, chid, vers); err == nil {
 		return
 	}
 	reason = "Failed to flush"
@@ -288,7 +359,7 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		args = make(JsMap)
 	}
 
-	switch int(cmd.Command) {
+	switch cmd.Command {
 	case HELLO:
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling HELLO event", nil)
@@ -320,6 +391,31 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 
 	args["uaid"] = ret["uaid"]
 	return result, args
+}
+
+func (self *Serv) Close() (err error) {
+	defer self.closeLock.Unlock()
+	self.closeLock.Lock()
+	if self.isClosing {
+		return self.lastErr
+	}
+	close(self.closeSignal)
+	err = self.listener.Close()
+	self.isClosing = true
+	self.lastErr = err
+	return err
+}
+
+func (self *Serv) sendClientCount() {
+	ticker := time.NewTicker(1 * time.Second)
+	for ok := true; ok; {
+		select {
+		case ok = <-self.closeSignal:
+		case <-ticker.C:
+			self.metrics.Gauge("update.client.connections", int64(self.app.ClientCount()))
+		}
+	}
+	ticker.Stop()
 }
 
 // o4fs
