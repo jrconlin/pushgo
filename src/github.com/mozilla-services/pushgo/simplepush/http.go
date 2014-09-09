@@ -5,9 +5,12 @@
 package simplepush
 
 import (
+	"container/list"
 	"crypto/tls"
 	"net"
+	"net/http"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -21,6 +24,150 @@ func (e TooBusyError) Timeout() bool   { return false }
 func (e TooBusyError) Temporary() bool { return true }
 
 var errTooBusy error = TooBusyError{}
+
+// NewTokenBucket creates a full token bucket.
+func NewTokenBucket(limitBy string, capacity, fillRate int64) *TokenBucket {
+	return &TokenBucket{capacity, fillRate, capacity, time.Now(), limitBy}
+}
+
+// TokenBucket is a token bucket implementation ported from restify, copyright
+// 2012, Mark Cavage. It is not safe for concurrent use.
+type TokenBucket struct {
+	Capacity int64
+	FillRate int64
+	tokens   int64
+	time     time.Time
+	limitBy  string
+}
+
+// Consume takes tokens from the bucket. Returns false if the bucket does not
+// contain the given number of tokens.
+func (b *TokenBucket) Consume(tokens int64) bool {
+	b.fill()
+	if tokens <= b.tokens {
+		b.tokens -= tokens
+		return true
+	}
+	return false
+}
+
+// fill adds more tokens to the bucket.
+func (b *TokenBucket) fill() {
+	now := time.Now()
+	if now.Before(b.time) {
+		b.time = now.Add(-1 * time.Second)
+	}
+	if b.tokens < b.Capacity {
+		delta := b.FillRate * int64(now.Sub(b.time)/time.Second)
+		if b.tokens += delta; b.tokens > b.Capacity {
+			b.tokens = b.Capacity
+		}
+	}
+	b.time = now
+}
+
+// TokenTable is an interface for token storage adapters. Implementations are
+// not guaranteed to be safe for concurrent use by multiple goroutines.
+type TokenTable interface {
+	Get(limitBy string) (*TokenBucket, bool)
+	Put(*TokenBucket) error
+}
+
+// NewLRUTable creates an in-memory LRU token table.
+func NewLRUTable(maxEntries int) *LRUTable {
+	return &LRUTable{maxEntries, list.New(), make(map[string]*list.Element)}
+}
+
+// LRUTable is a least-recently used cache that maps throttling keys to token
+// buckets. It is not safe for concurrent use.
+type LRUTable struct {
+	MaxEntries int
+	lastAccess *list.List
+	entries    map[string]*list.Element
+}
+
+// Get implements TokenTable.Get.
+func (t *LRUTable) Get(limitBy string) (*TokenBucket, bool) {
+	entry, ok := t.entries[limitBy]
+	if !ok {
+		return nil, false
+	}
+	t.lastAccess.MoveToFront(entry)
+	return entry.Value.(*TokenBucket), true
+}
+
+// Put implements TokenTable.Put.
+func (t *LRUTable) Put(bucket *TokenBucket) error {
+	if entry, ok := t.entries[bucket.limitBy]; ok {
+		t.lastAccess.MoveToFront(entry)
+		entry.Value = bucket
+		return nil
+	}
+	if t.lastAccess.Len() >= t.MaxEntries {
+		entry := t.lastAccess.Back()
+		if entry == nil {
+			return nil
+		}
+		delete(t.entries, t.lastAccess.Remove(entry).(*TokenBucket).limitBy)
+	}
+	t.entries[bucket.limitBy] = t.lastAccess.PushFront(bucket)
+	return nil
+}
+
+// LimitHandler returns a rate-limited http.Handler.
+func LimitHandler(handler http.Handler, burst, rate int64, maxEntries int, trustProxy bool) http.Handler {
+	return &RateLimitedHandler{
+		Handler:    handler,
+		TokenTable: NewLRUTable(maxEntries),
+		Burst:      burst,
+		Rate:       rate,
+		MaxEntries: maxEntries,
+		TrustProxy: trustProxy,
+	}
+}
+
+// RateLimitedHandler throttles incoming HTTP requests based on the client's
+// IP address.
+type RateLimitedHandler struct {
+	sync.Mutex
+	http.Handler
+	TokenTable
+	Burst      int64
+	Rate       int64
+	MaxEntries int
+	TrustProxy bool
+}
+
+// ServeHTTP implements http.Handler.ServeHTTP.
+func (l *RateLimitedHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+	var (
+		remoteAddr    string
+		err           error
+		bucket        *TokenBucket
+		ok, canAccept bool
+	)
+	// `X-Forwarded-For` may contain multiple values; the first is the client IP.
+	if host := request.Header.Get("X-Forwarded-For"); l.TrustProxy && len(host) > 0 {
+		remoteAddr = host
+	} else if remoteAddr, _, err = net.SplitHostPort(request.RemoteAddr); err != nil {
+		goto handleRequest
+	}
+	l.Lock()
+	if bucket, ok = l.TokenTable.Get(remoteAddr); !ok {
+		bucket = NewTokenBucket(remoteAddr, l.Burst, l.Rate)
+		if err = l.TokenTable.Put(bucket); err != nil {
+			goto handleRequest
+		}
+	}
+	canAccept = bucket.Consume(1)
+	l.Unlock()
+	if !canAccept {
+		http.Error(responseWriter, "Too many requests", 429)
+		return
+	}
+handleRequest:
+	l.Handler.ServeHTTP(responseWriter, request)
+}
 
 // RateLimitedListener rejects incoming connections if the server is
 // overloaded, and sets a keep-alive timer on accepted connections. Based on

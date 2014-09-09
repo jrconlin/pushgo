@@ -22,6 +22,10 @@ type ApplicationConfig struct {
 	TokenKey           string `toml:"token_key" env:"token_key"`
 	MaxGoroutines      int    `toml:"max_connections" env:"max_goroutines"`
 	KeepAlivePeriod    string `toml:"keep_alive_period" env:"keep_alive_period"`
+	MaxRequests        int64  `toml:"max_requests" env:"max_requests"`
+	RequestRate        int64  `toml:"request_rate" env:"request_rate"`
+	MaxRateLimits      int    `toml:"max_rate_limits" env:"max_rate_limits"`
+	TrustProxy         bool   `toml:"trust_proxy" env:"trust_proxy"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
@@ -33,6 +37,10 @@ type Application struct {
 	host               string
 	port               int
 	maxGoroutines      int
+	burst              int64
+	rate               int64
+	maxRateLimits      int
+	trustProxy         bool
 	keepAlivePeriod    time.Duration
 	clientMinPing      time.Duration
 	clientHelloTimeout time.Duration
@@ -56,6 +64,10 @@ func (a *Application) ConfigStruct() interface{} {
 		Hostname:           defaultHost,
 		MaxGoroutines:      1000,
 		KeepAlivePeriod:    "3m",
+		MaxRequests:        100,
+		RequestRate:        50,
+		MaxRateLimits:      10000,
+		TrustProxy:         false,
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
@@ -100,6 +112,10 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	}
 	a.pushLongPongs = conf.PushLongPongs
 	a.maxGoroutines = conf.MaxGoroutines
+	a.burst = conf.MaxRequests
+	a.rate = conf.RequestRate
+	a.maxRateLimits = conf.MaxRateLimits
+	a.trustProxy = conf.TrustProxy
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
 	count := int32(0)
@@ -143,6 +159,10 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 	return nil
 }
 
+func (a *Application) handlerWithLimit(handler http.Handler) http.Handler {
+	return LimitHandler(handler, a.burst, a.rate, a.maxRateLimits, a.trustProxy)
+}
+
 // Start the application
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
@@ -164,12 +184,12 @@ func (a *Application) Run() (errChan chan error) {
 	// Weigh the anchor!
 	go func() {
 		a.log.Info("app", fmt.Sprintf("listening on %s", RESTListener.Addr()), nil)
-		errChan <- http.Serve(RESTListener, RESTMux)
+		errChan <- http.Serve(RESTListener, a.handlerWithLimit(RESTMux))
 	}()
 
 	go func() {
 		a.log.Info("app", "Starting Router", LogFields{"addr": RouteListener.Addr().String()})
-		errChan <- http.Serve(RouteListener, RouteMux)
+		errChan <- http.Serve(RouteListener, a.handlerWithLimit(RouteMux))
 	}()
 
 	return errChan
