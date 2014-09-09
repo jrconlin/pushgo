@@ -352,9 +352,7 @@ func TestPingCase(t *testing.T) {
 }
 
 var heloTests = []caseTest{
-	caseTest{FieldTypeLower, 401, false},
 	caseTest{FieldTypeSpace, 401, false},
-	caseTest{FieldChansCap, 401, false},
 	caseTest{FieldIdCap, 200, true},
 	caseTest{ValueTypeUpper, 200, true},
 	caseTest{ValueTypeCap, 200, true},

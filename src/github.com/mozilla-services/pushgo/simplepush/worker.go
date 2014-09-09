@@ -23,6 +23,7 @@ import (
 var (
 	MissingChannelErr = errors.New("Missing channelID")
 	BadUAIDErr        = errors.New("Bad UAID")
+	BadPayloadErr     = errors.New("Invalid payload")
 )
 
 //    -- Workers
@@ -47,29 +48,52 @@ const (
 	WorkerActive               = 1
 )
 
+type RequestHeader struct {
+	Type string `json:"messageType"`
+}
+
+type HelloRequest struct {
+	DeviceID   *string         `json:"uaid"`
+	ChannelIDs []interface{}   `json:"channelIDs"`
+	PingData   json.RawMessage `json:"connect"`
+}
+
+type RegisterRequest struct {
+	ChannelID string `json:"channelID"`
+}
+
 type RegisterReply struct {
-	Type      interface{} `json:"messageType"`
-	DeviceID  string      `json:"uaid"`
-	Status    int         `json:"status"`
-	ChannelID string      `json:"channelID"`
-	Endpoint  string      `json:"pushEndpoint"`
+	Type      string `json:"messageType"`
+	DeviceID  string `json:"uaid"`
+	Status    int    `json:"status"`
+	ChannelID string `json:"channelID"`
+	Endpoint  string `json:"pushEndpoint"`
+}
+
+type UnregisterRequest struct {
+	ChannelID string `json:"channelID"`
 }
 
 type UnregisterReply struct {
-	Type      interface{} `json:"messageType"`
-	Status    int         `json:"status"`
-	ChannelID string      `json:"channelID"`
+	Type      string `json:"messageType"`
+	Status    int    `json:"status"`
+	ChannelID string `json:"channelID"`
 }
 
 type FlushReply struct {
-	Type    interface{} `json:"messageType"`
-	Updates []Update    `json:"updates"`
-	Expired []string    `json:"expired"`
+	Type    string   `json:"messageType"`
+	Updates []Update `json:"updates"`
+	Expired []string `json:"expired,omitempty"`
+}
+
+type ACKRequest struct {
+	Updates []Update `json:"update"`
+	Expired []string `json:"expired"`
 }
 
 type PingReply struct {
-	Type   interface{} `json:"messageType"`
-	Status int         `json:"status"`
+	Type   string `json:"messageType"`
+	Status int    `json:"status"`
 }
 
 const CHID_DEFAULT_MAX_NUM = 200
@@ -96,13 +120,11 @@ func (self *Worker) sniffer(sock *PushWS) {
 		socket = sock.Socket
 		raw    []byte
 		//eofCount    int    = 0
-		err         error
-		messageType string
+		err error
 	)
 
 	for {
 		// declare buffer here so that the struct is cleared between msgs.
-		var buffer JsMap = JsMap{}
 		raw = raw[:0]
 		err = nil
 
@@ -134,61 +156,59 @@ func (self *Worker) sniffer(sock *PushWS) {
 					LogFields{"raw": string(raw)})
 			}
 		}
-		if string(raw) == "{}" {
-			buffer["messageType"] = "ping"
-		} else {
-			err := json.Unmarshal(raw, &buffer)
-			if err != nil {
-				self.logger.Error("worker",
-					"Unparsable data", LogFields{"raw": string(raw),
-						"error": ErrStr(err)})
-				self.stopped = true
-				continue
+		isPing, err := isPingBody(raw)
+		if err != nil {
+			if self.logger.ShouldLog(WARNING) {
+				self.logger.Warn("worker", "Malformed request payload",
+					LogFields{"raw": string(raw), "error": ErrStr(err)})
 			}
-			if len(buffer) == 0 {
-				// Empty buffers are "pings"
-				buffer["messageType"] = "ping"
-			}
+			self.stopped = true
+			continue
 		}
-		if buffer["messageType"] == "ping" {
-			err = self.Ping(sock, buffer)
-		} else {
-			// process the client commands
-			if mt, ok := buffer["messageType"]; !ok {
-				if self.logger.ShouldLog(INFO) {
-					self.logger.Info("worker", "Invalid message",
-						LogFields{"reason": "Missing messageType"})
-				}
-				self.handleError(sock,
-					JsMap{},
-					sperrors.UnknownCommandError)
-				self.stopped = true
-				continue
-			} else {
-				messageType, _ = mt.(string)
-			}
-			buffer["messageType"] = strings.ToLower(messageType)
-			switch strings.ToLower(messageType) {
-			case "hello":
-				err = self.Hello(sock, buffer)
-			case "ack":
-				err = self.Ack(sock, buffer)
-			case "register":
-				err = self.Register(sock, buffer)
-			case "unregister":
-				err = self.Unregister(sock, buffer)
-			case "ping":
-				err = self.Ping(sock, buffer)
-			case "purge":
-				err = self.Purge(sock, buffer)
-			default:
+		header := new(RequestHeader)
+		if isPing {
+			header.Type = "ping"
+		} else if err = json.Unmarshal(raw, header); err != nil {
+			if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
 				if self.logger.ShouldLog(WARNING) {
-					self.logger.Warn("worker",
-						"Bad command",
-						LogFields{"messageType": messageType})
+					self.logger.Warn("worker", "Mismatched header field types", LogFields{
+						"expected": typeErr.Type.String(), "actual": typeErr.Value})
 				}
-				err = sperrors.UnknownCommandError
+				self.handleError(sock, raw, sperrors.UnknownCommandError)
+			} else if syntaxErr, ok := err.(*json.SyntaxError); ok {
+				if self.logger.ShouldLog(WARNING) {
+					self.logger.Error("worker", "Malformed request payload", LogFields{
+						"raw": string(raw[:syntaxErr.Offset]), "error": syntaxErr.Error()})
+				}
+			} else {
+				if self.logger.ShouldLog(WARNING) {
+					self.logger.Error("worker", "Error parsing request payload",
+						LogFields{"error": ErrStr(err)})
+				}
 			}
+			self.stopped = true
+			continue
+		}
+		switch strings.ToLower(header.Type) {
+		case "ping":
+			err = self.Ping(sock, header, raw)
+		case "hello":
+			err = self.Hello(sock, header, raw)
+		case "ack":
+			err = self.Ack(sock, header, raw)
+		case "register":
+			err = self.Register(sock, header, raw)
+		case "unregister":
+			err = self.Unregister(sock, header, raw)
+		case "purge":
+			err = self.Purge(sock, header, raw)
+		default:
+			if self.logger.ShouldLog(WARNING) {
+				self.logger.Warn("worker",
+					"Bad command",
+					LogFields{"messageType": header.Type})
+			}
+			err = sperrors.UnknownCommandError
 		}
 		if err != nil {
 			if self.logger.ShouldLog(DEBUG) {
@@ -196,9 +216,9 @@ func (self *Worker) sniffer(sock *PushWS) {
 					LogFields{"error": ErrStr(err)})
 			} else {
 				log.Printf("sniffer:%s Unknown error occurred %s",
-					messageType, ErrStr(err))
+					header.Type, ErrStr(err))
 			}
-			self.handleError(sock, buffer, err)
+			self.handleError(sock, raw, err)
 			self.stopped = true
 			continue
 		}
@@ -206,13 +226,17 @@ func (self *Worker) sniffer(sock *PushWS) {
 }
 
 // standardize the error reporting back to the client.
-func (self *Worker) handleError(sock *PushWS, message JsMap, err error) (ret error) {
+func (self *Worker) handleError(sock *PushWS, message []byte, err error) (ret error) {
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("worker", "Sending error",
 			LogFields{"error": ErrStr(err)})
 	}
-	message["status"], message["error"] = sperrors.ErrToStatus(err)
-	return websocket.JSON.Send(sock.Socket, message)
+	reply := make(map[string]interface{})
+	if ret = json.Unmarshal(message, &reply); ret != nil {
+		return
+	}
+	reply["status"], reply["error"] = sperrors.ErrToStatus(err)
+	return websocket.JSON.Send(sock.Socket, reply)
 }
 
 // General workhorse loop for the websocket handler.
@@ -246,7 +270,7 @@ func (self *Worker) Run(sock *PushWS) {
 
 // Associate the UAID for this socket connection (and flush any data that
 // may be pending for the connection)
-func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	// register the UAID
 	defer func() {
 		if r := recover(); r != nil {
@@ -262,35 +286,30 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 
 	//Force the client to re-register all it's clients.
 	// This is done by returning a new UAID.
-	forceReset := false
-
 	var (
-		data JsMap
-		ok   bool
+		forceReset    bool
+		suggestedUAID string
 	)
-	if data, ok = buffer.(JsMap); !ok {
+
+	request := new(HelloRequest)
+	if err = json.Unmarshal(message, request); err != nil {
 		return sperrors.InvalidDataError
 	}
-	if _, ok = data["uaid"]; !ok {
-		// Must include "uaid" (even if blank)
-		data["uaid"] = ""
-	}
-	suggestedUAID, ok := data["uaid"].(string)
-	if !ok {
+	if request.DeviceID == nil {
 		return sperrors.InvalidDataError
 	}
-	messageType, _ := data["messageType"].(string)
+	suggestedUAID = *request.DeviceID
 	/* NOTE: This seems to be a redirect, which I don't believe we support
 	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
 		statusCode := 302
 		resp := JsMap{
-			"messageType": messageType,
+			"messageType": header.Type,
 			"status":      statusCode,
 			"redirect":    redir,
 			"uaid":        sock.Uaid}
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("worker", "sending redirect",
-				LogFields{"messageType": messageType,
+				LogFields{"messageType": header.Type,
 					"status":   strconv.FormatInt(statusCode, 10),
 					"redirect": redir,
 					"uaid":     suggestedUAID})
@@ -298,8 +317,7 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 		websocket.JSON.Send(sock.Socket, resp)
 		return nil
 	} */
-	var channelIDs []interface{}
-	if data["channelIDs"] == nil {
+	if request.ChannelIDs == nil {
 		// Must include "channelIDs" (even if empty)
 		self.logger.Debug("worker", "Missing ChannelIDs", nil)
 		return sperrors.MissingDataError
@@ -327,19 +345,18 @@ func (self *Worker) Hello(sock *PushWS, buffer interface{}) (err error) {
 			LogFields{"uaid": suggestedUAID})
 		goto registerDevice
 	}
-	channelIDs, _ = data["channelIDs"].([]interface{})
 	// are there a suspicious number of channels?
-	if forceReset = len(channelIDs) > self.maxChannels; forceReset {
+	if forceReset = len(request.ChannelIDs) > self.maxChannels; forceReset {
 		if self.logger.ShouldLog(WARNING) {
 			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID",
 				LogFields{"uaid": suggestedUAID,
-					"channels":    strconv.Itoa(len(channelIDs)),
+					"channels":    strconv.Itoa(len(request.ChannelIDs)),
 					"maxChannels": strconv.Itoa(self.maxChannels)})
 		}
 		sock.Store.DropAll(suggestedUAID)
 		goto registerDevice
 	}
-	if forceReset = !sock.Store.Exists(sock.Uaid) && len(channelIDs) > 0; forceReset {
+	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
 		self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
 			LogFields{"uaid": suggestedUAID})
 		goto registerDevice
@@ -359,8 +376,8 @@ registerDevice:
 		Arguments: JsMap{
 			"worker":  self,
 			"uaid":    sock.Uaid,
-			"chids":   data["channelIDs"],
-			"connect": data["connect"],
+			"chids":   request.ChannelIDs,
+			"connect": []byte(request.PingData),
 		},
 	}
 	// blocking call back to the boss.
@@ -372,11 +389,11 @@ registerDevice:
 				"uaid": sock.Uaid})
 	}
 	// websocket.JSON.Send(sock.Socket, JsMap{
-	// 	"messageType": data["messageType"],
+	// 	"messageType": header.Type,
 	// 	"status":      status,
 	// 	"uaid":        sock.Uaid})
 	msg := []byte(fmt.Sprintf(`{"messageType":"%s","status":%d,"uaid":"%s"}`,
-		messageType, status, sock.Uaid))
+		header.Type, status, sock.Uaid))
 	_, err = sock.Socket.Write(msg)
 	self.metrics.Increment("updates.client.hello")
 	self.logger.Info("dash", "Client successfully connected", nil)
@@ -390,7 +407,7 @@ registerDevice:
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil {
@@ -405,40 +422,26 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data, _ := buffer.(JsMap)
-	updates, _ := data["updates"].([]interface{})
-	if len(updates) == 0 {
+	request := new(ACKRequest)
+	if err = json.Unmarshal(message, request); err != nil {
+		return err
+	}
+	if len(request.Updates) == 0 {
 		return sperrors.MissingDataError
 	}
-	var (
-		update map[string]interface{}
-		schid  string
-		ok     bool
-	)
-	for _, field := range updates {
-		if update, ok = field.(map[string]interface{}); !ok {
-			continue
-		}
-		if schid, ok = update["channelID"].(string); !ok {
-			continue
-		}
-		if err = sock.Store.Drop(sock.Uaid, schid); err != nil {
-			break
+	for _, update := range request.Updates {
+		if err = sock.Store.Drop(sock.Uaid, update.ChannelID); err != nil {
+			goto logError
 		}
 	}
-	expired, _ := data["expired"].([]interface{})
-	for _, field := range expired {
-		if schid, ok = field.(string); !ok {
-			continue
-		}
-		if err = sock.Store.Drop(sock.Uaid, schid); err != nil {
-			break
+	for _, channelID := range request.Expired {
+		if err = sock.Store.Drop(sock.Uaid, channelID); err != nil {
+			goto logError
 		}
 	}
 	// Get the lastAccessed time from wherever.
-	if err == nil {
-		return self.Flush(sock, 0, "", 0)
-	}
+	return self.Flush(sock, 0, "", 0)
+logError:
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"cmd": "ack", "error": ErrStr(err)})
@@ -448,7 +451,7 @@ func (self *Worker) Ack(sock *PushWS, buffer interface{}) (err error) {
 }
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
-func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil {
@@ -464,19 +467,21 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	if sock.Uaid == "" {
 		return sperrors.InvalidCommandError
 	}
-	data, _ := buffer.(JsMap)
-	appid, _ := data["channelID"].(string)
-	if !id.Valid(appid) {
+	request := new(RegisterRequest)
+	if err = json.Unmarshal(message, request); err != nil || !id.Valid(request.ChannelID) {
 		return sperrors.InvalidDataError
 	}
-	if err = sock.Store.Register(sock.Uaid, appid, 0); err != nil {
+	if err = sock.Store.Register(sock.Uaid, request.ChannelID, 0); err != nil {
 		self.logger.Error("worker",
 			fmt.Sprintf("ERROR: Register failed %s", err),
 			nil)
 		return err
 	}
 	// have the server generate the callback URL.
-	cmd := PushCommand{Command: REGIS, Arguments: data}
+	cmd := PushCommand{
+		Command:   REGIS,
+		Arguments: JsMap{"channelID": request.ChannelID},
+	}
 	status, args := self.app.Server().HandleCommand(cmd, sock)
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker",
@@ -486,23 +491,22 @@ func (self *Worker) Register(sock *PushWS, buffer interface{}) (err error) {
 	}
 	endpoint, _ := args["push.endpoint"].(string)
 	// return the info back to the socket
-	messageType, _ := data["messageType"].(string)
 	statusCode := 200
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response", LogFields{
-			"messageType":  messageType,
+			"messageType":  "register",
 			"uaid":         sock.Uaid,
 			"status":       strconv.FormatInt(int64(statusCode), 10),
-			"channelID":    appid,
+			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	websocket.JSON.Send(sock.Socket, RegisterReply{messageType, sock.Uaid, statusCode, appid, endpoint})
+	websocket.JSON.Send(sock.Socket, RegisterReply{header.Type, sock.Uaid, statusCode, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
 	return err
 }
 
 // Unregister a ChannelID.
-func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil {
@@ -518,20 +522,22 @@ func (self *Worker) Unregister(sock *PushWS, buffer interface{}) (err error) {
 			"Unregister failed, missing sock.uaid", nil)
 		return sperrors.InvalidCommandError
 	}
-	data, _ := buffer.(JsMap)
-	appid, _ := data["channelID"].(string)
-	if len(appid) == 0 {
+	request := new(UnregisterRequest)
+	if err = json.Unmarshal(message, request); err != nil {
+		return err
+	}
+	if len(request.ChannelID) == 0 {
 		self.logger.Error("worker",
 			"Unregister failed, missing channelID", nil)
 		return sperrors.MissingDataError
 	}
 	// Always return success for an UNREG.
-	sock.Store.Unregister(sock.Uaid, appid)
+	sock.Store.Unregister(sock.Uaid, request.ChannelID)
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"cmd": "unregister", "error": ErrStr(err)})
 	}
-	websocket.JSON.Send(sock.Socket, UnregisterReply{data["messageType"], 200, appid})
+	websocket.JSON.Send(sock.Socket, UnregisterReply{header.Type, 200, request.ChannelID})
 	self.metrics.Increment("updates.client.unregister")
 	return err
 }
@@ -606,7 +612,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	return nil
 }
 
-func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err error) {
 	now := time.Now()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		source := sock.Socket.Config().Origin
@@ -617,26 +623,52 @@ func (self *Worker) Ping(sock *PushWS, buffer interface{}) (err error) {
 		return sperrors.TooManyPingsError
 	}
 	self.lastPing = now
-	data, _ := buffer.(JsMap)
 	if self.app.pushLongPongs {
-		websocket.JSON.Send(sock.Socket, PingReply{data["messageType"], 200})
+		websocket.JSON.Send(sock.Socket, PingReply{header.Type, 200})
 	} else {
-		websocket.Message.Send(sock.Socket, "{}")
+		websocket.Message.Send(sock.Socket, []byte("{}"))
 	}
 	self.metrics.Increment("updates.client.ping")
 	return nil
 }
 
 // TESTING func, purge associated records for this UAID
-func (self *Worker) Purge(sock *PushWS, buffer interface{}) (err error) {
+func (self *Worker) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error) {
 	/*
 	   // If needed...
 	   sock.Scmd <- PushCommand{Command: PURGE,
 	       Arguments:JsMap{"uaid": sock.Uaid}}
 	   result := <-sock.Scmd
 	*/
-	websocket.JSON.Send(sock.Socket, JsMap{})
+	websocket.Message.Send(sock.Socket, []byte("{}"))
 	return nil
+}
+
+func isPingBody(raw []byte) (bool, error) {
+	if len(raw) < 2 || len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
+		// Fast case: empty object literal; no whitespace.
+		return true, nil
+	}
+	// Slower case: determine if the slice contains an empty object literal,
+	// ignoring leading and trailing whitespace.
+	var leftBraces, rightBraces int
+	for _, b := range raw {
+		switch b {
+		case '{':
+			leftBraces++
+		case '}':
+			rightBraces++
+		case '\t', '\r', '\n', ' ':
+			continue
+		default:
+			return false, nil
+		}
+	}
+	if leftBraces <= 1 && leftBraces == rightBraces {
+		return true, nil
+	}
+	// Quick sanity check for unbalanced or multiple consecutive braces.
+	return false, BadPayloadErr
 }
 
 // o4fs
