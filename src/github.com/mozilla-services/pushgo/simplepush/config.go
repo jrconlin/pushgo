@@ -292,15 +292,19 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
 			configStruct := serv.ConfigStruct()
-			if err = toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
+			if err := toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
 				return nil, err
 			}
-			serv.Init(app, configStruct)
+			if err := serv.Init(app, configStruct); err != nil {
+				return nil, err
+			}
 			return serv, nil
 		},
 		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
 			handlers := new(Handler)
-			handlers.Init(app, nil)
+			if err := handlers.Init(app, nil); err != nil {
+				return nil, err
+			}
 			return handlers, nil
 		},
 	}
