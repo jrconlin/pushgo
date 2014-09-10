@@ -16,8 +16,6 @@ import (
 
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
-
-	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 type HandlerConfig struct{}
@@ -304,7 +302,7 @@ sendUpdate:
 					"version":   strconv.FormatInt(version, 10),
 					"error":     err.Error()})
 		}
-		status, _ := sperrors.ErrToStatus(err)
+		status, _ := ErrToStatus(err)
 		self.metrics.Increment("updates.appserver.error")
 		http.Error(resp, "Could not update channel version", status)
 		return

@@ -18,7 +18,6 @@ import (
 	mc "github.com/ianoshen/gomc"
 
 	"github.com/mozilla-services/pushgo/id"
-	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 // Wraps a memcached client with a flag to signal whether the connection is
@@ -323,7 +322,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return CodeInvalidKey
 	}
 	if err = s.storeRec(key, rec); err != nil {
 		return err
@@ -335,15 +334,18 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 // channel ID. If version > 0, the record will be marked as active. Implements
 // Store.Register().
 func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
+	if len(suaid) == 0 {
+		return CodeNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return CodeNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return CodeInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return CodeInvalidChannel
 	}
 	return s.storeRegister(uaid, chid, version)
 }
@@ -352,7 +354,7 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return CodeInvalidKey
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
@@ -399,18 +401,21 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 func (s *EmceeStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
-		return sperrors.InvalidPrimaryKeyError
+		return CodeInvalidKey
+	}
+	if len(suaid) == 0 {
+		return CodeNoID
 	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return CodeNoChannel
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return CodeInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return CodeInvalidChannel
 	}
 	return s.storeUpdate(uaid, chid, version)
 }
@@ -423,11 +428,11 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	}
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
-		return sperrors.InvalidChannelError
+		return CodeNonexistentChannel
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return CodeInvalidKey
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -455,15 +460,18 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 // Unregister marks the channel ID associated with the given device ID
 // as inactive. Implements Store.Unregister().
 func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return CodeNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return CodeNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return CodeInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return CodeInvalidChannel
 	}
 	return s.storeUnregister(uaid, chid)
 }
@@ -472,15 +480,18 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 // memcached. Deregistration calls should call s.Unregister() instead.
 // Implements Store.Drop().
 func (s *EmceeStore) Drop(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return CodeNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return CodeNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return CodeInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return CodeInvalidChannel
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -489,7 +500,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	defer s.releaseWithout(client, &err)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return CodeInvalidKey
 	}
 	if err = client.Delete(encodeKey(key), 0); err == nil || isMissing(err) {
 		return nil
@@ -501,7 +512,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 // since the specified cutoff time. Implements Store.FetchAll().
 func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
-		return nil, nil, sperrors.InvalidDataError
+		return nil, nil, CodeNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -626,7 +637,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
-			return err
+			return CodeInvalidKey
 		}
 		client.Delete(encodeKey(key), 0)
 	}
@@ -639,9 +650,12 @@ func (s *EmceeStore) DropAll(suaid string) error {
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements Store.FetchPing().
 func (s *EmceeStore) FetchPing(suaid string) (pingData []byte, err error) {
+	if len(suaid) == 0 {
+		return nil, CodeNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return nil, sperrors.InvalidDataError
+		return nil, CodeInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -670,9 +684,12 @@ func (s *EmceeStore) PutPing(suaid string, pingData []byte) error {
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements Store.DropPing().
 func (s *EmceeStore) DropPing(suaid string) error {
+	if len(suaid) == 0 {
+		return CodeNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return sperrors.InvalidDataError
+		return CodeInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -718,7 +735,7 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error)
 // The channel IDs are sorted in-place.
 func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
-		return sperrors.MissingDataError
+		return CodeNoID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -733,7 +750,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 // Retrieves a channel record from memcached.
 func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
-		return nil, sperrors.InvalidPrimaryKeyError
+		return nil, CodeNoKey
 	}
 	keyString := encodeKey(pk)
 	client, err := s.getClient()
@@ -761,10 +778,10 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 // Stores an updated channel record in memcached.
 func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
-		return sperrors.InvalidPrimaryKeyError
+		return CodeNoKey
 	}
 	if rec == nil {
-		return sperrors.NoDataToStoreError
+		return CodeNoData
 	}
 	var ttl time.Duration
 	switch rec.State {
