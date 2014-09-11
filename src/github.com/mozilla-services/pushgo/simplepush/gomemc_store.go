@@ -93,7 +93,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	serverList := new(mc.ServerList)
-	if err = serverList.SetServers(strings.Join(s.Hosts, ",")); err != nil {
+	if err = serverList.SetServers(s.Hosts...); err != nil {
 		s.logger.Error("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
 		return err
 	}

@@ -273,13 +273,12 @@ func decodeEnvLiteral(source string, value reflect.Value) error {
 	return fmt.Errorf("Unsupported type %s", kind)
 }
 
-// decodeEnvSlice decodes a comma-separated list of values into a slice.
-// Slices are decoded recursively.
-func decodeEnvSlice(source string, value reflect.Value) error {
+// splitList splits a comma-separated list into a slice of strings, accounting
+// for escape characters.
+func splitList(source string) (results []string) {
 	var (
 		isEscaped        bool
 		lastIndex, index int
-		sources          []string
 	)
 	for ; index < len(source); index++ {
 		if isEscaped {
@@ -291,15 +290,22 @@ func decodeEnvSlice(source string, value reflect.Value) error {
 			isEscaped = true
 
 		case ',':
-			sources = append(sources, source[lastIndex:index])
+			results = append(results, source[lastIndex:index])
 			lastIndex = index + 1
 		}
 	}
 	if lastIndex < index {
-		sources = append(sources, source[lastIndex:])
+		results = append(results, source[lastIndex:])
 	}
+	return results
+}
+
+// decodeEnvSlice decodes a comma-separated list of values into a slice.
+// Slices are decoded recursively.
+func decodeEnvSlice(source string, value reflect.Value) error {
+	sources := splitList(source)
 	value.SetLen(0)
-	for index, source = range sources {
+	for _, source := range sources {
 		element := indirect(reflect.New(value.Type().Elem()))
 		if err := decodeEnvLiteral(source, element); err != nil {
 			return err
