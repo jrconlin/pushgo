@@ -32,13 +32,10 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	Addr               string
-	SslCertFile        string `toml:"ssl_cert_file"`
-	SslKeyFile         string `toml:"ssl_key_file"`
-	PushEndpoint       string `toml:"push_endpoint_template"`
-	PushLongPongs      int    `toml:"push_long_pongs"`
-	ClientMinPing      string `toml:"client_min_ping"`
-	ClientHelloTimeout string `toml:"client_hello_timeout"`
+	Addr         string `env:"addr"`
+	SslCertFile  string `toml:"ssl_cert_file" env:"ssl_cert"`
+	SslKeyFile   string `toml:"ssl_key_file" env:"ssl_key"`
+	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
 }
 
 func NewServer() *Serv {

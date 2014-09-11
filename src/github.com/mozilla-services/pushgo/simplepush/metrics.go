@@ -23,9 +23,9 @@ type JsMap map[string]interface{}
 type timer map[string]trec
 
 type MetricsConfig struct {
-	Prefix       string
-	StatsdServer string `toml:"statsd_server"`
-	StatsdName   string `toml:"statsd_name"`
+	Prefix       string `env:"metrics_prefix"`
+	StatsdServer string `toml:"statsd_server" env:"metrics_statsd_host"`
+	StatsdName   string `toml:"statsd_name" env:"metrics_statsd_name"`
 }
 
 type Metrics struct {

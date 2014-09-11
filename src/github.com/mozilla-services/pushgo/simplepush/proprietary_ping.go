@@ -77,7 +77,7 @@ type UDPPing struct {
 }
 
 type UDPPingConfig struct {
-	URL string `toml:"url"` //carrier UDP Proxy URL
+	URL string `toml:"url" env:"ping_url"` //carrier UDP Proxy URL
 	// Additional Carrier required elements here.
 }
 
@@ -134,11 +134,11 @@ type GCMPing struct {
 }
 
 type GCMPingConfig struct {
-	APIKey      string `toml:"api_key"` //GCM Dev API Key
-	CollapseKey string `toml:"collapse_key"`
-	DryRun      bool   `toml:"dry_run"`
-	TTL         string `toml:"ttl"`
-	URL         string `toml:"url"` //GCM URL
+	APIKey      string `toml:"api_key" env:"gcm_api_key"` //GCM Dev API Key
+	CollapseKey string `toml:"collapse_key" env:"gcm_collapse_key"`
+	DryRun      bool   `toml:"dry_run" env:"gcm_dry_run"`
+	TTL         string `toml:"ttl" env:"gcm_ttl"`
+	URL         string `toml:"url" env:"ping_url"` //GCM URL
 }
 
 type GCMRequest struct {

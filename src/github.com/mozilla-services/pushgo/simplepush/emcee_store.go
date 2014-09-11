@@ -65,28 +65,28 @@ func NewEmcee() *EmceeStore {
 // EmceeDriverConf specifies memcached driver options.
 type EmceeDriverConf struct {
 	// Hosts is a list of memcached nodes.
-	Hosts []string `toml:"server"`
+	Hosts []string `toml:"server" env:"mc_hosts"`
 
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
 	// to 400.
-	MaxConns int `toml:"max_pool"`
+	MaxConns int `toml:"max_pool" env:"mc_max_conns"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	RecvTimeout string `toml:"recv_timeout"`
+	RecvTimeout string `toml:"recv_timeout" env:"mc_recv_timeout"`
 
 	// SendTimeout is the socket send timeout (SO_SNDTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	SendTimeout string `toml:"send_timeout"`
+	SendTimeout string `toml:"send_timeout" env:"mc_send_timeout"`
 
 	// PollTimeout is the poll(2) timeout used by the memcached driver. Supports
 	// millisecond granularity; defaults to 5 seconds.
-	PollTimeout string `toml:"poll_timeout"`
+	PollTimeout string `toml:"poll_timeout" env:"mc_poll_timeout"`
 
 	// RetryTimeout is the time to wait before retrying a request on an unhealthy
 	// memcached node. Supports second granularity; defaults to 5 seconds.
-	RetryTimeout string `toml:"retry_timeout"`
+	RetryTimeout string `toml:"retry_timeout" env:"mc_retry_timeout"`
 }
 
 // EmceeStore is a memcached adapter.
@@ -116,8 +116,8 @@ type EmceeStore struct {
 
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
-	MaxChannels               int             `toml:"max_channels"`
+	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_discovery"`
+	MaxChannels               int             `toml:"max_channels" env:"max_channels"`
 	Driver                    EmceeDriverConf `toml:"memcache"`
 	Db                        DbConf
 }

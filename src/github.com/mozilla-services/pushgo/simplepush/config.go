@@ -7,8 +7,11 @@ package simplepush
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/bbangert/toml"
 )
@@ -32,6 +35,9 @@ type HasConfigStruct interface {
 	// Throwing an error here will cause the application to stop loading
 	Init(app *Application, config interface{}) error
 }
+
+// EnvPrefix is the configuration environment variable prefix.
+const EnvPrefix = "pushgo_"
 
 var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
@@ -164,6 +170,172 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	return app, nil
 }
 
+// An Environment holds and decodes environment variables.
+type Environment map[string]string
+
+// Get returns the value of an environment variable, performing a
+// case-insensitive search if an exact match is not found.
+func (env Environment) Get(name string) (value string, ok bool) {
+	var key string
+	if value, ok = env[name]; ok {
+		goto formatValue
+	}
+	for key, value = range env {
+		if strings.EqualFold(key, name) {
+			goto formatValue
+		}
+	}
+	return "", false
+formatValue:
+	return strings.TrimSpace(value), true
+}
+
+// Unmarshal decodes configuration options specified via environment variables
+// into the value pointed to by configStruct.
+func (env Environment) Unmarshal(configStruct interface{}) error {
+	value := reflect.ValueOf(configStruct)
+	if value.Kind() != reflect.Ptr || value.IsNil() {
+		return fmt.Errorf("Non-pointer type %s", value.Type())
+	}
+	return env.decodeEnvField("", indirect(value))
+}
+
+// decodeEnvField decodes an environment variable into a struct field. Literals
+// are decoded directly into the value; structs are decoded recursively.
+func (env Environment) decodeEnvField(name string, value reflect.Value) error {
+	if name == "-" {
+		return nil
+	}
+	typ := value.Type()
+	if typ.Kind() != reflect.Struct {
+		if len(name) == 0 {
+			// Ignore primitive fields that do not specify an `env:` tag. This avoids
+			// naming collisions with fields from different structs.
+			return nil
+		}
+		if source, ok := env.Get(name); ok {
+			return decodeEnvLiteral(source, value)
+		}
+		return nil
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Tag.Get("env")
+		if err := env.decodeEnvField(name, value.Field(i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// decodeEnvLiteral decodes a source string into a value. Only integers,
+// floats, Booleans, slices, and strings are supported.
+func decodeEnvLiteral(source string, value reflect.Value) error {
+	kind := value.Type().Kind()
+	if kind >= reflect.Int && kind <= reflect.Int64 {
+		result, err := strconv.ParseInt(source, 0, value.Type().Bits())
+		if err != nil {
+			return err
+		}
+		value.SetInt(result)
+		return nil
+	}
+	if kind >= reflect.Uint && kind <= reflect.Uint64 {
+		result, err := strconv.ParseUint(source, 0, value.Type().Bits())
+		if err != nil {
+			return err
+		}
+		value.SetUint(result)
+		return nil
+	}
+	if kind >= reflect.Float32 && kind <= reflect.Float64 {
+		result, err := strconv.ParseFloat(source, value.Type().Bits())
+		if err != nil {
+			return err
+		}
+		value.SetFloat(result)
+		return nil
+	}
+	switch kind {
+	case reflect.Bool:
+		result, err := strconv.ParseBool(source)
+		if err != nil {
+			return err
+		}
+		value.SetBool(result)
+		return nil
+
+	case reflect.Slice:
+		return decodeEnvSlice(source, value)
+
+	case reflect.String:
+		value.SetString(source)
+		return nil
+	}
+	return fmt.Errorf("Unsupported type %s", kind)
+}
+
+// decodeEnvSlice decodes a comma-separated list of values into a slice.
+// Slices are decoded recursively.
+func decodeEnvSlice(source string, value reflect.Value) error {
+	var (
+		isEscaped        bool
+		lastIndex, index int
+		sources          []string
+	)
+	for ; index < len(source); index++ {
+		if isEscaped {
+			isEscaped = false
+			continue
+		}
+		switch source[index] {
+		case '\\':
+			isEscaped = true
+
+		case ',':
+			sources = append(sources, source[lastIndex:index])
+			lastIndex = index + 1
+		}
+	}
+	if lastIndex < index {
+		sources = append(sources, source[lastIndex:])
+	}
+	value.SetLen(0)
+	for index, source = range sources {
+		element := indirect(reflect.New(value.Type().Elem()))
+		if err := decodeEnvLiteral(source, element); err != nil {
+			return err
+		}
+		value.Set(reflect.Append(value, element))
+	}
+	return nil
+}
+
+// indirect returns the value pointed to by a pointer, allocating zero values
+// for nil pointers.
+func indirect(value reflect.Value) reflect.Value {
+	for value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		value = reflect.Indirect(value)
+	}
+	return value
+}
+
+// LoadEnvironment returns an Environment populated with configuration options.
+// Variable names are case-insensitive.
+func LoadEnvironment() (env Environment) {
+	env = make(Environment)
+	for _, v := range os.Environ() {
+		value := strings.SplitN(v, "=", 2)
+		key := value[0]
+		if l := len(EnvPrefix); len(key) >= l && strings.EqualFold(key[:l], EnvPrefix) {
+			env[key[l:]] = value[1]
+		}
+	}
+	return
+}
+
 func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
@@ -199,25 +371,33 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 
 // Loads the config for a section supplied, configures the supplied object, and initializes
 func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
-	configFile ConfigFile) (err error) {
+	env Environment, configFile ConfigFile) (err error) {
 
 	conf, ok := configFile[sectionName]
 	if !ok {
 		return fmt.Errorf("Error loading config file, section: %s", sectionName)
 	}
 	confStruct := obj.ConfigStruct()
+
 	if err = toml.PrimitiveDecode(conf, confStruct); err != nil {
 		err = fmt.Errorf("Unable to decode config for section '%s': %s",
 			sectionName, err)
 		return
 	}
+
+	if err = env.Unmarshal(confStruct); err != nil {
+		err = fmt.Errorf("Invalid environment variable for section '%s': %s",
+			sectionName, err)
+		return
+	}
+
 	err = obj.Init(app, confStruct)
 	return
 }
 
 // Load an extensible section that has a type keyword
 func LoadExtensibleSection(app *Application, sectionName string,
-	extensions AvailableExtensions, configFile ConfigFile) (HasConfigStruct, error) {
+	extensions AvailableExtensions, env Environment, configFile ConfigFile) (HasConfigStruct, error) {
 	var err error
 
 	confSection := new(ExtensibleGlobals)
@@ -246,6 +426,10 @@ func LoadExtensibleSection(app *Application, sectionName string,
 		return nil, err
 	}
 
+	if err = env.Unmarshal(loadedConfig); err != nil {
+		return nil, fmt.Errorf("Invalid environment variable for section '%s': %s", sectionName, err)
+	}
+
 	err = obj.Init(app, loadedConfig)
 	return obj, err
 }
@@ -258,44 +442,41 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
 		return nil, fmt.Errorf("Error decoding config file: %s", err)
 	}
+	env := LoadEnvironment()
 
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
-			return nil, LoadConfigForSection(nil, "default", app, configFile)
+			return nil, LoadConfigForSection(nil, "default", app, env, configFile)
 		},
 		PluginLogger: func(app *Application) (HasConfigStruct, error) {
-			return LoadExtensibleSection(app, "logging", AvailableLoggers, configFile)
+			return LoadExtensibleSection(app, "logging", AvailableLoggers, env, configFile)
 		},
 		PluginPinger: func(app *Application) (HasConfigStruct, error) {
-			return LoadExtensibleSection(app, "propping", AvailablePings, configFile)
+			return LoadExtensibleSection(app, "propping", AvailablePings, env, configFile)
 		},
 		PluginMetrics: func(app *Application) (HasConfigStruct, error) {
 			metrics := new(Metrics)
-			if err := LoadConfigForSection(app, "metrics", metrics, configFile); err != nil {
+			if err := LoadConfigForSection(app, "metrics", metrics, env, configFile); err != nil {
 				return nil, err
 			}
 			return metrics, nil
 		},
 		PluginStore: func(app *Application) (HasConfigStruct, error) {
-			return LoadExtensibleSection(app, "storage", AvailableStores, configFile)
+			return LoadExtensibleSection(app, "storage", AvailableStores, env, configFile)
 		},
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
 			router := NewRouter()
-			if err := LoadConfigForSection(app, "router", router, configFile); err != nil {
+			if err := LoadConfigForSection(app, "router", router, env, configFile); err != nil {
 				return nil, err
 			}
 			return router, nil
 		},
 		PluginLocator: func(app *Application) (HasConfigStruct, error) {
-			return LoadExtensibleSection(app, "discovery", AvailableLocators, configFile)
+			return LoadExtensibleSection(app, "discovery", AvailableLocators, env, configFile)
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
-			configStruct := serv.ConfigStruct()
-			if err := toml.PrimitiveDecode(configFile["default"], configStruct); err != nil {
-				return nil, err
-			}
-			if err := serv.Init(app, configStruct); err != nil {
+			if err := LoadConfigForSection(app, "default", serv, env, configFile); err != nil {
 				return nil, err
 			}
 			return serv, nil

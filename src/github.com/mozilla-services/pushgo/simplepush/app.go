@@ -18,13 +18,13 @@ import (
 )
 
 type ApplicationConfig struct {
-	Hostname           string `toml:"current_host"`
-	TokenKey           string `toml:"token_key"`
-	MaxConnections     int    `toml:"max_connections"`
-	UseAwsHost         bool   `toml:"use_aws_host"`
-	ClientMinPing      string `toml:"client_min_ping_interval"`
-	ClientHelloTimeout string `toml:"client_hello_timeout"`
-	PushLongPongs      bool   `toml:"push_long_pongs"`
+	Hostname           string `toml:"current_host" env:"current_host"`
+	TokenKey           string `toml:"token_key" env:"token_key"`
+	MaxConnections     int    `toml:"max_connections" env:"max_conns"`
+	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
+	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
+	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
+	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
 }
 
 type Application struct {
