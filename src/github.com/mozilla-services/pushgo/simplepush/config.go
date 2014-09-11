@@ -20,7 +20,7 @@ import (
 type AvailableExtensions map[string]func() HasConfigStruct
 
 type ExtensibleGlobals struct {
-	Typ string `toml:"type"`
+	Typ string `toml:"type" env:"type"`
 }
 
 // Generic config section with any set of options
@@ -192,35 +192,34 @@ formatValue:
 
 // Unmarshal decodes configuration options specified via environment variables
 // into the value pointed to by configStruct.
-func (env Environment) Unmarshal(configStruct interface{}) error {
+func (env Environment) Unmarshal(sectionName string, configStruct interface{}) error {
 	value := reflect.ValueOf(configStruct)
 	if value.Kind() != reflect.Ptr || value.IsNil() {
 		return fmt.Errorf("Non-pointer type %s", value.Type())
 	}
-	return env.decodeEnvField("", indirect(value))
+	return env.decodeEnvField(sectionName, indirect(value))
 }
 
 // decodeEnvField decodes an environment variable into a struct field. Literals
 // are decoded directly into the value; structs are decoded recursively.
 func (env Environment) decodeEnvField(name string, value reflect.Value) error {
-	if name == "-" {
-		return nil
-	}
 	typ := value.Type()
 	if typ.Kind() != reflect.Struct {
-		if len(name) == 0 {
-			// Ignore primitive fields that do not specify an `env:` tag. This avoids
-			// naming collisions with fields from different structs.
-			return nil
-		}
 		if source, ok := env.Get(name); ok {
 			return decodeEnvLiteral(source, value)
 		}
 		return nil
 	}
 	for i := 0; i < typ.NumField(); i++ {
-		name := typ.Field(i).Tag.Get("env")
-		if err := env.decodeEnvField(name, value.Field(i)); err != nil {
+		field := typ.Field(i)
+		tag := field.Tag.Get("env")
+		if tag == "-" {
+			continue
+		}
+		if len(tag) == 0 {
+			tag = field.Name
+		}
+		if err := env.decodeEnvField(name+"_"+tag, value.Field(i)); err != nil {
 			return err
 		}
 	}
@@ -385,7 +384,7 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 		return
 	}
 
-	if err = env.Unmarshal(confStruct); err != nil {
+	if err = env.Unmarshal(sectionName, confStruct); err != nil {
 		err = fmt.Errorf("Invalid environment variable for section '%s': %s",
 			sectionName, err)
 		return
@@ -410,6 +409,9 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
 		return nil, err
 	}
+	if err = env.Unmarshal(sectionName, confSection); err != nil {
+		return nil, err
+	}
 	ext, ok := extensions[confSection.Typ]
 	if !ok {
 		ext, ok = extensions["default"]
@@ -426,7 +428,7 @@ func LoadExtensibleSection(app *Application, sectionName string,
 		return nil, err
 	}
 
-	if err = env.Unmarshal(loadedConfig); err != nil {
+	if err = env.Unmarshal(sectionName, loadedConfig); err != nil {
 		return nil, fmt.Errorf("Invalid environment variable for section '%s': %s", sectionName, err)
 	}
 

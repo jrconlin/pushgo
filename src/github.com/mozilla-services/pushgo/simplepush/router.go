@@ -43,32 +43,32 @@ type RouterConfig struct {
 	// BucketSize is the maximum number of contacts to probe at once. The router
 	// will defer requests until all nodes in a bucket have responded. Defaults
 	// to 10 contacts.
-	BucketSize int `toml:"bucket_size" env:"router_bucket_size"`
+	BucketSize int `toml:"bucket_size" env:"bucket_size"`
 
 	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
-	Ctimeout string `env:"router_ctimeout"`
+	Ctimeout string
 
 	// Rwtimeout is the maximum amount of time that the router should wait for an
 	// HTTP request to complete. Defaults to 3 seconds.
-	Rwtimeout string `env:"router_rwtimeout"`
+	Rwtimeout string
 
 	// Scheme is the scheme component of the proxy endpoint, used by the router
 	// to construct the endpoint of a peer. Defaults to "http".
-	Scheme string `env:"router_scheme"`
+	Scheme string
 
 	// DefaultHost is the default hostname of the proxy endpoint. No default
 	// value; overrides simplepush.Application.Hostname() if specified.
-	DefaultHost string `toml:"default_host" env:"router_default_host"`
+	DefaultHost string `toml:"default_host" env:"default_host"`
 
 	// Addr is the interface and port that the router will use to receive proxied
 	// updates. The port should not be publicly accessible. Defaults to ":3000".
-	Addr string `env:"router_addr"`
+	Addr string
 
 	// UrlTemplate is a text/template source string for constructing the proxy
 	// endpoint URL. Interpolated variables are {{.Scheme}}, {{.Host}}, and
 	// {{.Uaid}}.
-	UrlTemplate string `toml:"url_template" env:"router_url_template"`
+	UrlTemplate string `toml:"url_template" env:"url_template"`
 }
 
 // Router proxies incoming updates to the Simple Push server ("contact") that

@@ -32,7 +32,7 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	Addr         string `env:"addr"`
+	Addr         string
 	SslCertFile  string `toml:"ssl_cert_file" env:"ssl_cert"`
 	SslKeyFile   string `toml:"ssl_key_file" env:"ssl_key"`
 	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`

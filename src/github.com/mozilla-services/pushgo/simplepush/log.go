@@ -88,8 +88,8 @@ func (sl *SimpleLogger) Critical(mtype, msg string, fields LogFields) {
 // Standard output logger implementation
 
 type StdOutLoggerConfig struct {
-	Filter int32 `env:"logging_filter"`
-	Trace  bool  `env:"logging_filter"`
+	Filter int32
+	Trace  bool
 }
 
 type StdOutLogger struct {

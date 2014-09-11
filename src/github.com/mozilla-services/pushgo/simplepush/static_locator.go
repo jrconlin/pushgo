@@ -5,7 +5,7 @@
 package simplepush
 
 type StaticLocatorConf struct {
-	Contacts []string `env:"router_contacts"`
+	Contacts []string `env:"contacts"`
 }
 
 type StaticLocator struct {
