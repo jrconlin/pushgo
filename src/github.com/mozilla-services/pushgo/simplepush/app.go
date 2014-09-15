@@ -152,7 +152,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting WebSocket server",
 				LogFields{"addr": clientLn.Addr().String()})
 		}
-		errChan <- http.Serve(clientLn, clientMux)
+		errChan <- http.Serve(clientLn, &LogHandler{a.log, clientMux, false})
 	}()
 
 	go func() {
@@ -161,7 +161,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting update server",
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		errChan <- http.Serve(endpointLn, endpointMux)
+		errChan <- http.Serve(endpointLn, &LogHandler{a.log, endpointMux, false})
 	}()
 
 	go func() {
@@ -170,7 +170,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting router",
 				LogFields{"addr": routeLn.Addr().String()})
 		}
-		errChan <- http.Serve(routeLn, routeMux)
+		errChan <- http.Serve(routeLn, &LogHandler{a.log, routeMux, false})
 	}()
 
 	return errChan

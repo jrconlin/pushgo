@@ -5,12 +5,19 @@
 package simplepush
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 // Log levels
@@ -22,6 +29,11 @@ const (
 	WARNING
 	INFO
 	DEBUG
+)
+
+const (
+	HeaderID      = "X-Request-Id"
+	CommonLogTime = "02/Jan/2006:15:04:05 -0700"
 )
 
 type LogFields map[string]string
@@ -158,6 +170,145 @@ func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields 
 	}
 	log.Printf(dump)
 	return
+}
+
+// logResponseWriter wraps an http.ResponseWriter, recording its status code,
+// content length, and response time.
+type logResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader   bool
+	StatusCode    int
+	ContentLength int
+	RespondedAt   time.Time
+}
+
+// writerOnly hides the optional ReadFrom method of an io.Writer from io.Copy.
+// Taken from package net/http, copyright 2009, The Go Authors.
+type writerOnly struct {
+	io.Writer
+}
+
+// ReadFrom calls the ReadFrom method of the underlying ResponseWriter. Defined
+// for compatibility with *response.ReadFrom from package net/http.
+func (w *logResponseWriter) ReadFrom(reader io.Reader) (written int64, err error) {
+	if readerFrom, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return readerFrom.ReadFrom(reader)
+	}
+	return io.Copy(writerOnly{w}, reader)
+}
+
+// WriteHeader records the response time and status code, then calls the
+// WriteHeader method of the underlying ResponseWriter.
+func (w *logResponseWriter) WriteHeader(statusCode int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.setStatus(statusCode)
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// setStatus records the response time and status code.
+func (w *logResponseWriter) setStatus(statusCode int) {
+	w.RespondedAt = time.Now()
+	w.StatusCode = statusCode
+}
+
+// Write calls the Write method of the underlying ResponseWriter and records
+// the number of bytes written.
+func (w *logResponseWriter) Write(bytes []byte) (written int, err error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	written, err = w.ResponseWriter.Write(bytes)
+	w.ContentLength += len(bytes)
+	return
+}
+
+// Hijack calls the Hijack method of the underlying ResponseWriter, allowing a
+// custom protocol handler (e.g., WebSockets) to take over the connection.
+func (w *logResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, io.EOF
+}
+
+// CloseNotify calls the CloseNotify method of the underlying ResponseWriter,
+// or returns a nil channel if the operation is not supported.
+func (w *logResponseWriter) CloseNotify() <-chan bool {
+	if notifier, ok := w.ResponseWriter.(http.CloseNotifier); ok {
+		return notifier.CloseNotify()
+	}
+	return nil
+}
+
+// Flush calls the Flush method of the underlying ResponseWriter, recording a
+// successful response if WriteHeader was not called.
+func (w *logResponseWriter) Flush() {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.setStatus(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// LogHandler logs the result of an HTTP request.
+type LogHandler struct {
+	Logger *SimpleLogger
+	http.Handler
+	TrustProxy bool
+}
+
+// formatRequest generates a Common Log Format request line.
+func (h *LogHandler) formatRequest(writer *logResponseWriter, request *http.Request, remoteAddrs []string) string {
+	remoteAddr := "-"
+	if len(remoteAddrs) > 0 {
+		remoteAddr = remoteAddrs[0]
+	}
+	requestInfo := fmt.Sprintf("%s %s %s", request.Method, request.URL.Path, request.Proto)
+	return fmt.Sprintf(`%s - - [%s] %s %d %d`, remoteAddr, writer.RespondedAt.Format(CommonLogTime),
+		strconv.Quote(requestInfo), writer.StatusCode, writer.ContentLength)
+}
+
+// logResponse logs a response to an HTTP request.
+func (h *LogHandler) logResponse(writer *logResponseWriter, request *http.Request, requestID string, receivedAt time.Time) {
+	if !h.Logger.ShouldLog(INFO) {
+		return
+	}
+	var remoteAddrs []string
+	if h.TrustProxy {
+		remoteAddrs = append(remoteAddrs, request.Header[http.CanonicalHeaderKey("X-Forwarded-For")]...)
+	}
+	remoteAddr, _, _ := net.SplitHostPort(request.RemoteAddr)
+	remoteAddrs = append(remoteAddrs, remoteAddr)
+	h.Logger.Info("http", h.formatRequest(writer, request, remoteAddrs), LogFields{
+		"rid":                requestID,
+		"agent":              request.Header.Get("User-Agent"),
+		"path":               request.URL.Path,
+		"method":             request.Method,
+		"code":               strconv.Itoa(writer.StatusCode),
+		"remoteAddressChain": fmt.Sprintf("[%s]", strings.Join(remoteAddrs, ", ")),
+		"t":                  strconv.FormatInt(int64(writer.RespondedAt.Sub(receivedAt)/time.Millisecond), 10)})
+}
+
+// ServeHTTP implements http.Handler.ServeHTTP.
+func (h *LogHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+	receivedAt := time.Now()
+
+	// The `X-Request-Id` header is used by Heroku, restify, etc. to correlate
+	// logs for the same request.
+	requestID := request.Header.Get(HeaderID)
+	if !id.Valid(requestID) {
+		requestID, _ = id.Generate()
+		request.Header.Set(HeaderID, requestID)
+	}
+
+	writer := &logResponseWriter{ResponseWriter: responseWriter, StatusCode: http.StatusOK}
+	defer h.logResponse(writer, request, requestID, receivedAt)
+
+	h.Handler.ServeHTTP(writer, request)
 }
 
 func init() {

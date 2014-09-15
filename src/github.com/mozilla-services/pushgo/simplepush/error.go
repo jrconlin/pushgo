@@ -26,6 +26,7 @@ const (
 	CodeNoData             ErrorCode = 114
 	CodeNonexistentRecord  ErrorCode = 115
 	CodeRecordUpdateFailed ErrorCode = 116
+	CodeBadPayload         ErrorCode = 117
 	CodeTooManyPings       ErrorCode = 201
 	CodeServerError        ErrorCode = 999
 )
