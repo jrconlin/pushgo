@@ -138,35 +138,36 @@ type RateLimitedHandler struct {
 	TrustProxy bool
 }
 
-// ServeHTTP implements http.Handler.ServeHTTP.
-func (l *RateLimitedHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (l *RateLimitedHandler) canAccept(remoteAddr string) bool {
 	var (
-		remoteAddr    string
-		err           error
-		bucket        *TokenBucket
-		ok, canAccept bool
+		bucket *TokenBucket
+		ok     bool
 	)
-	// `X-Forwarded-For` may contain multiple values; the first is the client IP.
-	if host := request.Header.Get("X-Forwarded-For"); l.TrustProxy && len(host) > 0 {
-		remoteAddr = host
-	} else if remoteAddr, _, err = net.SplitHostPort(request.RemoteAddr); err != nil {
-		goto handleRequest
-	}
+	defer l.Unlock()
 	l.Lock()
 	if bucket, ok = l.TokenTable.Get(remoteAddr); !ok {
 		bucket = NewTokenBucket(remoteAddr, l.Burst, l.Rate)
-		if err = l.TokenTable.Put(bucket); err != nil {
-			goto handleRequest
+		if err := l.TokenTable.Put(bucket); err != nil {
+			return false
 		}
 	}
-	canAccept = bucket.Consume(1)
-	l.Unlock()
-	if !canAccept {
-		http.Error(responseWriter, "Too many requests", 429)
+	return bucket.Consume(1)
+}
+
+// ServeHTTP implements http.Handler.ServeHTTP.
+func (l *RateLimitedHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	// `X-Forwarded-For` may contain multiple values; the first is the client IP.
+	var remoteAddr string
+	if host := req.Header.Get("X-Forwarded-For"); l.TrustProxy && len(host) > 0 {
+		remoteAddr = host
+	} else {
+		remoteAddr, _, _ = net.SplitHostPort(req.RemoteAddr)
+	}
+	if !l.canAccept(remoteAddr) {
+		http.Error(rw, "Too many requests", 429)
 		return
 	}
-handleRequest:
-	l.Handler.ServeHTTP(responseWriter, request)
+	l.Handler.ServeHTTP(rw, req)
 }
 
 // RateLimitedListener rejects incoming connections if the server is
