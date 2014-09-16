@@ -17,6 +17,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
+const VERSION = "1.4"
+
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
