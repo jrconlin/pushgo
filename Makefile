@@ -1,8 +1,8 @@
 SHELL = /bin/sh
 HERE = $(shell pwd)
 BIN = $(HERE)/bin
-GODEP = $(BIN)/godep
-DEPS = $(HERE)/Godeps/_workspace
+GPM = $(HERE)/gpm
+DEPS = $(HERE)/.godeps
 GOPATH := $(DEPS):$(HERE):$(GOPATH)
 GOBIN = $(BIN)
 
@@ -22,16 +22,9 @@ all: build
 $(BIN):
 	mkdir -p $(BIN)
 
-$(GODEP): $(BIN)
-	@echo "Installing godep"
-	go get github.com/tools/godep
-	if [ -e $(DEPS)/bin/godep ] ; then \
-		mv $(DEPS)/bin/godep $(BIN)/godep; \
-	fi;
-
-$(DEPS): $(GODEP)
+$(DEPS):
 	@echo "Installing dependencies"
-	$(GODEP) restore
+	$(GPM) install
 
 build: $(DEPS)
 
@@ -55,13 +48,13 @@ memcached: libmemcached-1.0.18
 simplepush:
 	rm -f simplepush
 	@echo "Building simplepush"
-	$(GODEP) go build -o simplepush github.com/mozilla-services/pushgo
+	go build -o simplepush github.com/mozilla-services/pushgo
 
 test:
-	$(GODEP) go test $(addprefix $(PACKAGE)/,id simplepush)
+	go test $(addprefix $(PACKAGE)/,id simplepush)
 
 vet:
-	$(GODEP) go vet $(addprefix $(PACKAGE)/,client id simplepush)
+	go vet $(addprefix $(PACKAGE)/,client id simplepush)
 
 clean:
 	rm -rf bin $(DEPS)
