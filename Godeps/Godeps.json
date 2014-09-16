@@ -11,6 +11,74 @@
 			"Rev": "ad01a6fcc8a19d3a4478c836895ffe883bd2ceab"
 		},
 		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/gogoproto",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/defaultcheck",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/description",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/embedcheck",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/enumstringer",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/equal",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/face",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/gostring",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/marshalto",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/populate",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/size",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/stringer",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/testgen",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/union",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/unmarshal",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/proto",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/protoc-gen-gogo",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
 			"ImportPath": "github.com/bbangert/toml",
 			"Rev": "a2063ce2e5cf10e54ab24075840593d60f59b611"
 		},
