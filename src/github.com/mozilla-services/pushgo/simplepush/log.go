@@ -23,9 +23,9 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-// A HekaFormat specifies the Heka log message format. The binary Protocol
-// Buffer format is more efficient, and should be preferred over the JSON
-// encoding when human readability is not a concern.
+// A HekaFormat specifies the Heka log message format. The binary Protobuf
+// format is more efficient, and should be preferred over the JSON encoding
+// when human readability is not a concern.
 type HekaFormat int
 
 // Heka message formats.
@@ -130,8 +130,8 @@ func (sl *SimpleLogger) Critical(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(CRITICAL, mtype, msg, fields)
 }
 
-// NewHekaLogger creates a logger that writes Protocol Buffer or JSON-encoded
-// log messages to standard output.
+// NewHekaLogger creates a logger that writes Protobuf or JSON-encoded log
+// messages to standard output.
 func NewHekaLogger(format HekaFormat) *HekaLogger {
 	return &HekaLogger{format: format, writer: os.Stdout}
 }
@@ -297,7 +297,7 @@ func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	}
 	if hasTrace {
 		reply.WriteByte(' ')
-		fmt.Fprintf(reply, "[%s:%s %s]", file, line, funcName)
+		fmt.Fprintf(reply, "[%s:%d %s]", file, line, funcName)
 	}
 
 	reply.WriteByte('\n')
@@ -324,11 +324,11 @@ type writerOnly struct {
 
 // ReadFrom calls the ReadFrom method of the underlying ResponseWriter. Defined
 // for compatibility with *response.ReadFrom from package net/http.
-func (w *logResponseWriter) ReadFrom(reader io.Reader) (written int64, err error) {
-	if readerFrom, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		return readerFrom.ReadFrom(reader)
+func (w *logResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if dest, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return dest.ReadFrom(r)
 	}
-	return io.Copy(writerOnly{w}, reader)
+	return io.Copy(writerOnly{w}, r)
 }
 
 // WriteHeader records the response time and status code, then calls the
@@ -349,20 +349,20 @@ func (w *logResponseWriter) setStatus(statusCode int) {
 
 // Write calls the Write method of the underlying ResponseWriter and records
 // the number of bytes written.
-func (w *logResponseWriter) Write(bytes []byte) (written int, err error) {
+func (w *logResponseWriter) Write(data []byte) (n int, err error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	written, err = w.ResponseWriter.Write(bytes)
-	w.ContentLength += len(bytes)
+	n, err = w.ResponseWriter.Write(data)
+	w.ContentLength += len(data)
 	return
 }
 
 // Hijack calls the Hijack method of the underlying ResponseWriter, allowing a
 // custom protocol handler (e.g., WebSockets) to take over the connection.
 func (w *logResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hijacker, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return hijacker.Hijack()
+	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
 	}
 	return nil, nil, io.EOF
 }
@@ -370,8 +370,8 @@ func (w *logResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // CloseNotify calls the CloseNotify method of the underlying ResponseWriter,
 // or returns a nil channel if the operation is not supported.
 func (w *logResponseWriter) CloseNotify() <-chan bool {
-	if notifier, ok := w.ResponseWriter.(http.CloseNotifier); ok {
-		return notifier.CloseNotify()
+	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok {
+		return cn.CloseNotify()
 	}
 	return nil
 }
@@ -383,71 +383,71 @@ func (w *logResponseWriter) Flush() {
 		w.wroteHeader = true
 		w.setStatus(http.StatusOK)
 	}
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
 // LogHandler logs the result of an HTTP request.
 type LogHandler struct {
-	Logger *SimpleLogger
+	Log *SimpleLogger
 	http.Handler
 	TrustProxy bool
 }
 
 // formatRequest generates a Common Log Format request line.
-func (h *LogHandler) formatRequest(writer *logResponseWriter, request *http.Request, remoteAddrs []string) string {
+func (h *LogHandler) formatRequest(writer *logResponseWriter, req *http.Request, remoteAddrs []string) string {
 	remoteAddr := "-"
 	if len(remoteAddrs) > 0 {
 		remoteAddr = remoteAddrs[0]
 	}
-	requestInfo := fmt.Sprintf("%s %s %s", request.Method, request.URL.Path, request.Proto)
+	requestInfo := fmt.Sprintf("%s %s %s", req.Method, req.URL.Path, req.Proto)
 	return fmt.Sprintf(`%s - - [%s] %s %d %d`, remoteAddr, writer.RespondedAt.Format(CommonLogTime),
 		strconv.Quote(requestInfo), writer.StatusCode, writer.ContentLength)
 }
 
 // logResponse logs a response to an HTTP request.
-func (h *LogHandler) logResponse(writer *logResponseWriter, request *http.Request, requestID string, receivedAt time.Time) {
-	if !h.Logger.ShouldLog(INFO) {
+func (h *LogHandler) logResponse(writer *logResponseWriter, req *http.Request, requestID string, receivedAt time.Time) {
+	if !h.Log.ShouldLog(INFO) {
 		return
 	}
 	var remoteAddrs []string
 	if h.TrustProxy {
-		remoteAddrs = append(remoteAddrs, request.Header[http.CanonicalHeaderKey("X-Forwarded-For")]...)
+		remoteAddrs = append(remoteAddrs, req.Header[http.CanonicalHeaderKey("X-Forwarded-For")]...)
 	}
-	remoteAddr, _, _ := net.SplitHostPort(request.RemoteAddr)
+	remoteAddr, _, _ := net.SplitHostPort(req.RemoteAddr)
 	remoteAddrs = append(remoteAddrs, remoteAddr)
-	h.Logger.Info("http", h.formatRequest(writer, request, remoteAddrs), LogFields{
+	h.Log.Info("http", h.formatRequest(writer, req, remoteAddrs), LogFields{
 		"rid":                requestID,
-		"agent":              request.Header.Get("User-Agent"),
-		"path":               request.URL.Path,
-		"method":             request.Method,
+		"agent":              req.Header.Get("User-Agent"),
+		"path":               req.URL.Path,
+		"method":             req.Method,
 		"code":               strconv.Itoa(writer.StatusCode),
 		"remoteAddressChain": fmt.Sprintf("[%s]", strings.Join(remoteAddrs, ", ")),
 		"t":                  strconv.FormatInt(int64(writer.RespondedAt.Sub(receivedAt)/time.Millisecond), 10)})
 }
 
 // ServeHTTP implements http.Handler.ServeHTTP.
-func (h *LogHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	receivedAt := time.Now()
 
 	// The `X-Request-Id` header is used by Heroku, restify, etc. to correlate
 	// logs for the same request.
-	requestID := request.Header.Get(HeaderID)
+	requestID := req.Header.Get(HeaderID)
 	if !id.Valid(requestID) {
 		requestID, _ = id.Generate()
-		request.Header.Set(HeaderID, requestID)
+		req.Header.Set(HeaderID, requestID)
 	}
 
-	writer := &logResponseWriter{ResponseWriter: responseWriter, StatusCode: http.StatusOK}
-	defer h.logResponse(writer, request, requestID, receivedAt)
+	writer := &logResponseWriter{ResponseWriter: res, StatusCode: http.StatusOK}
+	defer h.logResponse(writer, req, requestID, receivedAt)
 
-	h.Handler.ServeHTTP(writer, request)
+	h.Handler.ServeHTTP(writer, req)
 }
 
 func init() {
 	AvailableLoggers["protobuf"] = func() HasConfigStruct { return NewHekaLogger(HekaProtobuf) }
 	AvailableLoggers["json"] = func() HasConfigStruct { return NewHekaLogger(HekaJSON) }
-	AvailableLoggers["human"] = func() HasConfigStruct { return NewTextLogger() }
-	AvailableLoggers["default"] = AvailableLoggers["stdout"]
+	AvailableLoggers["text"] = func() HasConfigStruct { return NewTextLogger() }
+	AvailableLoggers["default"] = AvailableLoggers["text"]
 }
