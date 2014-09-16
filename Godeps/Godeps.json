@@ -1,9 +1,6 @@
 {
 	"ImportPath": "github.com/mozilla-services/pushgo",
 	"GoVersion": "go1.3",
-	"Packages": [
-		"./..."
-	],
 	"Deps": [
 		{
 			"ImportPath": "code.google.com/p/go.net/websocket",
@@ -11,72 +8,9 @@
 			"Rev": "ad01a6fcc8a19d3a4478c836895ffe883bd2ceab"
 		},
 		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/gogoproto",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/defaultcheck",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/description",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/embedcheck",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/enumstringer",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/equal",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/face",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/gostring",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/marshalto",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/populate",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/size",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/stringer",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/testgen",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/union",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/plugin/unmarshal",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/proto",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
-		},
-		{
-			"ImportPath": "code.google.com/p/gogoprotobuf/protoc-gen-gogo",
-			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+			"ImportPath": "code.google.com/p/goprotobuf/proto",
+			"Comment": "go.r60-150",
+			"Rev": "74b407a42099a47c7cf14dc526472d991ecbd1a3"
 		},
 		{
 			"ImportPath": "github.com/bbangert/toml",
@@ -84,6 +18,7 @@
 		},
 		{
 			"ImportPath": "github.com/bradfitz/gomemcache/memcache",
+			"Comment": "release.r60-36-g4faecad",
 			"Rev": "4faecadd4f695d18a912ba110120fcfd460aca98"
 		},
 		{
@@ -109,7 +44,12 @@
 		},
 		{
 			"ImportPath": "github.com/kitcambridge/envconf",
-			"Rev": "621ad9712cb2b9f0de9ba91c816dd3142e6d162e"
+			"Rev": "dc11cdbec4db51d60a1c6b0fb45c49586adabcaa"
+		},
+		{
+			"ImportPath": "github.com/mozilla-services/heka/message",
+			"Comment": "v0.6.1-9-g7277e07",
+			"Rev": "7277e07e2a11527e7f570d57c9c84063d055ef7f"
 		}
 	]
 }

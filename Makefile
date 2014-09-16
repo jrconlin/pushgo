@@ -13,8 +13,6 @@ PATH := $(HERE)/bin:$(DEPS)/bin:$(PATH)
 
 PACKAGE = github.com/mozilla-services/pushgo
 
-PROTO = $(HERE)/src/$(PACKAGE)/message
-
 .PHONY: all build clean test simplepush memcached
 
 all: build
@@ -35,11 +33,6 @@ $(DEPS): $(GODEP)
 
 build: $(DEPS)
 
-protobuf-2.6.0:
-	wget -qO - https://protobuf.googlecode.com/svn/rc/protobuf-2.6.0.tar.gz | tar xvz
-	cd protobuf-2.6.0 && \
-	./configure
-
 libmemcached-1.0.18:
 	wget -qO - https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz | tar xvz
 	cd libmemcached-1.0.18 && \
@@ -55,14 +48,6 @@ endif
 
 memcached: libmemcached-1.0.18
 	cd libmemcached-1.0.18 && sudo make install
-
-protobuf: protobuf-2.6.0
-	cd protobuf-2.6.0 && make install
-
-proto:
-	protoc --gogo_out=$(PROTO) \
-		-I=$(PROTO):$(DEPS)/src/code.google.com/p/gogoprotobuf/gogoproto:$(DEPS)/src/code.google.com/p/gogoprotobuf/protobuf \
-		$(wildcard $(PROTO)/*.proto)
 
 simplepush:
 	rm -f simplepush
