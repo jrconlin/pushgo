@@ -7,13 +7,12 @@ package simplepush
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/bbangert/toml"
+	"github.com/kitcambridge/envconf"
 )
 
 // Extensible sections
@@ -36,8 +35,11 @@ type HasConfigStruct interface {
 	Init(app *Application, config interface{}) error
 }
 
-// EnvPrefix is the configuration environment variable prefix.
-const EnvPrefix = "pushgo_"
+// The configuration environment variable prefix and section separator.
+const (
+	EnvPrefix = "pushgo"
+	EnvSep    = "_"
+)
 
 var unknownOptionRegex = regexp.MustCompile("^Configuration contains key \\[(?P<key>\\S+)\\]")
 
@@ -170,178 +172,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	return app, nil
 }
 
-// An Environment holds and decodes environment variables.
-type Environment map[string]string
-
-// Get returns the value of an environment variable, performing a
-// case-insensitive search if an exact match is not found.
-func (env Environment) Get(name string) (value string, ok bool) {
-	var key string
-	if value, ok = env[name]; ok {
-		goto formatValue
-	}
-	for key, value = range env {
-		if strings.EqualFold(key, name) {
-			goto formatValue
-		}
-	}
-	return "", false
-formatValue:
-	return strings.TrimSpace(value), true
-}
-
-// Unmarshal decodes configuration options specified via environment variables
-// into the value pointed to by configStruct.
-func (env Environment) Unmarshal(sectionName string, configStruct interface{}) error {
-	value := reflect.ValueOf(configStruct)
-	if value.Kind() != reflect.Ptr || value.IsNil() {
-		return fmt.Errorf("Non-pointer type %s", value.Type())
-	}
-	return env.decodeEnvField(sectionName, indirect(value))
-}
-
-// decodeEnvField decodes an environment variable into a struct field. Literals
-// are decoded directly into the value; structs are decoded recursively.
-func (env Environment) decodeEnvField(name string, value reflect.Value) error {
-	typ := value.Type()
-	if typ.Kind() != reflect.Struct {
-		if source, ok := env.Get(name); ok {
-			return decodeEnvLiteral(source, value)
-		}
-		return nil
-	}
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		tag := field.Tag.Get("env")
-		if tag == "-" {
-			continue
-		}
-		if len(tag) == 0 {
-			tag = field.Name
-		}
-		if err := env.decodeEnvField(name+"_"+tag, value.Field(i)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// decodeEnvLiteral decodes a source string into a value. Only integers,
-// floats, Booleans, slices, and strings are supported.
-func decodeEnvLiteral(source string, value reflect.Value) error {
-	kind := value.Type().Kind()
-	if kind >= reflect.Int && kind <= reflect.Int64 {
-		result, err := strconv.ParseInt(source, 0, value.Type().Bits())
-		if err != nil {
-			return err
-		}
-		value.SetInt(result)
-		return nil
-	}
-	if kind >= reflect.Uint && kind <= reflect.Uint64 {
-		result, err := strconv.ParseUint(source, 0, value.Type().Bits())
-		if err != nil {
-			return err
-		}
-		value.SetUint(result)
-		return nil
-	}
-	if kind >= reflect.Float32 && kind <= reflect.Float64 {
-		result, err := strconv.ParseFloat(source, value.Type().Bits())
-		if err != nil {
-			return err
-		}
-		value.SetFloat(result)
-		return nil
-	}
-	switch kind {
-	case reflect.Bool:
-		result, err := strconv.ParseBool(source)
-		if err != nil {
-			return err
-		}
-		value.SetBool(result)
-		return nil
-
-	case reflect.Slice:
-		return decodeEnvSlice(source, value)
-
-	case reflect.String:
-		value.SetString(source)
-		return nil
-	}
-	return fmt.Errorf("Unsupported type %s", kind)
-}
-
-// splitList splits a comma-separated list into a slice of strings, accounting
-// for escape characters.
-func splitList(source string) (results []string) {
-	var (
-		isEscaped        bool
-		lastIndex, index int
-	)
-	for ; index < len(source); index++ {
-		if isEscaped {
-			isEscaped = false
-			continue
-		}
-		switch source[index] {
-		case '\\':
-			isEscaped = true
-
-		case ',':
-			results = append(results, source[lastIndex:index])
-			lastIndex = index + 1
-		}
-	}
-	if lastIndex < index {
-		results = append(results, source[lastIndex:])
-	}
-	return results
-}
-
-// decodeEnvSlice decodes a comma-separated list of values into a slice.
-// Slices are decoded recursively.
-func decodeEnvSlice(source string, value reflect.Value) error {
-	sources := splitList(source)
-	value.SetLen(0)
-	for _, source := range sources {
-		element := indirect(reflect.New(value.Type().Elem()))
-		if err := decodeEnvLiteral(source, element); err != nil {
-			return err
-		}
-		value.Set(reflect.Append(value, element))
-	}
-	return nil
-}
-
-// indirect returns the value pointed to by a pointer, allocating zero values
-// for nil pointers.
-func indirect(value reflect.Value) reflect.Value {
-	for value.Kind() == reflect.Ptr {
-		if value.IsNil() {
-			value.Set(reflect.New(value.Type().Elem()))
-		}
-		value = reflect.Indirect(value)
-	}
-	return value
-}
-
-// LoadEnvironment returns an Environment populated with configuration options.
-// Variable names are case-insensitive.
-func LoadEnvironment() (env Environment) {
-	env = make(Environment)
-	for _, v := range os.Environ() {
-		value := strings.SplitN(v, "=", 2)
-		key := value[0]
-		if l := len(EnvPrefix); len(key) >= l && strings.EqualFold(key[:l], EnvPrefix) {
-			env[key[l:]] = value[1]
-		}
-	}
-	return
-}
-
-func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
+func LoadConfigStruct(sectionName string, env envconf.Environment,
+	config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
 	configStruct = configable.ConfigStruct()
@@ -349,34 +181,47 @@ func LoadConfigStruct(config toml.Primitive, configable HasConfigStruct) (
 	// Global section options
 	// SimplePush defines some common parameters
 	// that are defined in the ExtensibleGlobals struct.
-	// Use reflection to extract the ExtensibleGlobals fields or TOML tag
-	// name if available
-	spParams := make(map[string]interface{})
-	pg := ExtensibleGlobals{}
-	rt := reflect.ValueOf(pg).Type()
+	// Use reflection to extract the tagged ExtensibleGlobals fields.
+	var pg ExtensibleGlobals
+	rt := reflect.TypeOf(pg)
+
+	ignoreConfig := make(map[string]interface{}, rt.NumField())
+	ignoreEnv := make(map[string]interface{}, rt.NumField())
+
 	for i := 0; i < rt.NumField(); i++ {
 		sft := rt.Field(i)
 		kname := sft.Tag.Get("toml")
 		if len(kname) == 0 {
 			kname = sft.Name
 		}
-		spParams[kname] = true
+		ignoreConfig[kname] = true
+		if kname = sft.Tag.Get("env"); len(kname) == 0 {
+			kname = sft.Name
+		}
+		ignoreEnv[toEnvName(sectionName, kname)] = true
 	}
 
-	if err = toml.PrimitiveDecodeStrict(config, configStruct, spParams); err != nil {
-		configStruct = nil
+	if err = toml.PrimitiveDecodeStrict(config, configStruct, ignoreConfig); err != nil {
 		matches := unknownOptionRegex.FindStringSubmatch(err.Error())
 		if len(matches) == 2 {
 			// We've got an unrecognized config option.
-			err = fmt.Errorf("Unknown config setting: %s", matches[1])
+			err = fmt.Errorf("Unknown config setting for section '%s': %s",
+				sectionName, matches[1])
 		}
+		return nil, err
 	}
-	return
+
+	if err = env.DecodeStrict(toEnvName(sectionName), EnvSep, configStruct, ignoreEnv); err != nil {
+		return nil, fmt.Errorf("Invalid environment variable for section '%s': %s",
+			sectionName, err)
+	}
+
+	return configStruct, nil
 }
 
 // Loads the config for a section supplied, configures the supplied object, and initializes
 func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
-	env Environment, configFile ConfigFile) (err error) {
+	env envconf.Environment, configFile ConfigFile) (err error) {
 
 	conf, ok := configFile[sectionName]
 	if !ok {
@@ -385,15 +230,13 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 	confStruct := obj.ConfigStruct()
 
 	if err = toml.PrimitiveDecode(conf, confStruct); err != nil {
-		err = fmt.Errorf("Unable to decode config for section '%s': %s",
+		return fmt.Errorf("Unable to decode config for section '%s': %s",
 			sectionName, err)
-		return
 	}
 
-	if err = env.Unmarshal(sectionName, confStruct); err != nil {
-		err = fmt.Errorf("Invalid environment variable for section '%s': %s",
+	if err = env.Decode(toEnvName(sectionName), EnvSep, confStruct); err != nil {
+		return fmt.Errorf("Invalid environment variable for section '%s': %s",
 			sectionName, err)
-		return
 	}
 
 	err = obj.Init(app, confStruct)
@@ -402,8 +245,8 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 
 // Load an extensible section that has a type keyword
 func LoadExtensibleSection(app *Application, sectionName string,
-	extensions AvailableExtensions, env Environment, configFile ConfigFile) (HasConfigStruct, error) {
-	var err error
+	extensions AvailableExtensions, env envconf.Environment,
+	configFile ConfigFile) (obj HasConfigStruct, err error) {
 
 	confSection := new(ExtensibleGlobals)
 
@@ -415,27 +258,22 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
 		return nil, err
 	}
-	if err = env.Unmarshal(sectionName, confSection); err != nil {
+	if err = env.Decode(toEnvName(sectionName), EnvSep, confSection); err != nil {
 		return nil, err
 	}
 	ext, ok := extensions[confSection.Typ]
 	if !ok {
-		ext, ok = extensions["default"]
-		if !ok {
+		if ext, ok = extensions["default"]; !ok {
 			return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
 				confSection.Typ, sectionName)
 		}
 		//TODO: Add log info to indicate using "default"
 	}
 
-	obj := ext()
-	loadedConfig, err := LoadConfigStruct(conf, obj)
+	obj = ext()
+	loadedConfig, err := LoadConfigStruct(sectionName, env, conf, obj)
 	if err != nil {
 		return nil, err
-	}
-
-	if err = env.Unmarshal(sectionName, loadedConfig); err != nil {
-		return nil, fmt.Errorf("Invalid environment variable for section '%s': %s", sectionName, err)
 	}
 
 	err = obj.Init(app, loadedConfig)
@@ -450,7 +288,7 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
 		return nil, fmt.Errorf("Error decoding config file: %s", err)
 	}
-	env := LoadEnvironment()
+	env := envconf.Load()
 
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
@@ -499,4 +337,8 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 	}
 
 	return loaders.Load(logging)
+}
+
+func toEnvName(params ...string) string {
+	return strings.Join(append([]string{EnvPrefix}, params...), EnvSep)
 }
