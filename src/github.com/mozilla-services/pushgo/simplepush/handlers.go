@@ -23,24 +23,24 @@ import (
 type HandlerConfig struct{}
 
 type Handler struct {
-	app           *Application
-	logger        *SimpleLogger
-	store         Store
-	router        *Router
-	metrics       *Metrics
-	maxGoroutines int
-	tokenKey      []byte
-	propping      PropPinger
+	app      *Application
+	logger   *SimpleLogger
+	store    Store
+	router   *Router
+	metrics  *Metrics
+	tokenKey []byte
+	propping PropPinger
 }
 
 type ServerStatus struct {
-	Healthy      bool   `json:"ok"`
-	Clients      int    `json:"clientCount"`
-	MaxClients   int    `json:"maxClients"`
-	StoreHealthy bool   `json:"mcstatus"`
-	Goroutines   int    `json:"goroutines"`
-	Error        string `json:"error,omitempty"`
-	Message      string `json:"message,omitempty"`
+	Healthy       bool   `json:"ok"`
+	Clients       int    `json:"clientCount"`
+	MaxClients    int    `json:"maxClients"`
+	StoreHealthy  bool   `json:"mcstatus"`
+	Goroutines    int    `json:"goroutines"`
+	MaxGoroutines int    `json:"maxGoroutines"`
+	Error         string `json:"error,omitempty"`
+	Message       string `json:"message,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -53,7 +53,6 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.store = app.Store()
 	self.metrics = app.Metrics()
 	self.router = app.Router()
-	self.maxGoroutines = app.MaxGoroutines()
 	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
 	return nil
@@ -79,45 +78,29 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	// return "OK" only if all is well.
 	// TODO: make sure all is well.
-	clientCount := self.app.ClientCount()
-	ok := clientCount >= self.maxGoroutines
-	statusText := "OK"
-	if !ok {
-		statusText = "NOPE"
-	}
-	reply := []byte(fmt.Sprintf(`{"status":"%s","clients":%d}`,
-		statusText, clientCount))
+	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d}`,
+		self.app.ClientCount()))
 
 	resp.Header().Set("Content-Type", "application/json")
-	if !ok {
-		resp.WriteHeader(http.StatusServiceUnavailable)
-	}
 	resp.Write(reply)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	var okClients bool
 	var msg string
 
-	clientCount := self.app.ClientCount()
-	if okClients = clientCount < self.maxGoroutines; !okClients {
-		msg += "Exceeding active goroutine limit, "
+	ok, err := self.store.Status()
+	if !ok {
+		msg += fmt.Sprintf("Storage error: %s,", err)
 	}
-	mcStatus, err := self.store.Status()
-	if !mcStatus {
-		msg += fmt.Sprintf(" Memcache error %s,", err)
-	}
-	ok := okClients && mcStatus
 	status := &ServerStatus{
-		Healthy:      ok,
-		Clients:      clientCount,
-		MaxClients:   self.maxGoroutines,
-		StoreHealthy: mcStatus,
-		Goroutines:   runtime.NumGoroutine(),
-		Message:      msg,
+		Healthy:       ok,
+		Clients:       self.app.ClientCount(),
+		StoreHealthy:  ok,
+		Goroutines:    runtime.NumGoroutine(),
+		MaxGoroutines: self.app.MaxGoroutines(),
+		Message:       msg,
 	}
 	if err != nil {
 		status.Error = err.Error()
@@ -140,14 +123,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		version    int64
 		uaid, chid string
 	)
-
-	if self.app.ClientCount() >= self.maxGoroutines {
-		resp.Header().Set("Content-Type", "application/json")
-		resp.WriteHeader(http.StatusServiceUnavailable)
-		resp.Write([]byte(`{"error": "Server unavailable"}`))
-		self.metrics.Increment("updates.appserver.too_many_connections")
-		return
-	}
 
 	defer func(err *error) {
 		now := time.Now()
@@ -336,13 +311,6 @@ sendUpdate:
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if self.app.ClientCount() >= self.maxGoroutines {
-		websocket.JSON.Send(ws, struct {
-			Status int    `json:"status"`
-			Error  string `json:"error"`
-		}{http.StatusServiceUnavailable, "Server Unavailable"})
-		return
-	}
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,

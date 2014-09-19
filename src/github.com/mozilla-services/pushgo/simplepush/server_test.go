@@ -44,9 +44,6 @@ func (t *TestServer) load() (*Application, error) {
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
 			appConf := app.ConfigStruct().(*ApplicationConfig)
-			// 200 concurrent requests; 75 requests per second.
-			appConf.MaxRequests = 200
-			appConf.RequestRate = 75
 			if err := app.Init(app, appConf); err != nil {
 				return nil, fmt.Errorf("Error initializing application: %#v", err)
 			}
