@@ -163,7 +163,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 						"expected": typeErr.Type.String(),
 						"actual":   typeErr.Value})
 				}
-				self.handleError(sock, raw, CodeUnknownCommand)
+				self.handleError(sock, raw, ErrUnknownCommand)
 			} else if syntaxErr, ok := err.(*json.SyntaxError); ok {
 				if self.logger.ShouldLog(WARNING) {
 					self.logger.Warn("worker", "Malformed request payload", LogFields{
@@ -196,7 +196,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		default:
 			self.logger.Warn("worker", "Bad command",
 				LogFields{"rid": self.id, "cmd": header.Type})
-			err = CodeUnknownCommand
+			err = ErrUnknownCommand
 		}
 		if err != nil {
 			if self.logger.ShouldLog(DEBUG) {
@@ -264,7 +264,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "hello", "error": ErrStr(err)})
 			}
-			err = CodeInvalidParams
+			err = ErrInvalidParams
 		}
 	}()
 
@@ -277,10 +277,10 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 
 	request := new(HelloRequest)
 	if err = json.Unmarshal(message, request); err != nil {
-		return CodeInvalidParams
+		return ErrInvalidParams
 	}
 	if request.DeviceID == nil {
-		return CodeInvalidParams
+		return ErrInvalidParams
 	}
 	suggestedUAID = *request.DeviceID
 	/* NOTE: This seems to be a redirect, which I don't believe we support
@@ -306,7 +306,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		// Must include "channelIDs" (even if empty)
 		self.logger.Debug("worker", "Missing ChannelIDs",
 			LogFields{"rid": self.id})
-		return CodeNoParams
+		return ErrNoParams
 	}
 	if len(sock.Uaid) > 0 {
 		if len(suggestedUAID) == 0 || sock.Uaid == suggestedUAID {
@@ -316,7 +316,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		// if there's already a Uaid for this device, don't accept a new one
 		self.logger.Debug("worker", "Conflicting UAIDs",
 			LogFields{"rid": self.id})
-		return CodeExistingID
+		return ErrExistingID
 	}
 	if forceReset = len(suggestedUAID) == 0; forceReset {
 		self.logger.Debug("worker", "Generating new UAID for device",
@@ -326,7 +326,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	if !id.Valid(suggestedUAID) {
 		self.logger.Debug("worker", "Invalid character in UAID",
 			LogFields{"rid": self.id})
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	// if there's no UAID for the socket, accept or create a new one.
 	if forceReset = self.app.ClientExists(suggestedUAID); forceReset {
@@ -403,18 +403,18 @@ func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (er
 					LogFields{"rid": self.id, "cmd": "ack", "error": ErrStr(err)})
 			}
 			debug.PrintStack()
-			err = CodeInvalidParams
+			err = ErrInvalidParams
 		}
 	}()
 	if sock.Uaid == "" {
-		return CodeInvalidCommand
+		return ErrInvalidCommand
 	}
 	request := new(ACKRequest)
 	if err = json.Unmarshal(message, request); err != nil {
-		return CodeInvalidParams
+		return ErrInvalidParams
 	}
 	if len(request.Updates) == 0 {
-		return CodeNoParams
+		return ErrNoParams
 	}
 	self.metrics.Increment("updates.client.ack")
 	for _, update := range request.Updates {
@@ -448,16 +448,16 @@ func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte
 					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
 			}
 			debug.PrintStack()
-			err = CodeInvalidParams
+			err = ErrInvalidParams
 		}
 	}()
 
 	if sock.Uaid == "" {
-		return CodeInvalidCommand
+		return ErrInvalidCommand
 	}
 	request := new(RegisterRequest)
 	if err = json.Unmarshal(message, request); err != nil || !id.Valid(request.ChannelID) {
-		return CodeInvalidParams
+		return ErrInvalidParams
 	}
 	if err = sock.Store.Register(sock.Uaid, request.ChannelID, 0); err != nil {
 		if self.logger.ShouldLog(WARNING) {
@@ -505,22 +505,22 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
 			}
-			err = CodeInvalidParams
+			err = ErrInvalidParams
 		}
 	}()
 	if sock.Uaid == "" {
 		self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
 			LogFields{"rid": self.id})
-		return CodeInvalidCommand
+		return ErrInvalidCommand
 	}
 	request := new(UnregisterRequest)
 	if err = json.Unmarshal(message, request); err != nil {
-		return CodeInvalidParams
+		return ErrInvalidParams
 	}
 	if len(request.ChannelID) == 0 {
 		self.logger.Warn("worker", "Unregister failed, missing channelID",
 			LogFields{"rid": self.id})
-		return CodeNoParams
+		return ErrNoParams
 	}
 	// Always return success for an UNREG.
 	if err = sock.Store.Unregister(sock.Uaid, request.ChannelID); err != nil {
@@ -619,7 +619,7 @@ func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err err
 		}
 		self.stopped = true
 		self.metrics.Increment("updates.client.too_many_pings")
-		return CodeTooManyPings
+		return ErrTooManyPings
 	}
 	self.lastPing = now
 	if self.app.pushLongPongs {
@@ -667,7 +667,7 @@ func isPingBody(raw []byte) (bool, error) {
 		return true, nil
 	}
 	// Quick sanity check for unbalanced or multiple consecutive braces.
-	return false, CodeBadPayload
+	return false, ErrBadPayload
 }
 
 // o4fs

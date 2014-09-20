@@ -9,10 +9,7 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidID    StorageError = "Invalid UUID"
-	AvailableStores              = make(AvailableExtensions)
-)
+var AvailableStores = make(AvailableExtensions)
 
 // StorageError represents an adapter storage error.
 type StorageError string

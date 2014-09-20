@@ -322,7 +322,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if err = s.storeRec(key, rec); err != nil {
 		return err
@@ -335,17 +335,17 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 // Store.Register().
 func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeRegister(uaid, chid, version)
 }
@@ -354,7 +354,7 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
@@ -401,21 +401,21 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 func (s *EmceeStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeUpdate(uaid, chid, version)
 }
@@ -428,11 +428,11 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	}
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
-		return CodeNonexistentChannel
+		return ErrNonexistentChannel
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -461,17 +461,17 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 // as inactive. Implements Store.Unregister().
 func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeUnregister(uaid, chid)
 }
@@ -481,17 +481,17 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 // Implements Store.Drop().
 func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -500,7 +500,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	defer s.releaseWithout(client, &err)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if err = client.Delete(encodeKey(key), 0); err == nil || isMissing(err) {
 		return nil
@@ -512,7 +512,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 // since the specified cutoff time. Implements Store.FetchAll().
 func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
-		return nil, nil, CodeNoID
+		return nil, nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -637,7 +637,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
-			return CodeInvalidKey
+			return ErrInvalidKey
 		}
 		client.Delete(encodeKey(key), 0)
 	}
@@ -651,11 +651,11 @@ func (s *EmceeStore) DropAll(suaid string) error {
 // from memcached. Implements Store.FetchPing().
 func (s *EmceeStore) FetchPing(suaid string) (pingData []byte, err error) {
 	if len(suaid) == 0 {
-		return nil, CodeNoID
+		return nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return nil, CodeInvalidID
+		return nil, ErrInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -685,11 +685,11 @@ func (s *EmceeStore) PutPing(suaid string, pingData []byte) error {
 // Implements Store.DropPing().
 func (s *EmceeStore) DropPing(suaid string) error {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -735,7 +735,7 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error)
 // The channel IDs are sorted in-place.
 func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -750,7 +750,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 // Retrieves a channel record from memcached.
 func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
-		return nil, CodeNoKey
+		return nil, ErrNoKey
 	}
 	keyString := encodeKey(pk)
 	client, err := s.getClient()
@@ -778,10 +778,10 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 // Stores an updated channel record in memcached.
 func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
-		return CodeNoKey
+		return ErrNoKey
 	}
 	if rec == nil {
-		return CodeNoData
+		return ErrNoData
 	}
 	var ttl time.Duration
 	switch rec.State {

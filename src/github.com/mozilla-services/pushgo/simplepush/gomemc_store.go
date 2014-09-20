@@ -200,7 +200,7 @@ func (s *GomemcStore) Exists(suaid string) bool {
 func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -230,17 +230,17 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 // Store.Register().
 func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeRegister(uaid, chid, version)
 }
@@ -249,7 +249,7 @@ func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
 func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -290,21 +290,21 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 func (s *GomemcStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeUpdate(uaid, chid, version)
 }
@@ -313,7 +313,7 @@ func (s *GomemcStore) Update(key string, version int64) (err error) {
 func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -321,7 +321,7 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	}
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
-		return CodeNonexistentChannel
+		return ErrNonexistentChannel
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -335,7 +335,7 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 					"error":      err.Error(),
 				})
 		}
-		return CodeRecordUpdateFailed
+		return ErrRecordUpdateFailed
 	}
 	channel.State = StateDeleted
 	if err = s.storeRec(key, channel); err != nil {
@@ -346,7 +346,7 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 					"error":      err.Error(),
 				})
 		}
-		return CodeRecordUpdateFailed
+		return ErrRecordUpdateFailed
 	}
 	return nil
 }
@@ -355,17 +355,17 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 // as inactive. Implements Store.Unregister().
 func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	return s.storeUnregister(uaid, chid)
 }
@@ -375,21 +375,21 @@ func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 // Implements Store.Drop().
 func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return CodeNoChannel
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return CodeInvalidChannel
+		return ErrInvalidChannel
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return CodeInvalidKey
+		return ErrInvalidKey
 	}
 	if err = s.client.Delete(encodeKey(key)); err != nil && err != mc.ErrCacheMiss {
 		return err
@@ -401,7 +401,7 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 // since the specified cutoff time. Implements Store.FetchAll().
 func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
-		return nil, nil, CodeNoID
+		return nil, nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -518,7 +518,7 @@ func (s *GomemcStore) DropAll(suaid string) error {
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
-			return CodeInvalidKey
+			return ErrInvalidKey
 		}
 		s.client.Delete(encodeKey(key))
 	}
@@ -532,11 +532,11 @@ func (s *GomemcStore) DropAll(suaid string) error {
 // from memcached. Implements Store.FetchPing().
 func (s *GomemcStore) FetchPing(suaid string) (pingData []byte, err error) {
 	if len(suaid) == 0 {
-		return nil, CodeNoID
+		return nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return nil, CodeInvalidID
+		return nil, ErrInvalidID
 	}
 	raw, err := s.client.Get(s.PingPrefix + hex.EncodeToString(uaid))
 	if err != nil {
@@ -562,11 +562,11 @@ func (s *GomemcStore) PutPing(suaid string, pingData []byte) error {
 // Implements Store.DropPing().
 func (s *GomemcStore) DropPing(suaid string) error {
 	if len(suaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return CodeInvalidID
+		return ErrInvalidID
 	}
 	return s.client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
 }
@@ -602,7 +602,7 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 // The channel IDs are sorted in-place.
 func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
-		return CodeNoID
+		return ErrNoID
 	}
 	// sort the array
 	sort.Sort(chids)
@@ -623,7 +623,7 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 // Retrieves a channel record from memcached.
 func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
-		return nil, CodeNoKey
+		return nil, ErrNoKey
 	}
 	keyString := encodeKey(pk)
 	result := new(ChannelRecord)
@@ -654,10 +654,10 @@ func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 // Stores an updated channel record in memcached.
 func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
-		return CodeNoKey
+		return ErrNoKey
 	}
 	if rec == nil {
-		return CodeNoData
+		return ErrNoData
 	}
 	var ttl time.Duration
 	switch rec.State {
