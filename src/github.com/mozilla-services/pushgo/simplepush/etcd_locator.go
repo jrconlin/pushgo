@@ -47,7 +47,6 @@ type etcdFetch struct {
 
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
-	sync.Mutex
 	logger          *SimpleLogger
 	metrics         *Metrics
 	refreshInterval time.Duration
