@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -229,7 +228,6 @@ type TextLoggerConfig struct {
 type TextLogger struct {
 	pid      int32
 	hostname string
-	trace    bool
 	filter   LogLevel
 	writer   io.Writer
 }
@@ -245,7 +243,6 @@ func (tl *TextLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*TextLoggerConfig)
 	tl.pid = int32(os.Getpid())
 	tl.hostname = app.Hostname()
-	tl.trace = conf.Trace
 	tl.filter = LogLevel(conf.Filter)
 	return
 }
@@ -264,22 +261,6 @@ func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields Lo
 		return
 	}
 
-	var (
-		file, funcName string
-		line           int
-		hasTrace       bool
-	)
-	// add in go language tracing. (Also CPU intensive, but REALLY helpful
-	// when dev/debugging)
-	if tl.trace {
-		var pc uintptr
-		if pc, file, line, hasTrace = runtime.Caller(2); hasTrace {
-			if funk := runtime.FuncForPC(pc); funk != nil {
-				funcName = funk.Name()
-			}
-		}
-	}
-
 	reply := new(bytes.Buffer)
 	fmt.Fprintf(reply, "%s [% 8s] %s %s", time.Now().Format(TextLogTime),
 		level, messageType, strconv.Quote(payload))
@@ -294,10 +275,6 @@ func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields Lo
 			}
 			i++
 		}
-	}
-	if hasTrace {
-		reply.WriteByte(' ')
-		fmt.Fprintf(reply, "[%s:%d %s]", file, line, funcName)
 	}
 
 	reply.WriteByte('\n')
