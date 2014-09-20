@@ -236,12 +236,16 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		// TODO: Move PropPinger here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
 		resp.Header().Set("Content-Type", "application/json")
-		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
-			resp.Write([]byte("{}"))
-		} else {
+		var cancelSignal <-chan bool
+		if cn, ok := resp.(http.CloseNotifier); ok {
+			cancelSignal = cn.CloseNotify()
+		}
+		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
+			return
 		}
+		resp.Write([]byte("{}"))
 		return
 	}
 

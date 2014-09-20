@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -194,40 +195,52 @@ func (r *Router) Close() (err error) {
 	return err
 }
 
-// SendUpdate routes an update packet to the correct server.
-func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (err error) {
+// Route routes an update packet to the correct server.
+func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string) (err error) {
 	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
 		r.logger.Error("router", "No discovery service set; unable to route message",
-			LogFields{"uaid": uaid, "chid": chid})
+			LogFields{"rid": logID, "uaid": uaid, "chid": chid})
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
 	msg, err := json.Marshal(&Routable{
 		ChannelID: chid,
 		Version:   version,
-		Time:      timer.Format(time.RFC3339Nano),
+		Time:      sentAt.Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		r.logger.Error("router", "Could not compose routing message",
-			LogFields{"error": err.Error()})
+			LogFields{"rid": logID, "error": err.Error()})
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		r.logger.Error("router", "Could not query discovery service for contacts",
-			LogFields{"error": err.Error()})
+			LogFields{"rid": logID, "error": err.Error()})
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
-	ok, err := r.notifyAll(contacts, uaid, msg)
+	if r.logger.ShouldLog(DEBUG) {
+		r.logger.Debug("router", "Fetched contact list from discovery service",
+			LogFields{"rid": logID, "servers": strings.Join(contacts, ", ")})
+	}
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("router", "Sending push...", LogFields{
+			"rid":     logID,
+			"uaid":    uaid,
+			"chid":    chid,
+			"version": strconv.FormatInt(version, 10),
+			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
+	}
+	ok, err := r.notifyAll(cancelSignal, contacts, uaid, msg, logID)
 	endTime := time.Now()
 	if err != nil {
 		if r.logger.ShouldLog(WARNING) {
 			r.logger.Warn("router", "Could not post to server",
-				LogFields{"error": err.Error()})
+				LogFields{"rid": logID, "error": err.Error()})
 		}
 		r.metrics.Increment("router.broadcast.error")
 		return err
@@ -241,7 +254,7 @@ func (r *Router) SendUpdate(uaid, chid string, version int64, timer time.Time) (
 		timerName = "updates.routed.misses"
 	}
 	r.metrics.Increment(counterName)
-	r.metrics.Timer(timerName, endTime.Sub(timer))
+	r.metrics.Timer(timerName, endTime.Sub(sentAt))
 	r.metrics.Timer("router.handled", endTime.Sub(startTime))
 	return nil
 }
@@ -260,17 +273,13 @@ func (r *Router) formatURL(contact, uaid string) (string, error) {
 
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
-func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool, err error) {
-	if r.logger.ShouldLog(INFO) {
-		r.logger.Info("router", "Sending push...", LogFields{"msg": string(msg),
-			"servers": strings.Join(contacts, ", ")})
-	}
+func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string, uaid string, msg []byte, logID string) (ok bool, err error) {
 	for fromIndex := 0; !ok && fromIndex < len(contacts); {
 		toIndex := fromIndex + r.bucketSize
 		if toIndex > len(contacts) {
 			toIndex = len(contacts)
 		}
-		if ok, err = r.notifyBucket(contacts[fromIndex:toIndex], uaid, msg); err != nil {
+		if ok, err = r.notifyBucket(cancelSignal, contacts[fromIndex:toIndex], uaid, msg, logID); err != nil {
 			break
 		}
 		fromIndex += toIndex
@@ -280,21 +289,22 @@ func (r *Router) notifyAll(contacts []string, uaid string, msg []byte) (ok bool,
 
 // notifyBucket routes a message to all contacts in a bucket, returning as soon
 // as a contact accepts the update.
-func (r *Router) notifyBucket(contacts []string, uaid string, msg []byte) (ok bool, err error) {
+func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string, uaid string, msg []byte, logID string) (ok bool, err error) {
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	for _, contact := range contacts {
 		url, err := r.formatURL(contact, uaid)
 		if err != nil {
 			r.logger.Error("router", "Could not build routing URL",
-				LogFields{"error": err.Error()})
+				LogFields{"rid": logID, "error": err.Error()})
 			return false, err
 		}
-		go r.notifyContact(result, stop, contact, url, msg)
+		go r.notifyContact(result, stop, contact, url, msg, logID)
 	}
 	select {
 	case ok = <-r.closeSignal:
 		return false, io.EOF
+	case <-cancelSignal:
 	case ok = <-result:
 	case <-time.After(r.ctimeout + r.rwtimeout + 1*time.Second):
 	}
@@ -302,31 +312,33 @@ func (r *Router) notifyBucket(contacts []string, uaid string, msg []byte) (ok bo
 }
 
 // notifyContact routes a message to a single contact.
-func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact, url string, msg []byte) {
+func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact, url string, msg []byte, logID string) {
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {
-		r.logger.Error("router", "Router request failed", LogFields{"error": err.Error()})
+		r.logger.Error("router", "Router request failed",
+			LogFields{"rid": logID, "error": err.Error()})
 		return
 	}
+	req.Header.Set(HeaderID, logID)
 	if r.logger.ShouldLog(DEBUG) {
 		r.logger.Debug("router", "Sending request",
-			LogFields{"server": contact,
-				"url":  url,
-				"body": string(msg)})
+			LogFields{"rid": logID, "server": contact, "url": url})
 	}
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := r.rclient.Do(req)
 	if err != nil {
-		r.logger.Error("router", "Router send failed", LogFields{"error": err.Error()})
+		r.logger.Error("router", "Router send failed",
+			LogFields{"rid": logID, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		r.logger.Debug("router", "Denied", LogFields{"server": contact})
+		r.logger.Debug("router", "Denied", LogFields{"rid": logID, "server": contact})
 		return
 	}
-	r.logger.Info("router", "Server accepted", LogFields{"server": contact})
+	r.logger.Info("router", "Server accepted",
+		LogFields{"rid": logID, "server": contact})
 	select {
 	case <-stop:
 	case result <- true:
