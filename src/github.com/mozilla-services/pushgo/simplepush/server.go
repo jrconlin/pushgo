@@ -7,7 +7,6 @@ package simplepush
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -32,10 +31,32 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	Addr         string
-	SslCertFile  string `toml:"ssl_cert_file" env:"ssl_cert"`
-	SslKeyFile   string `toml:"ssl_key_file" env:"ssl_key"`
 	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
+	Socket       ListenerConfig
+	Update       ListenerConfig
+}
+
+type ListenerConfig struct {
+	Addr            string
+	MaxConns        int    `toml:"max_conns" env:"max_conns"`
+	KeepAlivePeriod string `toml:"tcp_keep_alive" env:"keep_alive"`
+	CertFile        string `toml:"cert_file" env:"cert"`
+	KeyFile         string `toml:"key_file" env:"key"`
+}
+
+func (conf *ListenerConfig) UseTLS() bool {
+	return len(conf.CertFile) > 0 && len(conf.KeyFile) > 0
+}
+
+func (conf *ListenerConfig) Listen() (ln net.Listener, err error) {
+	keepAlivePeriod, err := time.ParseDuration(conf.KeepAlivePeriod)
+	if err != nil {
+		return nil, err
+	}
+	if conf.UseTLS() {
+		return ListenTLS(conf.Addr, conf.CertFile, conf.KeyFile, conf.MaxConns, keepAlivePeriod)
+	}
+	return Listen(conf.Addr, conf.MaxConns, keepAlivePeriod)
 }
 
 func NewServer() *Serv {
@@ -45,27 +66,36 @@ func NewServer() *Serv {
 }
 
 type Serv struct {
-	app          *Application
-	logger       *SimpleLogger
-	listener     net.Listener
-	metrics      *Metrics
-	store        Store
-	key          []byte
-	template     *template.Template
-	prop         PropPinger
-	hostname     string
-	port         int
-	fullHostname string
-	isClosing    bool
-	closeSignal  chan bool
-	closeLock    sync.Mutex
-	lastErr      error
+	app         *Application
+	logger      *SimpleLogger
+	hostname    string
+	socketLn    net.Listener
+	socketURL   string
+	updateLn    net.Listener
+	updateURL   string
+	metrics     *Metrics
+	store       Store
+	key         []byte
+	template    *template.Template
+	prop        PropPinger
+	isClosing   bool
+	closeSignal chan bool
+	closeLock   sync.Mutex
 }
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
-		Addr:         ":8080",
 		PushEndpoint: "{{.CurrentHost}}/update/{{.Token}}",
+		Socket: ListenerConfig{
+			Addr:            ":8080",
+			MaxConns:        1000,
+			KeepAlivePeriod: "3m",
+		},
+		Update: ListenerConfig{
+			Addr:            ":8081",
+			MaxConns:        1000,
+			KeepAlivePeriod: "3m",
+		},
 	}
 }
 
@@ -78,6 +108,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.store = app.Store()
 	self.prop = app.PropPinger()
 	self.key = app.TokenKey()
+	self.hostname = app.Hostname()
 
 	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
 		self.logger.Critical("server", "Could not parse push endpoint template",
@@ -85,50 +116,59 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
-	usingSSL := len(conf.SslCertFile) > 0 && len(conf.SslKeyFile) > 0
-	if usingSSL {
-		self.logger.Info("server", "Using TLS", nil)
-		self.listener, err = ListenTLS(conf.Addr, conf.SslCertFile, conf.SslKeyFile, app.MaxGoroutines(), app.KeepAlivePeriod())
-	} else {
-		self.listener, err = Listen(conf.Addr, app.MaxGoroutines(), app.KeepAlivePeriod())
-	}
-	if err != nil {
-		self.logger.Error("server", "Could not attach listener",
+	if self.socketLn, err = conf.Socket.Listen(); err != nil {
+		self.logger.Critical("server", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
-
-	addr := self.listener.Addr().(*net.TCPAddr)
-	self.hostname = app.Hostname()
-	if len(self.hostname) == 0 {
-		self.hostname = addr.IP.String()
-	}
-	self.port = addr.Port
-
-	if usingSSL {
-		if self.port == 443 {
-			self.fullHostname = fmt.Sprintf("https://%s", self.hostname)
-		} else {
-			self.fullHostname = fmt.Sprintf("https://%s:%d", self.hostname, self.port)
-		}
+	var scheme string
+	if conf.Socket.UseTLS() {
+		scheme = "wss"
 	} else {
-		if self.port == 80 {
-			self.fullHostname = fmt.Sprintf("http://%s", self.hostname)
-		} else {
-			self.fullHostname = fmt.Sprintf("http://%s:%d", self.hostname, self.port)
-		}
+		scheme = "ws"
 	}
+	host, port := self.hostPort(self.socketLn)
+	self.socketURL = CanonicalURL(scheme, host, port)
+
+	if self.updateLn, err = conf.Update.Listen(); err != nil {
+		self.logger.Critical("server", "Could not attach update listener",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	if conf.Update.UseTLS() {
+		scheme = "https"
+	} else {
+		scheme = "http"
+	}
+	host, port = self.hostPort(self.updateLn)
+	self.updateURL = CanonicalURL(scheme, host, port)
 
 	go self.sendClientCount()
 	return nil
 }
 
-func (self *Serv) Listener() net.Listener {
-	return self.listener
+func (self *Serv) SocketListener() net.Listener {
+	return self.socketLn
 }
 
-func (self *Serv) FullHostname() string {
-	return self.fullHostname
+func (self *Serv) SocketURL() string {
+	return self.socketURL
+}
+
+func (self *Serv) UpdateListener() net.Listener {
+	return self.updateLn
+}
+
+func (self *Serv) UpdateURL() string {
+	return self.updateURL
+}
+
+func (self *Serv) hostPort(ln net.Listener) (host string, port int) {
+	addr := ln.Addr().(*net.TCPAddr)
+	if host = self.hostname; len(host) == 0 {
+		host = addr.IP.String()
+	}
+	return host, addr.Port
 }
 
 // A client connects!
@@ -259,7 +299,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.FullHostname(),
+		self.UpdateURL(),
 	}); err != nil {
 		self.logger.Error("server",
 			"Could not generate Push Endpoint",
@@ -390,17 +430,17 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 	return result, args
 }
 
-func (self *Serv) Close() (err error) {
+func (self *Serv) Close() error {
 	defer self.closeLock.Unlock()
 	self.closeLock.Lock()
 	if self.isClosing {
-		return self.lastErr
+		return nil
 	}
-	close(self.closeSignal)
-	err = self.listener.Close()
 	self.isClosing = true
-	self.lastErr = err
-	return err
+	close(self.closeSignal)
+	self.socketLn.Close()
+	self.updateLn.Close()
+	return nil
 }
 
 func (self *Serv) sendClientCount() {

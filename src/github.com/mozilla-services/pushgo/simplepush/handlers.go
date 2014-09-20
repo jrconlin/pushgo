@@ -33,14 +33,13 @@ type Handler struct {
 }
 
 type ServerStatus struct {
-	Healthy       bool   `json:"ok"`
-	Clients       int    `json:"clientCount"`
-	MaxClients    int    `json:"maxClients"`
-	StoreHealthy  bool   `json:"mcstatus"`
-	Goroutines    int    `json:"goroutines"`
-	MaxGoroutines int    `json:"maxGoroutines"`
-	Error         string `json:"error,omitempty"`
-	Message       string `json:"message,omitempty"`
+	Healthy      bool   `json:"ok"`
+	Clients      int    `json:"clientCount"`
+	MaxClients   int    `json:"maxClients"`
+	StoreHealthy bool   `json:"mcstatus"`
+	Goroutines   int    `json:"goroutines"`
+	Error        string `json:"error,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -95,12 +94,11 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 		msg += fmt.Sprintf("Storage error: %s,", err)
 	}
 	status := &ServerStatus{
-		Healthy:       ok,
-		Clients:       self.app.ClientCount(),
-		StoreHealthy:  ok,
-		Goroutines:    runtime.NumGoroutine(),
-		MaxGoroutines: self.app.MaxGoroutines(),
-		Message:       msg,
+		Healthy:      ok,
+		Clients:      self.app.ClientCount(),
+		StoreHealthy: ok,
+		Goroutines:   runtime.NumGoroutine(),
+		Message:      msg,
 	}
 	if err != nil {
 		status.Error = err.Error()

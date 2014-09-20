@@ -12,7 +12,8 @@ import (
 
 type TestServer struct {
 	sync.Mutex
-	ServAddr   string
+	SocketAddr string
+	UpdateAddr string
 	RouterAddr string
 	LogLevel   int
 	Contacts   []string
@@ -85,10 +86,7 @@ func (t *TestServer) load() (*Application, error) {
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
 			router := NewRouter()
 			routerConf := router.ConfigStruct().(*RouterConfig)
-			routerConf.Addr = t.RouterAddr
-			if len(routerConf.Addr) == 0 {
-				routerConf.Addr = ""
-			}
+			routerConf.Server.Addr = t.RouterAddr
 			if err := router.Init(app, routerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)
 			}
@@ -106,11 +104,9 @@ func (t *TestServer) load() (*Application, error) {
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
 			servConf := serv.ConfigStruct().(*ServerConfig)
-			servConf.Addr = t.ServAddr
-			if len(servConf.Addr) == 0 {
-				// Listen on a random port for testing.
-				servConf.Addr = ""
-			}
+			// Listen on a random port for testing.
+			servConf.Socket.Addr = t.SocketAddr
+			servConf.Update.Addr = t.UpdateAddr
 			if err := serv.Init(app, servConf); err != nil {
 				return nil, fmt.Errorf("Error initializing server: %#v", err)
 			}
@@ -153,7 +149,7 @@ func (t *TestServer) Origin() (string, error) {
 	if server == nil {
 		return "", nil
 	}
-	origin, err := url.Parse(server.FullHostname())
+	origin, err := url.Parse(server.SocketURL())
 	switch origin.Scheme {
 	case "http":
 		origin.Scheme = "ws"

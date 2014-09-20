@@ -61,14 +61,14 @@ type RouterConfig struct {
 	// value; overrides simplepush.Application.Hostname() if specified.
 	DefaultHost string `toml:"default_host" env:"default_host"`
 
-	// Addr is the interface and port that the router will use to receive proxied
-	// updates. The port should not be publicly accessible. Defaults to ":3000".
-	Addr string
-
 	// UrlTemplate is a text/template source string for constructing the proxy
 	// endpoint URL. Interpolated variables are {{.Scheme}}, {{.Host}}, and
 	// {{.Uaid}}.
 	UrlTemplate string `toml:"url_template" env:"url_template"`
+
+	// Server specifies the address and port, maximum connections, TCP keep-alive
+	// period, and certificate information for the routing listener.
+	Server ListenerConfig
 }
 
 // Router proxies incoming updates to the Simple Push server ("contact") that
@@ -104,8 +104,12 @@ func (*Router) ConfigStruct() interface{} {
 		Ctimeout:    "3s",
 		Rwtimeout:   "3s",
 		Scheme:      "http",
-		Addr:        ":3000",
 		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
+		Server: ListenerConfig{
+			Addr:            ":3000",
+			MaxConns:        1000,
+			KeepAlivePeriod: "3m",
+		},
 	}
 }
 
@@ -133,24 +137,22 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
-	if r.listener, err = Listen(conf.Addr, app.MaxGoroutines(), app.KeepAlivePeriod()); err != nil {
+	if r.listener, err = conf.Server.Listen(); err != nil {
 		r.logger.Error("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
-
-	r.bucketSize = conf.BucketSize
-	r.scheme = conf.Scheme
-	r.hostname = conf.DefaultHost
-	if len(r.hostname) == 0 {
+	if r.hostname = conf.DefaultHost; len(r.hostname) == 0 {
 		r.hostname = app.Hostname()
 	}
-
 	addr := r.listener.Addr().(*net.TCPAddr)
 	if len(r.hostname) == 0 {
 		r.hostname = addr.IP.String()
 	}
 	r.port = addr.Port
+
+	r.bucketSize = conf.BucketSize
+	r.scheme = conf.Scheme
 
 	r.rclient = &http.Client{
 		Transport: &http.Transport{

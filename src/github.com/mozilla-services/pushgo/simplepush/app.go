@@ -20,8 +20,6 @@ import (
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
-	MaxGoroutines      int    `toml:"max_connections" env:"max_goroutines"`
-	KeepAlivePeriod    string `toml:"keep_alive_period" env:"keep_alive_period"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
@@ -32,8 +30,6 @@ type Application struct {
 	hostname           string
 	host               string
 	port               int
-	maxGoroutines      int
-	keepAlivePeriod    time.Duration
 	clientMinPing      time.Duration
 	clientHelloTimeout time.Duration
 	pushLongPongs      bool
@@ -54,8 +50,6 @@ func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
-		MaxGoroutines:      1000,
-		KeepAlivePeriod:    "3m",
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
@@ -91,12 +85,7 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 		return fmt.Errorf("Unable to parse 'client_hello_timeout': %s",
 			err.Error())
 	}
-	if a.keepAlivePeriod, err = time.ParseDuration(conf.KeepAlivePeriod); err != nil {
-		return fmt.Errorf("Unable to parse 'tcp_keep_alive_period': %s",
-			err.Error())
-	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.maxGoroutines = conf.MaxGoroutines
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
 	count := int32(0)
@@ -144,29 +133,44 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
-	RESTMux := mux.NewRouter()
-	RESTListener := a.server.Listener()
+	socketMux := mux.NewRouter()
+	socketMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
 
-	RouteMux := mux.NewRouter()
-	RouteListener := a.router.Listener()
+	updateMux := mux.NewRouter()
+	updateMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
+	updateMux.HandleFunc("/status/", a.handlers.StatusHandler)
+	updateMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
+	updateMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
 
-	RESTMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
-	RESTMux.HandleFunc("/status/", a.handlers.StatusHandler)
-	RESTMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
-	RESTMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
-	RESTMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
-
-	RouteMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
+	routeMux := mux.NewRouter()
+	routeMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
 
 	// Weigh the anchor!
 	go func() {
-		a.log.Info("app", fmt.Sprintf("listening on %s", RESTListener.Addr()), nil)
-		errChan <- http.Serve(RESTListener, RESTMux)
+		socketLn := a.server.SocketListener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting WebSocket server",
+				LogFields{"addr": socketLn.Addr().String()})
+		}
+		errChan <- http.Serve(socketLn, socketMux)
 	}()
 
 	go func() {
-		a.log.Info("app", "Starting Router", LogFields{"addr": RouteListener.Addr().String()})
-		errChan <- http.Serve(RouteListener, RouteMux)
+		updateLn := a.server.UpdateListener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting update server",
+				LogFields{"addr": updateLn.Addr().String()})
+		}
+		errChan <- http.Serve(updateLn, updateMux)
+	}()
+
+	go func() {
+		routeLn := a.router.Listener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting router",
+				LogFields{"addr": routeLn.Addr().String()})
+		}
+		errChan <- http.Serve(routeLn, routeMux)
 	}()
 
 	return errChan
@@ -174,14 +178,6 @@ func (a *Application) Run() (errChan chan error) {
 
 func (a *Application) Hostname() string {
 	return a.hostname
-}
-
-func (a *Application) MaxGoroutines() int {
-	return a.maxGoroutines
-}
-
-func (a *Application) KeepAlivePeriod() time.Duration {
-	return a.keepAlivePeriod
 }
 
 func (a *Application) Logger() *SimpleLogger {
