@@ -390,9 +390,8 @@ func (w *logResponseWriter) Flush() {
 
 // LogHandler logs the result of an HTTP request.
 type LogHandler struct {
-	Log *SimpleLogger
 	http.Handler
-	TrustProxy bool
+	Log *SimpleLogger
 }
 
 // formatRequest generates a Common Log Format request line.
@@ -411,12 +410,10 @@ func (h *LogHandler) logResponse(writer *logResponseWriter, req *http.Request, r
 	if !h.Log.ShouldLog(INFO) {
 		return
 	}
-	var remoteAddrs []string
-	if h.TrustProxy {
-		remoteAddrs = append(remoteAddrs, req.Header[http.CanonicalHeaderKey("X-Forwarded-For")]...)
-	}
-	remoteAddr, _, _ := net.SplitHostPort(req.RemoteAddr)
-	remoteAddrs = append(remoteAddrs, remoteAddr)
+	forwardedFor := req.Header[http.CanonicalHeaderKey("X-Forwarded-For")]
+	remoteAddrs := make([]string, len(forwardedFor)+1)
+	copy(remoteAddrs, forwardedFor)
+	remoteAddrs[len(remoteAddrs)-1], _, _ = net.SplitHostPort(req.RemoteAddr)
 	h.Log.Info("http", h.formatRequest(writer, req, remoteAddrs), LogFields{
 		"rid":                requestID,
 		"agent":              req.Header.Get("User-Agent"),
