@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -211,7 +212,10 @@ func (hl *HekaLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	for name, value := range fields {
 		message.NewStringField(m, name, value)
 	}
-	return hl.writeMessage(m)
+	if err = hl.writeMessage(m); err != nil {
+		log.Fatalf("Error writing log message: %s", err)
+	}
+	return
 }
 
 // NewTextLogger creates a logger that writes human-readable log messages to
