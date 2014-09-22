@@ -154,24 +154,28 @@ func (s *GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 // Status queries whether memcached is available for reading and writing.
 // Implements Store.Status().
 func (s *GomemcStore) Status() (success bool, err error) {
-	test := []byte("test")
 	fakeID, err := id.Generate()
 	if err != nil {
 		return false, err
 	}
-	key := "status_" + fakeID
+	key, expected := "status_"+fakeID, []byte("test")
 	err = s.client.Set(
 		&mc.Item{
 			Key:        key,
-			Value:      test,
+			Value:      expected,
 			Expiration: 6,
 		})
 	if err != nil {
 		return false, err
 	}
 	raw, err := s.client.Get(key)
-	if err != nil || !bytes.Equal(raw.Value, test) {
-		return false, ErrStatusFailed
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(raw.Value, expected) {
+		s.logger.Error("gomemc", "Unexpected health check result",
+			LogFields{"expected": string(expected), "actual": string(raw.Value)})
+		return false, ErrMemcacheStatus
 	}
 	s.client.Delete(key)
 	return true, nil
