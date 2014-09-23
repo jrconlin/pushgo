@@ -25,18 +25,18 @@ var ErrMinTTL = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
 type EtcdLocatorConf struct {
 	// Dir is the etcd key prefix for storing contacts. Defaults to
 	// "push_hosts".
-	Dir string `toml:"dir"`
+	Dir string
 
 	// Servers is a list of etcd servers.
 	Servers []string
 
 	// DefaultTTL is the maximum amount of time that registered contacts will be
 	// considered valid. Defaults to "24h".
-	DefaultTTL string
+	DefaultTTL string `env:"ttl"`
 
 	// RefreshInterval is the maximum amount of time that a cached contact list
 	// will be considered valid. Defaults to "5m".
-	RefreshInterval string `toml:"refresh_interval"`
+	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
 }
 
 // etcdFetch is an etcd contact list request.

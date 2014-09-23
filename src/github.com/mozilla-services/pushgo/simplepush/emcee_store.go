@@ -74,19 +74,19 @@ type EmceeDriverConf struct {
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	RecvTimeout string `toml:"recv_timeout"`
+	RecvTimeout string `toml:"recv_timeout" env:"recv_timeout"`
 
 	// SendTimeout is the socket send timeout (SO_SNDTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	SendTimeout string `toml:"send_timeout"`
+	SendTimeout string `toml:"send_timeout" env:"send_timeout"`
 
 	// PollTimeout is the poll(2) timeout used by the memcached driver. Supports
 	// millisecond granularity; defaults to 5 seconds.
-	PollTimeout string `toml:"poll_timeout"`
+	PollTimeout string `toml:"poll_timeout" env:"poll_timeout"`
 
 	// RetryTimeout is the time to wait before retrying a request on an unhealthy
 	// memcached node. Supports second granularity; defaults to 5 seconds.
-	RetryTimeout string `toml:"retry_timeout"`
+	RetryTimeout string `toml:"retry_timeout" env:"retry_timeout"`
 }
 
 // EmceeStore is a memcached adapter.
@@ -116,9 +116,9 @@ type EmceeStore struct {
 
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
-	MaxChannels               int             `toml:"max_channels"`
-	Driver                    EmceeDriverConf `toml:"memcache"`
+	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_discovery"`
+	MaxChannels               int             `toml:"max_channels" env:"max_channels"`
+	Driver                    EmceeDriverConf `toml:"memcache" env:"mc"`
 	Db                        DbConf
 }
 

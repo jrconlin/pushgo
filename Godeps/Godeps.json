@@ -38,6 +38,10 @@
 		{
 			"ImportPath": "github.com/ianoshen/gomc",
 			"Rev": "7b9f299f292d3dd707fe2749d966968c9bf1e128"
+		},
+		{
+			"ImportPath": "github.com/kitcambridge/envconf",
+			"Rev": "621ad9712cb2b9f0de9ba91c816dd3142e6d162e"
 		}
 	]
 }
