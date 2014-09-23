@@ -66,9 +66,9 @@ type RouterConfig struct {
 	// {{.Uaid}}.
 	UrlTemplate string `toml:"url_template" env:"url_template"`
 
-	// Server specifies the address and port, maximum connections, TCP keep-alive
-	// period, and certificate information for the routing listener.
-	Server ListenerConfig
+	// Listener specifies the address and port, maximum connections, TCP
+	// keep-alive period, and certificate information for the routing listener.
+	Listener ListenerConfig
 }
 
 // Router proxies incoming updates to the Simple Push server ("contact") that
@@ -105,7 +105,7 @@ func (*Router) ConfigStruct() interface{} {
 		Rwtimeout:   "3s",
 		Scheme:      "http",
 		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
-		Server: ListenerConfig{
+		Listener: ListenerConfig{
 			Addr:            ":3000",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
@@ -137,7 +137,7 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
-	if r.listener, err = conf.Server.Listen(); err != nil {
+	if r.listener, err = conf.Listener.Listen(); err != nil {
 		r.logger.Error("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err

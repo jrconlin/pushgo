@@ -33,13 +33,14 @@ type Handler struct {
 }
 
 type StatusReport struct {
-	Healthy    bool         `json:"ok"`
-	Clients    int          `json:"clientCount"`
-	MaxClients int          `json:"maxClients"`
-	Store      PluginStatus `json:"store"`
-	Pinger     PluginStatus `json:"pinger"`
-	Locator    PluginStatus `json:"locator"`
-	Goroutines int          `json:"goroutines"`
+	Healthy          bool         `json:"ok"`
+	Clients          int          `json:"clientCount"`
+	MaxClientConns   int          `json:"maxClients"`
+	MaxEndpointConns int          `json:"maxEndpointConns"`
+	Store            PluginStatus `json:"store"`
+	Pinger           PluginStatus `json:"pinger"`
+	Locator          PluginStatus `json:"locator"`
+	Goroutines       int          `json:"goroutines"`
 }
 
 type PluginStatus struct {
@@ -93,7 +94,8 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 
 	status := StatusReport{
-		MaxClients: self.app.Server().MaxSockets(),
+		MaxClientConns:   self.app.Server().MaxClientConns(),
+		MaxEndpointConns: self.app.Server().MaxEndpointConns(),
 	}
 
 	status.Store.Healthy, status.Store.Error = self.store.Status()

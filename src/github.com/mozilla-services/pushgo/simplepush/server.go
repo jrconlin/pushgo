@@ -31,14 +31,14 @@ type Client struct {
 
 // Basic global server options
 type ServerConfig struct {
-	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
-	Socket       ListenerConfig
-	Update       ListenerConfig
+	PushEndpoint string         `toml:"push_endpoint_template" env:"push_url_template"`
+	Client       ListenerConfig `toml:"websocket" env:"ws"`
+	Endpoint     ListenerConfig
 }
 
 type ListenerConfig struct {
 	Addr            string
-	MaxConns        int    `toml:"max_conns" env:"max_conns"`
+	MaxConns        int    `toml:"max_connections" env:"max_conns"`
 	KeepAlivePeriod string `toml:"tcp_keep_alive" env:"keep_alive"`
 	CertFile        string `toml:"cert_file" env:"cert"`
 	KeyFile         string `toml:"key_file" env:"key"`
@@ -66,34 +66,34 @@ func NewServer() *Serv {
 }
 
 type Serv struct {
-	app         *Application
-	logger      *SimpleLogger
-	hostname    string
-	socketLn    net.Listener
-	socketURL   string
-	maxSockets  int
-	updateLn    net.Listener
-	updateURL   string
-	maxUpdates  int
-	metrics     *Metrics
-	store       Store
-	key         []byte
-	template    *template.Template
-	prop        PropPinger
-	isClosing   bool
-	closeSignal chan bool
-	closeLock   sync.Mutex
+	app              *Application
+	logger           *SimpleLogger
+	hostname         string
+	clientLn         net.Listener
+	clientURL        string
+	maxClientConns   int
+	endpointLn       net.Listener
+	endpointURL      string
+	maxEndpointConns int
+	metrics          *Metrics
+	store            Store
+	key              []byte
+	template         *template.Template
+	prop             PropPinger
+	isClosing        bool
+	closeSignal      chan bool
+	closeLock        sync.Mutex
 }
 
 func (self *Serv) ConfigStruct() interface{} {
 	return &ServerConfig{
 		PushEndpoint: "{{.CurrentHost}}/update/{{.Token}}",
-		Socket: ListenerConfig{
+		Client: ListenerConfig{
 			Addr:            ":8080",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
 		},
-		Update: ListenerConfig{
+		Endpoint: ListenerConfig{
 			Addr:            ":8081",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
@@ -118,61 +118,61 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
-	if self.socketLn, err = conf.Socket.Listen(); err != nil {
+	if self.clientLn, err = conf.Client.Listen(); err != nil {
 		self.logger.Critical("server", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
 	var scheme string
-	if conf.Socket.UseTLS() {
+	if conf.Client.UseTLS() {
 		scheme = "wss"
 	} else {
 		scheme = "ws"
 	}
-	host, port := self.hostPort(self.socketLn)
-	self.socketURL = CanonicalURL(scheme, host, port)
-	self.maxSockets = conf.Socket.MaxConns
+	host, port := self.hostPort(self.clientLn)
+	self.clientURL = CanonicalURL(scheme, host, port)
+	self.maxClientConns = conf.Client.MaxConns
 
-	if self.updateLn, err = conf.Update.Listen(); err != nil {
+	if self.endpointLn, err = conf.Endpoint.Listen(); err != nil {
 		self.logger.Critical("server", "Could not attach update listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
-	if conf.Update.UseTLS() {
+	if conf.Endpoint.UseTLS() {
 		scheme = "https"
 	} else {
 		scheme = "http"
 	}
-	host, port = self.hostPort(self.updateLn)
-	self.updateURL = CanonicalURL(scheme, host, port)
-	self.maxUpdates = conf.Update.MaxConns
+	host, port = self.hostPort(self.endpointLn)
+	self.endpointURL = CanonicalURL(scheme, host, port)
+	self.maxEndpointConns = conf.Endpoint.MaxConns
 
 	go self.sendClientCount()
 	return nil
 }
 
-func (self *Serv) SocketListener() net.Listener {
-	return self.socketLn
+func (self *Serv) ClientListener() net.Listener {
+	return self.clientLn
 }
 
-func (self *Serv) SocketURL() string {
-	return self.socketURL
+func (self *Serv) ClientURL() string {
+	return self.clientURL
 }
 
-func (self *Serv) MaxSockets() int {
-	return self.maxSockets
+func (self *Serv) MaxClientConns() int {
+	return self.maxClientConns
 }
 
-func (self *Serv) UpdateListener() net.Listener {
-	return self.updateLn
+func (self *Serv) EndpointListener() net.Listener {
+	return self.endpointLn
 }
 
-func (self *Serv) UpdateURL() string {
-	return self.updateURL
+func (self *Serv) EndpointURL() string {
+	return self.endpointURL
 }
 
-func (self *Serv) MaxUpdates() int {
-	return self.maxUpdates
+func (self *Serv) MaxEndpointConns() int {
+	return self.maxEndpointConns
 }
 
 func (self *Serv) hostPort(ln net.Listener) (host string, port int) {
@@ -311,7 +311,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.UpdateURL(),
+		self.EndpointURL(),
 	}); err != nil {
 		self.logger.Error("server",
 			"Could not generate Push Endpoint",
@@ -450,8 +450,8 @@ func (self *Serv) Close() error {
 	}
 	self.isClosing = true
 	close(self.closeSignal)
-	self.socketLn.Close()
-	self.updateLn.Close()
+	self.clientLn.Close()
+	self.endpointLn.Close()
 	return nil
 }
 

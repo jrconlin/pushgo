@@ -133,35 +133,35 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
-	socketMux := mux.NewRouter()
-	socketMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
+	clientMux := mux.NewRouter()
+	clientMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
 
-	updateMux := mux.NewRouter()
-	updateMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
-	updateMux.HandleFunc("/status/", a.handlers.StatusHandler)
-	updateMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
-	updateMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
+	endpointMux := mux.NewRouter()
+	endpointMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
+	endpointMux.HandleFunc("/status/", a.handlers.StatusHandler)
+	endpointMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
+	endpointMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
 
 	routeMux := mux.NewRouter()
 	routeMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
 
 	// Weigh the anchor!
 	go func() {
-		socketLn := a.server.SocketListener()
+		clientLn := a.server.ClientListener()
 		if a.log.ShouldLog(INFO) {
 			a.log.Info("app", "Starting WebSocket server",
-				LogFields{"addr": socketLn.Addr().String()})
+				LogFields{"addr": clientLn.Addr().String()})
 		}
-		errChan <- http.Serve(socketLn, socketMux)
+		errChan <- http.Serve(clientLn, clientMux)
 	}()
 
 	go func() {
-		updateLn := a.server.UpdateListener()
+		endpointLn := a.server.EndpointListener()
 		if a.log.ShouldLog(INFO) {
 			a.log.Info("app", "Starting update server",
-				LogFields{"addr": updateLn.Addr().String()})
+				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		errChan <- http.Serve(updateLn, updateMux)
+		errChan <- http.Serve(endpointLn, endpointMux)
 	}()
 
 	go func() {

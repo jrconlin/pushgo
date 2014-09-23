@@ -70,7 +70,7 @@ type EmceeDriverConf struct {
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
 	// to 400.
-	MaxConns int `toml:"max_pool"`
+	MaxConns int `toml:"max_connections" env:"max_conns"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
