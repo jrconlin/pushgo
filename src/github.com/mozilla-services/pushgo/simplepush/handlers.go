@@ -32,14 +32,19 @@ type Handler struct {
 	propping PropPinger
 }
 
-type ServerStatus struct {
-	Healthy      bool   `json:"ok"`
-	Clients      int    `json:"clientCount"`
-	MaxClients   int    `json:"maxClients"`
-	StoreHealthy bool   `json:"mcstatus"`
-	Goroutines   int    `json:"goroutines"`
-	Error        string `json:"error,omitempty"`
-	Message      string `json:"message,omitempty"`
+type StatusReport struct {
+	Healthy    bool         `json:"ok"`
+	Clients    int          `json:"clientCount"`
+	MaxClients int          `json:"maxClients"`
+	Store      PluginStatus `json:"store"`
+	Pinger     PluginStatus `json:"pinger"`
+	Locator    PluginStatus `json:"locator"`
+	Goroutines int          `json:"goroutines"`
+}
+
+type PluginStatus struct {
+	Healthy bool  `json:"ok"`
+	Error   error `json:"error,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -77,7 +82,6 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	// TODO: make sure all is well.
 	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d}`,
 		self.app.ClientCount()))
 
@@ -87,26 +91,36 @@ func (self *Handler) StatusHandler(resp http.ResponseWriter,
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	var msg string
 
-	ok, err := self.store.Status()
-	if !ok {
-		msg += fmt.Sprintf("Storage error: %s,", err)
+	status := StatusReport{
+		MaxClients: self.app.Server().MaxSockets(),
 	}
-	status := &ServerStatus{
-		Healthy:      ok,
-		Clients:      self.app.ClientCount(),
-		StoreHealthy: ok,
-		Goroutines:   runtime.NumGoroutine(),
-		Message:      msg,
+
+	status.Store.Healthy, status.Store.Error = self.store.Status()
+	if pinger := self.PropPinger(); pinger != nil {
+		status.Pinger.Healthy, status.Pinger.Error = pinger.Status()
 	}
-	if err != nil {
-		status.Error = err.Error()
+	if locator := self.router.Locator(); locator != nil {
+		status.Locator.Healthy, status.Locator.Error = locator.Status()
 	}
-	reply, err := json.Marshal(status)
+
+	status.Healthy = status.Store.Healthy && status.Pinger.Healthy &&
+		status.Locator.Healthy
+
+	status.Clients = self.app.ClientCount()
+	status.Goroutines = runtime.NumGoroutine()
 
 	resp.Header().Set("Content-Type", "application/json")
-	if !ok {
+	reply, err := json.Marshal(status)
+	if err != nil {
+		self.logger.Error("handler", "Could not generate status report",
+			LogFields{"error": err.Error()})
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Write([]byte("{}"))
+		return
+	}
+
+	if !status.Healthy {
 		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
 	resp.Write(reply)
@@ -259,10 +273,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	self.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	if self.propping == nil {
+	pinger := self.PropPinger()
+	if pinger == nil {
 		goto sendUpdate
 	}
-	if ok, err = self.propping.Send(uaid, version); err != nil {
+	if ok, err = pinger.Send(uaid, version); err != nil {
 		self.logger.Warn("update",
 			"Could not generate Proprietary Ping",
 			LogFields{"error": err.Error(),
@@ -271,7 +286,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
-	if ok && self.propping.CanBypassWebsocket() {
+	if ok && pinger.CanBypassWebsocket() {
 		// Neat! Might as well return.
 		self.metrics.Increment("updates.appserver.received")
 		resp.Header().Set("Content-Type", "application/json")

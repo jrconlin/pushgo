@@ -71,8 +71,10 @@ type Serv struct {
 	hostname    string
 	socketLn    net.Listener
 	socketURL   string
+	maxSockets  int
 	updateLn    net.Listener
 	updateURL   string
+	maxUpdates  int
 	metrics     *Metrics
 	store       Store
 	key         []byte
@@ -129,6 +131,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	}
 	host, port := self.hostPort(self.socketLn)
 	self.socketURL = CanonicalURL(scheme, host, port)
+	self.maxSockets = conf.Socket.MaxConns
 
 	if self.updateLn, err = conf.Update.Listen(); err != nil {
 		self.logger.Critical("server", "Could not attach update listener",
@@ -142,6 +145,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	}
 	host, port = self.hostPort(self.updateLn)
 	self.updateURL = CanonicalURL(scheme, host, port)
+	self.maxUpdates = conf.Update.MaxConns
 
 	go self.sendClientCount()
 	return nil
@@ -155,12 +159,20 @@ func (self *Serv) SocketURL() string {
 	return self.socketURL
 }
 
+func (self *Serv) MaxSockets() int {
+	return self.maxSockets
+}
+
 func (self *Serv) UpdateListener() net.Listener {
 	return self.updateLn
 }
 
 func (self *Serv) UpdateURL() string {
 	return self.updateURL
+}
+
+func (self *Serv) MaxUpdates() int {
+	return self.maxUpdates
 }
 
 func (self *Serv) hostPort(ln net.Listener) (host string, port int) {
