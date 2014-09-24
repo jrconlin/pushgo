@@ -18,7 +18,6 @@ import (
 	mc "github.com/ianoshen/gomc"
 
 	"github.com/mozilla-services/pushgo/id"
-	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 // Wraps a memcached client with a flag to signal whether the connection is
@@ -70,23 +69,23 @@ type EmceeDriverConf struct {
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
 	// to 400.
-	MaxConns int `toml:"max_pool"`
+	MaxConns int `toml:"max_connections" env:"max_conns"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	RecvTimeout string `toml:"recv_timeout"`
+	RecvTimeout string `toml:"recv_timeout" env:"recv_timeout"`
 
 	// SendTimeout is the socket send timeout (SO_SNDTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
-	SendTimeout string `toml:"send_timeout"`
+	SendTimeout string `toml:"send_timeout" env:"send_timeout"`
 
 	// PollTimeout is the poll(2) timeout used by the memcached driver. Supports
 	// millisecond granularity; defaults to 5 seconds.
-	PollTimeout string `toml:"poll_timeout"`
+	PollTimeout string `toml:"poll_timeout" env:"poll_timeout"`
 
 	// RetryTimeout is the time to wait before retrying a request on an unhealthy
 	// memcached node. Supports second granularity; defaults to 5 seconds.
-	RetryTimeout string `toml:"retry_timeout"`
+	RetryTimeout string `toml:"retry_timeout" env:"retry_timeout"`
 }
 
 // EmceeStore is a memcached adapter.
@@ -116,9 +115,9 @@ type EmceeStore struct {
 
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint"`
-	MaxChannels               int             `toml:"max_channels"`
-	Driver                    EmceeDriverConf `toml:"memcache"`
+	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_discovery"`
+	MaxChannels               int             `toml:"max_channels" env:"max_channels"`
+	Driver                    EmceeDriverConf `toml:"memcache" env:"mc"`
 	Db                        DbConf
 }
 
@@ -159,7 +158,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	} else {
 		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Error("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -170,18 +169,18 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Error("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
 	}
 
 	// The send and receive timeouts are expressed in microseconds.
 	var recvTimeout, sendTimeout time.Duration
 	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
@@ -190,7 +189,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// `poll(2)` accepts a millisecond timeout.
 	var pollTimeout time.Duration
 	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
@@ -198,7 +197,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// The memcached retry timeout is expressed in seconds.
 	var retryTimeout time.Duration
 	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
-		s.logger.Error("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.retryTimeout = uint64(retryTimeout / time.Second)
@@ -263,18 +262,23 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	key := "status_" + fakeID
+	key, expected := "status_"+fakeID, "test"
 	client, err := s.getClient()
 	if err != nil {
 		return false, err
 	}
 	defer s.releaseWithout(client, &err)
-	if err = client.Set(key, "test", 6*time.Second); err != nil {
+	if err = client.Set(key, expected, 6*time.Second); err != nil {
 		return false, err
 	}
-	var val string
-	if err = client.Get(key, &val); err != nil || val != "test" {
-		return false, ErrStatusFailed
+	var actual string
+	if err = client.Get(key, &actual); err != nil {
+		return false, err
+	}
+	if expected != actual {
+		s.logger.Error("emcee", "Unexpected health check result",
+			LogFields{"expected": expected, "actual": actual})
+		return false, ErrMemcacheStatus
 	}
 	client.Delete(key, 0)
 	return true, nil
@@ -288,8 +292,10 @@ func (s *EmceeStore) Exists(suaid string) bool {
 		return false
 	}
 	if _, err = s.fetchAppIDArray(uaid); err != nil && !isMissing(err) {
-		s.logger.Warn("emcee", "Exists encountered unknown error",
-			LogFields{"error": err.Error()})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("emcee", "Exists encountered unknown error",
+				LogFields{"error": err.Error()})
+		}
 	}
 	return err == nil
 }
@@ -316,7 +322,7 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
 	}
 	if err = s.storeRec(key, rec); err != nil {
 		return err
@@ -328,15 +334,18 @@ func (s *EmceeStore) storeRegister(uaid, chid []byte, version int64) error {
 // channel ID. If version > 0, the record will be marked as active. Implements
 // Store.Register().
 func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeRegister(uaid, chid, version)
 }
@@ -345,19 +354,22 @@ func (s *EmceeStore) Register(suaid, schid string, version int64) (err error) {
 func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
 	}
-	keyString := hex.EncodeToString(key)
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
-		s.logger.Error("emcee", "Update error", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("emcee", "Update error", LogFields{
+				"pk":    hex.EncodeToString(key),
+				"error": err.Error(),
+			})
+		}
 		return err
 	}
 	if cRec != nil {
-		s.logger.Debug("emcee", "Replacing record", LogFields{"primarykey": keyString})
+		if s.logger.ShouldLog(DEBUG) {
+			s.logger.Debug("emcee", "Replacing record", LogFields{"pk": hex.EncodeToString(key)})
+		}
 		if cRec.State != StateDeleted {
 			newRecord := &ChannelRecord{
 				State:       StateLive,
@@ -371,11 +383,13 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 		}
 	}
 	// No record found or the record setting was DELETED
-	s.logger.Debug("emcee", "Registering channel", LogFields{
-		"uaid":      hex.EncodeToString(uaid),
-		"channelID": hex.EncodeToString(chid),
-		"version":   strconv.FormatInt(version, 10),
-	})
+	if s.logger.ShouldLog(DEBUG) {
+		s.logger.Debug("emcee", "Registering channel", LogFields{
+			"uaid":      hex.EncodeToString(uaid),
+			"channelID": hex.EncodeToString(chid),
+			"version":   strconv.FormatInt(version, 10),
+		})
+	}
 	if err = s.storeRegister(uaid, chid, version); err != nil {
 		return err
 	}
@@ -387,18 +401,21 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 func (s *EmceeStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
+	}
+	if len(suaid) == 0 {
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeUpdate(uaid, chid, version)
 }
@@ -411,11 +428,11 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	}
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
-		return sperrors.InvalidChannelError
+		return ErrNonexistentChannel
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return ErrInvalidKey
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -424,10 +441,12 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 	for x := 0; x < 3; x++ {
 		channel, err := s.fetchRec(key)
 		if err != nil {
-			s.logger.Warn("emcee", "Could not delete Channel", LogFields{
-				"primarykey": hex.EncodeToString(key),
-				"error":      err.Error(),
-			})
+			if s.logger.ShouldLog(WARNING) {
+				s.logger.Warn("emcee", "Could not delete Channel", LogFields{
+					"pk":    hex.EncodeToString(key),
+					"error": err.Error(),
+				})
+			}
 			continue
 		}
 		channel.State = StateDeleted
@@ -441,15 +460,18 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 // Unregister marks the channel ID associated with the given device ID
 // as inactive. Implements Store.Unregister().
 func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeUnregister(uaid, chid)
 }
@@ -458,15 +480,18 @@ func (s *EmceeStore) Unregister(suaid, schid string) (err error) {
 // memcached. Deregistration calls should call s.Unregister() instead.
 // Implements Store.Drop().
 func (s *EmceeStore) Drop(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -475,7 +500,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 	defer s.releaseWithout(client, &err)
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return ErrInvalidKey
 	}
 	if err = client.Delete(encodeKey(key), 0); err == nil || isMissing(err) {
 		return nil
@@ -487,7 +512,7 @@ func (s *EmceeStore) Drop(suaid, schid string) (err error) {
 // since the specified cutoff time. Implements Store.FetchAll().
 func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
-		return nil, nil, sperrors.InvalidDataError
+		return nil, nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -506,11 +531,12 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		key, _ := toBinaryKey(uaid, chid)
 		keys = append(keys, encodeKey(key))
 	}
-	deviceString := hex.EncodeToString(uaid)
-	s.logger.Debug("emcee", "Fetching items", LogFields{
-		"uaid":  deviceString,
-		"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
-	})
+	if s.logger.ShouldLog(INFO) {
+		s.logger.Info("emcee", "Fetching items", LogFields{
+			"uaid":  hex.EncodeToString(uaid),
+			"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
+		})
+	}
 	client, err := s.getClient()
 	if err != nil {
 		return nil, nil, err
@@ -525,16 +551,20 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 		}
 		chid := chids[index]
 		channelString := hex.EncodeToString(chid)
-		s.logger.Debug("emcee", "FetchAll Fetched record ", LogFields{
-			"uaid":  deviceString,
-			"chid":  channelString,
-			"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
-		})
-		if channel.LastTouched < sinceUnix {
-			s.logger.Debug("emcee", "Skipping record...", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
+		if s.logger.ShouldLog(DEBUG) {
+			s.logger.Debug("emcee", "FetchAll Fetched record ", LogFields{
+				"uaid":  hex.EncodeToString(uaid),
+				"chid":  channelString,
+				"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
 			})
+		}
+		if channel.LastTouched < sinceUnix {
+			if s.logger.ShouldLog(DEBUG) {
+				s.logger.Debug("emcee", "Skipping record...", LogFields{
+					"uaid": hex.EncodeToString(uaid),
+					"chid": channelString,
+				})
+			}
 			continue
 		}
 		// Yay! Go translates numeric interface values as float64s
@@ -544,10 +574,12 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			version := channel.Version
 			if version == 0 {
 				version = uint64(time.Now().UTC().Unix())
-				s.logger.Debug("emcee", "FetchAll Using Timestamp", LogFields{
-					"uaid": deviceString,
-					"chid": channelString,
-				})
+				if s.logger.ShouldLog(DEBUG) {
+					s.logger.Debug("emcee", "FetchAll Using Timestamp", LogFields{
+						"uaid": hex.EncodeToString(uaid),
+						"chid": channelString,
+					})
+				}
 			}
 			update := Update{
 				ChannelID: channelString,
@@ -555,26 +587,32 @@ func (s *EmceeStore) FetchAll(suaid string, since time.Time) ([]Update, []string
 			}
 			updates = append(updates, update)
 		case StateDeleted:
-			s.logger.Debug("emcee", "FetchAll Deleting record", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
-			})
-			schid, err := id.Encode(chid)
-			if err != nil {
-				s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
-					"uaid": deviceString,
+			if s.logger.ShouldLog(DEBUG) {
+				s.logger.Debug("emcee", "FetchAll Deleting record", LogFields{
+					"uaid": hex.EncodeToString(uaid),
 					"chid": channelString,
 				})
+			}
+			schid, err := id.Encode(chid)
+			if err != nil {
+				if s.logger.ShouldLog(WARNING) {
+					s.logger.Warn("emcee", "FetchAll Failed to encode channel ID", LogFields{
+						"uaid": hex.EncodeToString(uaid),
+						"chid": channelString,
+					})
+				}
 				continue
 			}
 			expired = append(expired, schid)
 		case StateRegistered:
 			// Item registered, but not yet active. Ignore it.
 		default:
-			s.logger.Warn("emcee", "Unknown state", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
-			})
+			if s.logger.ShouldLog(WARNING) {
+				s.logger.Warn("emcee", "Unknown state", LogFields{
+					"uaid": hex.EncodeToString(uaid),
+					"chid": channelString,
+				})
+			}
 		}
 	}
 	return updates, expired, nil
@@ -599,7 +637,7 @@ func (s *EmceeStore) DropAll(suaid string) error {
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
-			return err
+			return ErrInvalidKey
 		}
 		client.Delete(encodeKey(key), 0)
 	}
@@ -612,9 +650,12 @@ func (s *EmceeStore) DropAll(suaid string) error {
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements Store.FetchPing().
 func (s *EmceeStore) FetchPing(suaid string) (pingData []byte, err error) {
+	if len(suaid) == 0 {
+		return nil, ErrNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return nil, sperrors.InvalidDataError
+		return nil, ErrInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -643,9 +684,12 @@ func (s *EmceeStore) PutPing(suaid string, pingData []byte) error {
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements Store.DropPing().
 func (s *EmceeStore) DropPing(suaid string) error {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -691,7 +735,7 @@ func (s *EmceeStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error)
 // The channel IDs are sorted in-place.
 func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
-		return sperrors.MissingDataError
+		return ErrNoID
 	}
 	client, err := s.getClient()
 	if err != nil {
@@ -706,7 +750,7 @@ func (s *EmceeStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 // Retrieves a channel record from memcached.
 func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
-		return nil, sperrors.InvalidPrimaryKeyError
+		return nil, ErrNoKey
 	}
 	keyString := encodeKey(pk)
 	client, err := s.getClient()
@@ -716,26 +760,30 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	defer s.releaseWithout(client, &err)
 	result := new(ChannelRecord)
 	if err = client.Get(keyString, result); err != nil && !isMissing(err) {
-		s.logger.Error("emcee", "Get Failed", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Get Failed", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 		return nil, err
 	}
-	s.logger.Debug("emcee", "Fetched", LogFields{
-		"primarykey": keyString,
-		"result":     fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
-	})
+	if s.logger.ShouldLog(DEBUG) {
+		s.logger.Debug("emcee", "Fetched", LogFields{
+			"pk":     keyString,
+			"result": fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
+		})
+	}
 	return result, nil
 }
 
 // Stores an updated channel record in memcached.
 func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrNoKey
 	}
 	if rec == nil {
-		return sperrors.NoDataToStoreError
+		return ErrNoData
 	}
 	var ttl time.Duration
 	switch rec.State {
@@ -754,10 +802,12 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	defer s.releaseWithout(client, &err)
 	keyString := encodeKey(pk)
 	if err = client.Set(keyString, rec, ttl); err != nil {
-		s.logger.Warn("emcee", "Failure to set item", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Failure to set item", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 	}
 	return nil
 }

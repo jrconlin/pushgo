@@ -17,21 +17,21 @@ import (
 	"github.com/gorilla/mux"
 )
 
+const VERSION = "1.4"
+
 type ApplicationConfig struct {
-	Hostname           string `toml:"current_host"`
-	TokenKey           string `toml:"token_key"`
-	MaxConnections     int    `toml:"max_connections"`
-	UseAwsHost         bool   `toml:"use_aws_host"`
-	ClientMinPing      string `toml:"client_min_ping_interval"`
-	ClientHelloTimeout string `toml:"client_hello_timeout"`
-	PushLongPongs      bool   `toml:"push_long_pongs"`
+	Hostname           string `toml:"current_host" env:"current_host"`
+	TokenKey           string `toml:"token_key" env:"token_key"`
+	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
+	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
+	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
+	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
 }
 
 type Application struct {
 	hostname           string
 	host               string
 	port               int
-	maxConnnections    int
 	clientMinPing      time.Duration
 	clientHelloTimeout time.Duration
 	pushLongPongs      bool
@@ -52,7 +52,6 @@ func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
-		MaxConnections:     1000,
 		UseAwsHost:         false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
@@ -68,7 +67,7 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 
 	if conf.UseAwsHost {
 		if a.hostname, err = GetAWSPublicHostname(); err != nil {
-			return
+			return err
 		}
 	} else {
 		a.hostname = conf.Hostname
@@ -76,22 +75,19 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 
 	if len(conf.TokenKey) > 0 {
 		if a.tokenKey, err = base64.URLEncoding.DecodeString(conf.TokenKey); err != nil {
-			return
+			return err
 		}
 	}
 
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
-		err = fmt.Errorf("Unable to parse 'client_min_ping_interval: %s",
+		return fmt.Errorf("Unable to parse 'client_min_ping_interval': %s",
 			err.Error())
-		return
 	}
 	if a.clientHelloTimeout, err = time.ParseDuration(conf.ClientHelloTimeout); err != nil {
-		err = fmt.Errorf("Unable to parse 'client_hello_timeout: %s",
+		return fmt.Errorf("Unable to parse 'client_hello_timeout': %s",
 			err.Error())
-		return
 	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.maxConnnections = conf.MaxConnections
 	a.clients = make(map[string]*Client)
 	a.clientMux = new(sync.RWMutex)
 	count := int32(0)
@@ -139,29 +135,44 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
-	RESTMux := mux.NewRouter()
-	RESTListener := a.server.Listener()
+	clientMux := mux.NewRouter()
+	clientMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
 
-	RouteMux := mux.NewRouter()
-	RouteListener := a.router.Listener()
+	endpointMux := mux.NewRouter()
+	endpointMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
+	endpointMux.HandleFunc("/status/", a.handlers.StatusHandler)
+	endpointMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
+	endpointMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
 
-	RESTMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
-	RESTMux.HandleFunc("/status/", a.handlers.StatusHandler)
-	RESTMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
-	RESTMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
-	RESTMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
-
-	RouteMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
+	routeMux := mux.NewRouter()
+	routeMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
 
 	// Weigh the anchor!
 	go func() {
-		a.log.Info("app", fmt.Sprintf("listening on %s", RESTListener.Addr()), nil)
-		errChan <- http.Serve(RESTListener, RESTMux)
+		clientLn := a.server.ClientListener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting WebSocket server",
+				LogFields{"addr": clientLn.Addr().String()})
+		}
+		errChan <- http.Serve(clientLn, &LogHandler{clientMux, a.log})
 	}()
 
 	go func() {
-		a.log.Info("app", "Starting Router", LogFields{"addr": RouteListener.Addr().String()})
-		errChan <- http.Serve(RouteListener, RouteMux)
+		endpointLn := a.server.EndpointListener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting update server",
+				LogFields{"addr": endpointLn.Addr().String()})
+		}
+		errChan <- http.Serve(endpointLn, &LogHandler{endpointMux, a.log})
+	}()
+
+	go func() {
+		routeLn := a.router.Listener()
+		if a.log.ShouldLog(INFO) {
+			a.log.Info("app", "Starting router",
+				LogFields{"addr": routeLn.Addr().String()})
+		}
+		errChan <- http.Serve(routeLn, &LogHandler{routeMux, a.log})
 	}()
 
 	return errChan
@@ -169,10 +180,6 @@ func (a *Application) Run() (errChan chan error) {
 
 func (a *Application) Hostname() string {
 	return a.hostname
-}
-
-func (a *Application) MaxConnections() int {
-	return a.maxConnnections
 }
 
 func (a *Application) Logger() *SimpleLogger {

@@ -11,7 +11,7 @@ import (
 )
 
 type NoStoreConfig struct {
-	MaxChannels int `toml:"max_channels"`
+	MaxChannels int `toml:"max_channels" env:"max_channels"`
 }
 
 type NoStore struct {

@@ -23,9 +23,9 @@ type JsMap map[string]interface{}
 type timer map[string]trec
 
 type MetricsConfig struct {
-	Prefix       string
-	StatsdServer string `toml:"statsd_server"`
-	StatsdName   string `toml:"statsd_name"`
+	Prefix       string `env:"prefix"`
+	StatsdServer string `toml:"statsd_server" env:"statsd_host"`
+	StatsdName   string `toml:"statsd_name" env:"statsd_name"`
 }
 
 type Metrics struct {
@@ -55,8 +55,10 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 		name := strings.ToLower(conf.StatsdName)
 		client, err := statsd.New(conf.StatsdServer, name)
 		if err != nil {
-			m.logger.Error("metrics", "Could not init statsd connection",
-				LogFields{"error": err.Error()})
+			if m.logger.ShouldLog(ERROR) {
+				m.logger.Error("metrics", "Could not init statsd connection",
+					LogFields{"error": err.Error()})
+			}
 		} else {
 			m.statsd = client
 		}
@@ -105,8 +107,8 @@ func (m *Metrics) IncrementBy(metric string, count int64) {
 	m.counter[metric] = met
 	m.Unlock()
 
-	if m.logger.ShouldLog(INFO) {
-		m.logger.Info("metrics", "counter."+metric,
+	if m.logger.ShouldLog(DEBUG) {
+		m.logger.Debug("metrics", "counter."+metric,
 			LogFields{"value": strconv.FormatInt(met, 10),
 				"type": "counter"})
 	}
@@ -146,8 +148,8 @@ func (m *Metrics) Timer(metric string, duration time.Duration) {
 	}
 	m.Unlock()
 
-	if m.logger.ShouldLog(INFO) {
-		m.logger.Info("metrics", "timer."+metric,
+	if m.logger.ShouldLog(DEBUG) {
+		m.logger.Debug("metrics", "timer."+metric,
 			LogFields{"value": strconv.FormatInt(value, 10),
 				"type": "timer"})
 	}
@@ -161,8 +163,8 @@ func (m *Metrics) Gauge(metric string, value int64) {
 	m.gauge[metric] = value
 	m.Unlock()
 
-	if m.logger.ShouldLog(INFO) {
-		m.logger.Info("metrics", "gauge."+metric,
+	if m.logger.ShouldLog(DEBUG) {
+		m.logger.Debug("metrics", "gauge."+metric,
 			LogFields{"value": strconv.FormatInt(value, 10),
 				"type": "gauge"})
 	}
@@ -186,8 +188,8 @@ func (m *Metrics) GaugeDelta(metric string, delta int64) {
 	m.gauge[metric] = gauge + delta
 	m.Unlock()
 
-	if m.logger.ShouldLog(INFO) {
-		m.logger.Info("metrics", "gauge."+metric,
+	if m.logger.ShouldLog(DEBUG) {
+		m.logger.Debug("metrics", "gauge."+metric,
 			LogFields{"value": strconv.FormatInt(gauge, 10),
 				"type": "gauge"})
 	}
