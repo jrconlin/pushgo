@@ -33,10 +33,10 @@ func (s ChannelState) String() string {
 
 // Common adapter errors.
 var (
-	ErrPoolSaturated StorageError = "Connection pool saturated"
-	ErrStatusFailed  StorageError = "Invalid value returned"
-	ErrUnknownUAID   StorageError = "Unknown UAID for host"
-	ErrNoNodes       StorageError = "No memcached nodes available"
+	ErrPoolSaturated  StorageError = "Connection pool saturated"
+	ErrMemcacheStatus StorageError = "memcached returned unexpected health check result"
+	ErrUnknownUAID    StorageError = "Unknown UAID for host"
+	ErrNoNodes        StorageError = "No memcached nodes available"
 )
 
 // ChannelRecord represents a channel record persisted to memcached.

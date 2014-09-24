@@ -14,29 +14,34 @@ import (
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
 	minTTL = 2 * time.Second
 )
 
-var ErrMinTTL = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+var (
+	ErrMinTTL     = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+	ErrEtcdStatus = fmt.Errorf("etcd returned unexpected health check result")
+)
 
 type EtcdLocatorConf struct {
 	// Dir is the etcd key prefix for storing contacts. Defaults to
 	// "push_hosts".
-	Dir string `toml:"dir"`
+	Dir string
 
 	// Servers is a list of etcd servers.
 	Servers []string
 
 	// DefaultTTL is the maximum amount of time that registered contacts will be
 	// considered valid. Defaults to "24h".
-	DefaultTTL string
+	DefaultTTL string `env:"ttl"`
 
 	// RefreshInterval is the maximum amount of time that a cached contact list
 	// will be considered valid. Defaults to "5m".
-	RefreshInterval string `toml:"refresh_interval"`
+	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
 }
 
 // etcdFetch is an etcd contact list request.
@@ -47,7 +52,6 @@ type etcdFetch struct {
 
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
-	sync.Mutex
 	logger          *SimpleLogger
 	metrics         *Metrics
 	refreshInterval time.Duration
@@ -87,20 +91,20 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.metrics = app.Metrics()
 
 	if l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval); err != nil {
-		l.logger.Error("etcd", "Could not parse refreshInterval",
+		l.logger.Alert("etcd", "Could not parse refreshInterval",
 			LogFields{"error": err.Error(),
 				"refreshInterval": conf.RefreshInterval})
 		return err
 	}
 	// default time for the server to be "live"
 	if l.defaultTTL, err = time.ParseDuration(conf.DefaultTTL); err != nil {
-		l.logger.Critical("etcd",
+		l.logger.Alert("etcd",
 			"Could not parse etcd default TTL",
 			LogFields{"value": conf.DefaultTTL, "error": err.Error()})
 		return err
 	}
 	if l.defaultTTL < minTTL {
-		l.logger.Critical("etcd",
+		l.logger.Alert("etcd",
 			"default TTL too short",
 			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
@@ -120,21 +124,23 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 		l.key = path.Join(l.dir, l.authority)
 	}
 
-	l.logger.Debug("etcd", "connecting to etcd servers",
-		LogFields{"list": strings.Join(l.serverList, ";")})
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("etcd", "connecting to etcd servers",
+			LogFields{"list": strings.Join(l.serverList, ";")})
+	}
 	l.client = etcd.NewClient(l.serverList)
 
 	// create the push hosts directory (if not already there)
 	if _, err = l.client.CreateDir(l.dir, 0); err != nil {
 		clientErr, ok := err.(*etcd.EtcdError)
 		if !ok || clientErr.ErrorCode != 105 {
-			l.logger.Error("etcd", "etcd createDir error", LogFields{
+			l.logger.Alert("etcd", "etcd createDir error", LogFields{
 				"error": err.Error()})
 			return err
 		}
 	}
 	if err = l.Register(); err != nil {
-		l.logger.Critical("etcd", "Could not register with etcd",
+		l.logger.Alert("etcd", "Could not register with etcd",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -176,8 +182,10 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	case err = <-errors:
 	}
 	if err != nil {
-		l.logger.Error("etcd", "Could not get server list",
-			LogFields{"error": err.Error()})
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Could not get server list",
+				LogFields{"error": err.Error()})
+		}
 		return nil, err
 	}
 	for length := len(contacts); length > 0; {
@@ -188,16 +196,42 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	return contacts, nil
 }
 
+// Status determines whether etcd can respond to requests. Implements
+// Locator.Status().
+func (l *EtcdLocator) Status() (ok bool, err error) {
+	fakeID, err := id.Generate()
+	if err != nil {
+		return false, err
+	}
+	key, expected := "status_"+fakeID, "test"
+	if _, err = l.client.Set(key, expected, uint64(6*time.Second)); err != nil {
+		return false, err
+	}
+	resp, err := l.client.Get(key, false, false)
+	if err != nil {
+		return false, err
+	}
+	if resp.Node.Value != expected {
+		l.logger.Error("etcd", "Unexpected health check result",
+			LogFields{"expected": expected, "actual": resp.Node.Value})
+		return false, ErrEtcdStatus
+	}
+	l.client.Delete(key, false)
+	return true, nil
+}
+
 // Register registers the server to the etcd cluster.
 func (l *EtcdLocator) Register() (err error) {
-	if l.logger.ShouldLog(DEBUG) {
-		l.logger.Debug("etcd", "Registering host", LogFields{"host": l.authority})
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
 	}
 	if _, err = l.client.Set(l.key, l.authority, uint64(l.defaultTTL/time.Second)); err != nil {
-		l.logger.Error("etcd", "Failed to register",
-			LogFields{"error": err.Error(),
-				"key":  l.key,
-				"host": l.authority})
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Failed to register",
+				LogFields{"error": err.Error(),
+					"key":  l.key,
+					"host": l.authority})
+		}
 		return err
 	}
 	return nil

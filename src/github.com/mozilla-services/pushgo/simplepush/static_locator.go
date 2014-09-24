@@ -5,8 +5,7 @@
 package simplepush
 
 type StaticLocatorConf struct {
-	Contacts   []string
-	BucketSize int `toml:"bucket_size"`
+	Contacts []string `env:"contacts"`
 }
 
 type StaticLocator struct {
@@ -16,9 +15,7 @@ type StaticLocator struct {
 }
 
 func (*StaticLocator) ConfigStruct() interface{} {
-	return &StaticLocatorConf{
-		BucketSize: 10,
-	}
+	return new(StaticLocatorConf)
 }
 
 func (l *StaticLocator) Init(app *Application, config interface{}) error {
@@ -31,6 +28,7 @@ func (l *StaticLocator) Init(app *Application, config interface{}) error {
 
 func (l *StaticLocator) Close() error                      { return nil }
 func (l *StaticLocator) Contacts(string) ([]string, error) { return l.contacts, nil }
+func (l *StaticLocator) Status() (bool, error)             { return true, nil }
 
 func init() {
 	AvailableLocators["static"] = func() HasConfigStruct { return new(StaticLocator) }

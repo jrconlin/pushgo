@@ -12,13 +12,14 @@ import (
 
 type TestServer struct {
 	sync.Mutex
-	ServAddr   string
-	RouterAddr string
-	LogLevel   int
-	Contacts   []string
-	app        *Application
-	lastErr    error
-	isStopping bool
+	ClientAddr   string
+	EndpointAddr string
+	RouterAddr   string
+	LogLevel     int32
+	Contacts     []string
+	app          *Application
+	lastErr      error
+	isStopping   bool
 }
 
 func (t *TestServer) fatal(err error) {
@@ -50,9 +51,9 @@ func (t *TestServer) load() (*Application, error) {
 			return app, nil
 		},
 		PluginLogger: func(app *Application) (HasConfigStruct, error) {
-			logger := new(StdOutLogger)
-			loggerConf := logger.ConfigStruct().(*StdOutLoggerConfig)
-			loggerConf.Filter = -1
+			logger := NewTextLogger()
+			loggerConf := logger.ConfigStruct().(*TextLoggerConfig)
+			loggerConf.Filter = int32(t.LogLevel)
 			if err := logger.Init(app, loggerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing logger: %#v", err)
 			}
@@ -85,10 +86,7 @@ func (t *TestServer) load() (*Application, error) {
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
 			router := NewRouter()
 			routerConf := router.ConfigStruct().(*RouterConfig)
-			routerConf.Addr = t.RouterAddr
-			if len(routerConf.Addr) == 0 {
-				routerConf.Addr = ""
-			}
+			routerConf.Listener.Addr = t.RouterAddr
 			if err := router.Init(app, routerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)
 			}
@@ -106,11 +104,9 @@ func (t *TestServer) load() (*Application, error) {
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
 			servConf := serv.ConfigStruct().(*ServerConfig)
-			servConf.Addr = t.ServAddr
-			if len(servConf.Addr) == 0 {
-				// Listen on a random port for testing.
-				servConf.Addr = ""
-			}
+			// Listen on a random port for testing.
+			servConf.Client.Addr = t.ClientAddr
+			servConf.Endpoint.Addr = t.EndpointAddr
 			if err := serv.Init(app, servConf); err != nil {
 				return nil, fmt.Errorf("Error initializing server: %#v", err)
 			}
@@ -124,7 +120,7 @@ func (t *TestServer) load() (*Application, error) {
 			return handlers, nil
 		},
 	}
-	return loaders.Load(t.LogLevel)
+	return loaders.Load(int(t.LogLevel))
 }
 
 func (t *TestServer) Listen() (app *Application, err error) {
@@ -153,7 +149,7 @@ func (t *TestServer) Origin() (string, error) {
 	if server == nil {
 		return "", nil
 	}
-	origin, err := url.Parse(server.FullHostname())
+	origin, err := url.Parse(server.ClientURL())
 	switch origin.Scheme {
 	case "http":
 		origin.Scheme = "ws"

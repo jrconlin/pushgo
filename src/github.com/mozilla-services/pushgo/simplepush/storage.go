@@ -9,10 +9,7 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidID    StorageError = "Invalid UUID"
-	AvailableStores              = make(AvailableExtensions)
-)
+var AvailableStores = make(AvailableExtensions)
 
 // StorageError represents an adapter storage error.
 type StorageError string
@@ -31,24 +28,24 @@ type Update struct {
 // DbConf specifies generic database adapter options.
 type DbConf struct {
 	// TimeoutLive is the active channel record timeout. Defaults to 3 days.
-	TimeoutLive int64 `toml:"timeout_live"`
+	TimeoutLive int64 `toml:"timeout_live" env:"live_timeout"`
 
 	// TimeoutReg is the registered channel record timeout. Defaults to 3 hours;
 	// an app server should send a notification on a registered channel before
 	// this timeout.
-	TimeoutReg int64 `toml:"timeout_reg"`
+	TimeoutReg int64 `toml:"timeout_reg" env:"reg_timeout"`
 
 	// TimeoutDel is the deleted channel record timeout. Defaults to 1 day;
 	// deleted records will be pruned after this timeout.
-	TimeoutDel int64 `toml:"timeout_del"`
+	TimeoutDel int64 `toml:"timeout_del" env:"del_timeout"`
 
 	// HandleTimeout is the maximum time to wait when acquiring a connection from
 	// the pool. Defaults to 5 seconds.
-	HandleTimeout string `toml:"handle_timeout"`
+	HandleTimeout string `toml:"handle_timeout" env:"handle_timeout"`
 
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
 	// "_pc-".
-	PingPrefix string `toml:"prop_prefix"`
+	PingPrefix string `toml:"prop_prefix" env:"prop_prefix"`
 }
 
 // Store describes a storage adapter.

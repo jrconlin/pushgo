@@ -16,4 +16,7 @@ type Locator interface {
 	// for a DHT-based Locator, the slice may contain either a single node or a
 	// short list of the closest nodes.
 	Contacts(uaid string) ([]string, error)
+
+	// Status indicates whether the discovery service is healthy.
+	Status() (bool, error)
 }
