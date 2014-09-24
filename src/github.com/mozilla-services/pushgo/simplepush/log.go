@@ -118,6 +118,10 @@ func (sl *SimpleLogger) Info(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(INFO, mtype, msg, fields)
 }
 
+func (sl *SimpleLogger) Notice(mtype, msg string, fields LogFields) error {
+	return sl.Logger.Log(NOTICE, mtype, msg, fields)
+}
+
 func (sl *SimpleLogger) Warn(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(WARNING, mtype, msg, fields)
 }
@@ -132,6 +136,10 @@ func (sl *SimpleLogger) Critical(mtype, msg string, fields LogFields) error {
 
 func (sl *SimpleLogger) Alert(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(ALERT, mtype, msg, fields)
+}
+
+func (sl *SimpleLogger) Panic(mtype, msg string, fields LogFields) error {
+	return sl.Logger.Log(EMERGENCY, mtype, msg, fields)
 }
 
 // NewHekaLogger creates a logger that writes Protobuf or JSON-encoded log
