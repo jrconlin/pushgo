@@ -17,7 +17,6 @@ import (
 	mc "github.com/bradfitz/gomemcache/memcache"
 
 	"github.com/mozilla-services/pushgo/id"
-	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 // NewGomemc creates an unconfigured memcached adapter.
@@ -85,7 +84,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	} else {
 		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Error("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -94,14 +93,14 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 
 	serverList := new(mc.ServerList)
 	if err = serverList.SetServers(s.Hosts...); err != nil {
-		s.logger.Error("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
+		s.logger.Alert("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
 		return err
 	}
 
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Error("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Alert("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
 	}
 
@@ -132,8 +131,10 @@ func (s *GomemcStore) Close() (err error) {
 func (s *GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
-		s.logger.Warn("gomemc", "Invalid Key, returning blank IDs",
-			LogFields{"key": key})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Invalid Key, returning blank IDs",
+				LogFields{"key": key})
+		}
 		return "", "", false
 	}
 	return items[0], items[1], true
@@ -144,8 +145,10 @@ func (s *GomemcStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 // Store.IDsToKey().
 func (s *GomemcStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
-		s.logger.Warn("gomemc", "Invalid IDs, returning blank Key",
-			LogFields{"uaid": suaid, "chid": schid})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Invalid IDs, returning blank Key",
+				LogFields{"uaid": suaid, "chid": schid})
+		}
 		return "", false
 	}
 	return fmt.Sprintf("%s.%s", suaid, schid), true
@@ -189,8 +192,10 @@ func (s *GomemcStore) Exists(suaid string) bool {
 		return false
 	}
 	if _, err = s.client.Get(encodeKey(uaid)); err != nil && err != mc.ErrCacheMiss {
-		s.logger.Warn("gomemc", "Exists encountered unknown error",
-			LogFields{"error": err.Error()})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Exists encountered unknown error",
+				LogFields{"error": err.Error()})
+		}
 	}
 	return err == nil
 }
@@ -199,7 +204,7 @@ func (s *GomemcStore) Exists(suaid string) bool {
 func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -228,15 +233,18 @@ func (s *GomemcStore) storeRegister(uaid, chid []byte, version int64) error {
 // channel ID. If version > 0, the record will be marked as active. Implements
 // Store.Register().
 func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeRegister(uaid, chid, version)
 }
@@ -245,19 +253,22 @@ func (s *GomemcStore) Register(suaid, schid string, version int64) (err error) {
 func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
 	}
-	keyString := hex.EncodeToString(key)
 	cRec, err := s.fetchRec(key)
 	if err != nil && err != mc.ErrCacheMiss {
-		s.logger.Error("gomemc", "Update error", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Update error", LogFields{
+				"pk":    hex.EncodeToString(key),
+				"error": err.Error(),
+			})
+		}
 		return err
 	}
 	if cRec != nil {
-		s.logger.Debug("gomemc", "Replacing record", LogFields{"primarykey": keyString})
+		if s.logger.ShouldLog(DEBUG) {
+			s.logger.Debug("gomemc", "Replacing record", LogFields{"pk": hex.EncodeToString(key)})
+		}
 		if cRec.State != StateDeleted {
 			newRecord := &ChannelRecord{
 				State:       StateLive,
@@ -268,11 +279,13 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 		}
 	}
 	// No record found or the record setting was DELETED
-	s.logger.Debug("gomemc", "Registering channel", LogFields{
-		"uaid":      hex.EncodeToString(uaid),
-		"channelID": hex.EncodeToString(chid),
-		"version":   strconv.FormatInt(version, 10),
-	})
+	if s.logger.ShouldLog(DEBUG) {
+		s.logger.Debug("gomemc", "Registering channel", LogFields{
+			"uaid":      hex.EncodeToString(uaid),
+			"channelID": hex.EncodeToString(chid),
+			"version":   strconv.FormatInt(version, 10),
+		})
+	}
 	return s.storeRegister(uaid, chid, version)
 }
 
@@ -281,18 +294,21 @@ func (s *GomemcStore) storeUpdate(uaid, chid []byte, version int64) error {
 func (s *GomemcStore) Update(key string, version int64) (err error) {
 	suaid, schid, ok := s.KeyToIDs(key)
 	if !ok {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrInvalidKey
+	}
+	if len(suaid) == 0 {
+		return ErrNoID
 	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	// Normalize the device and channel IDs.
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeUpdate(uaid, chid, version)
 }
@@ -301,7 +317,7 @@ func (s *GomemcStore) Update(key string, version int64) (err error) {
 func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return ErrInvalidKey
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -309,28 +325,32 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 	}
 	pos := chids.IndexOf(chid)
 	if pos < 0 {
-		return sperrors.InvalidChannelError
+		return ErrNonexistentChannel
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
 	}
 	channel, err := s.fetchRec(key)
 	if err != nil {
-		s.logger.Warn("gomemc", "Could not delete Channel",
-			LogFields{
-				"primarykey": hex.EncodeToString(key),
-				"error":      err.Error(),
-			})
-		return sperrors.InvalidChannelError
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Could not delete Channel",
+				LogFields{
+					"pk":    hex.EncodeToString(key),
+					"error": err.Error(),
+				})
+		}
+		return ErrRecordUpdateFailed
 	}
 	channel.State = StateDeleted
 	if err = s.storeRec(key, channel); err != nil {
-		s.logger.Warn("gomemc", "Could not store deleted Channel",
-			LogFields{
-				"primarykey": hex.EncodeToString(key),
-				"error":      err.Error(),
-			})
-		return sperrors.InvalidChannelError
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Could not store deleted Channel",
+				LogFields{
+					"pk":    hex.EncodeToString(key),
+					"error": err.Error(),
+				})
+		}
+		return ErrRecordUpdateFailed
 	}
 	return nil
 }
@@ -338,15 +358,18 @@ func (s *GomemcStore) storeUnregister(uaid, chid []byte) error {
 // Unregister marks the channel ID associated with the given device ID
 // as inactive. Implements Store.Unregister().
 func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	return s.storeUnregister(uaid, chid)
 }
@@ -355,19 +378,22 @@ func (s *GomemcStore) Unregister(suaid, schid string) (err error) {
 // memcached. Deregistration calls should call s.Unregister() instead.
 // Implements Store.Drop().
 func (s *GomemcStore) Drop(suaid, schid string) (err error) {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	if len(schid) == 0 {
-		return sperrors.NoChannelError
+		return ErrNoChannel
 	}
 	var uaid, chid []byte
 	if uaid, err = id.DecodeString(suaid); err != nil || len(uaid) == 0 {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	if chid, err = id.DecodeString(schid); err != nil || len(chid) == 0 {
-		return sperrors.InvalidChannelError
+		return ErrInvalidChannel
 	}
 	key, err := toBinaryKey(uaid, chid)
 	if err != nil {
-		return err
+		return ErrInvalidKey
 	}
 	if err = s.client.Delete(encodeKey(key)); err != nil && err != mc.ErrCacheMiss {
 		return err
@@ -379,7 +405,7 @@ func (s *GomemcStore) Drop(suaid, schid string) (err error) {
 // since the specified cutoff time. Implements Store.FetchAll().
 func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []string, error) {
 	if len(suaid) == 0 {
-		return nil, nil, sperrors.InvalidDataError
+		return nil, nil, ErrNoID
 	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
@@ -398,11 +424,12 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 		key, _ := toBinaryKey(uaid, chid)
 		keys = append(keys, encodeKey(key))
 	}
-	deviceString := hex.EncodeToString(uaid)
-	s.logger.Debug("gomemc", "Fetching items", LogFields{
-		"uaid":  deviceString,
-		"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
-	})
+	if s.logger.ShouldLog(INFO) {
+		s.logger.Info("gomemc", "Fetching items", LogFields{
+			"uaid":  hex.EncodeToString(uaid),
+			"items": fmt.Sprintf("[%s]", strings.Join(keys, ", ")),
+		})
+	}
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
@@ -416,16 +443,20 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 		}
 		chid := chids[index]
 		channelString := hex.EncodeToString(chid)
-		s.logger.Debug("gomemc", "FetchAll Fetched record ", LogFields{
-			"uaid":  deviceString,
-			"chid":  channelString,
-			"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
-		})
-		if channel.LastTouched < sinceUnix {
-			s.logger.Debug("gomemc", "Skipping record...", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
+		if s.logger.ShouldLog(DEBUG) {
+			s.logger.Debug("gomemc", "FetchAll Fetched record ", LogFields{
+				"uaid":  hex.EncodeToString(uaid),
+				"chid":  channelString,
+				"value": fmt.Sprintf("%d,%s,%d", channel.LastTouched, channel.State, channel.Version),
 			})
+		}
+		if channel.LastTouched < sinceUnix {
+			if s.logger.ShouldLog(DEBUG) {
+				s.logger.Debug("gomemc", "Skipping record...", LogFields{
+					"uaid": hex.EncodeToString(uaid),
+					"chid": channelString,
+				})
+			}
 			continue
 		}
 		switch channel.State {
@@ -433,10 +464,12 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 			version := channel.Version
 			if version == 0 {
 				version = uint64(time.Now().UTC().Unix())
-				s.logger.Debug("gomemc", "FetchAll Using Timestamp", LogFields{
-					"uaid": deviceString,
-					"chid": channelString,
-				})
+				if s.logger.ShouldLog(DEBUG) {
+					s.logger.Debug("gomemc", "FetchAll Using Timestamp", LogFields{
+						"uaid": hex.EncodeToString(uaid),
+						"chid": channelString,
+					})
+				}
 			}
 			update := Update{
 				ChannelID: channelString,
@@ -444,26 +477,32 @@ func (s *GomemcStore) FetchAll(suaid string, since time.Time) ([]Update, []strin
 			}
 			updates = append(updates, update)
 		case StateDeleted:
-			s.logger.Debug("gomemc", "FetchAll Deleting record", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
-			})
-			schid, err := id.Encode(chid)
-			if err != nil {
-				s.logger.Warn("gomemc", "FetchAll Failed to encode channel ID", LogFields{
-					"uaid": deviceString,
+			if s.logger.ShouldLog(DEBUG) {
+				s.logger.Debug("gomemc", "FetchAll Deleting record", LogFields{
+					"uaid": hex.EncodeToString(uaid),
 					"chid": channelString,
 				})
+			}
+			schid, err := id.Encode(chid)
+			if err != nil {
+				if s.logger.ShouldLog(WARNING) {
+					s.logger.Warn("gomemc", "FetchAll Failed to encode channel ID", LogFields{
+						"uaid": hex.EncodeToString(uaid),
+						"chid": channelString,
+					})
+				}
 				continue
 			}
 			expired = append(expired, schid)
 		case StateRegistered:
 			// Item registered, but not yet active. Ignore it.
 		default:
-			s.logger.Warn("gomemc", "Unknown state", LogFields{
-				"uaid": deviceString,
-				"chid": channelString,
-			})
+			if s.logger.ShouldLog(WARNING) {
+				s.logger.Warn("gomemc", "Unknown state", LogFields{
+					"uaid": hex.EncodeToString(uaid),
+					"chid": channelString,
+				})
+			}
 		}
 	}
 	return updates, expired, nil
@@ -483,7 +522,7 @@ func (s *GomemcStore) DropAll(suaid string) error {
 	for _, chid := range chids {
 		key, err := toBinaryKey(uaid, chid)
 		if err != nil {
-			return err
+			return ErrInvalidKey
 		}
 		s.client.Delete(encodeKey(key))
 	}
@@ -496,9 +535,12 @@ func (s *GomemcStore) DropAll(suaid string) error {
 // FetchPing retrieves proprietary ping information for the given device ID
 // from memcached. Implements Store.FetchPing().
 func (s *GomemcStore) FetchPing(suaid string) (pingData []byte, err error) {
+	if len(suaid) == 0 {
+		return nil, ErrNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return nil, sperrors.InvalidDataError
+		return nil, ErrInvalidID
 	}
 	raw, err := s.client.Get(s.PingPrefix + hex.EncodeToString(uaid))
 	if err != nil {
@@ -523,9 +565,12 @@ func (s *GomemcStore) PutPing(suaid string, pingData []byte) error {
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements Store.DropPing().
 func (s *GomemcStore) DropPing(suaid string) error {
+	if len(suaid) == 0 {
+		return ErrNoID
+	}
 	uaid, err := id.DecodeString(suaid)
 	if err != nil {
-		return sperrors.InvalidDataError
+		return ErrInvalidID
 	}
 	return s.client.Delete(s.PingPrefix + hex.EncodeToString(uaid))
 }
@@ -538,10 +583,18 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 	}
 	raw, err := s.client.Get(encodeKey(uaid))
 	if err != nil {
-		if err == mc.ErrCacheMiss {
+		if err != mc.ErrCacheMiss {
+			if s.logger.ShouldLog(ERROR) {
+				s.logger.Error("gomemc",
+					"Error fetching channels for UAID",
+					LogFields{"uaid": hex.EncodeToString(uaid), "error": err.Error()})
+			}
+			return nil, err
+		}
+		if s.logger.ShouldLog(WARNING) {
 			s.logger.Warn("gomemc",
 				"No channels found for UAID, dropping.",
-				LogFields{"uaid": string(uaid)})
+				LogFields{"uaid": hex.EncodeToString(uaid)})
 		}
 		return nil, err
 	}
@@ -555,7 +608,7 @@ func (s *GomemcStore) fetchAppIDArray(uaid []byte) (result ChannelIDs, err error
 // The channel IDs are sorted in-place.
 func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	if len(uaid) == 0 {
-		return sperrors.MissingDataError
+		return ErrNoID
 	}
 	// sort the array
 	sort.Sort(chids)
@@ -567,7 +620,9 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 	}
 	raw, err := json.Marshal(chids)
 	if err != nil {
-		s.logger.Error("gomemc", "Could not marshal AppIDArray", LogFields{"error": err.Error()})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Could not marshal AppIDArray", LogFields{"error": err.Error()})
+		}
 		return err
 	}
 	return s.client.Set(&mc.Item{Key: encodeKey(uaid), Value: raw, Expiration: 0})
@@ -576,39 +631,45 @@ func (s *GomemcStore) storeAppIDArray(uaid []byte, chids ChannelIDs) error {
 // Retrieves a channel record from memcached.
 func (s *GomemcStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	if len(pk) == 0 {
-		return nil, sperrors.InvalidPrimaryKeyError
+		return nil, ErrNoKey
 	}
 	keyString := encodeKey(pk)
 	result := new(ChannelRecord)
 	raw, err := s.client.Get(keyString)
 	if err != nil && err != mc.ErrCacheMiss {
-		s.logger.Error("gomemc", "Get Failed", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Get Failed", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 		return nil, err
 	}
 	if err = json.Unmarshal(raw.Value, result); err != nil {
-		s.logger.Error("gomemc", "Could not unmarshal rec", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Could not unmarshal rec", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 		return nil, err
 	}
-	s.logger.Debug("gomemc", "Fetched", LogFields{
-		"primarykey": keyString,
-		"result":     fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
-	})
+	if s.logger.ShouldLog(DEBUG) {
+		s.logger.Debug("gomemc", "Fetched", LogFields{
+			"pk":     keyString,
+			"result": fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
+		})
+	}
 	return result, nil
 }
 
 // Stores an updated channel record in memcached.
 func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	if len(pk) == 0 {
-		return sperrors.InvalidPrimaryKeyError
+		return ErrNoKey
 	}
 	if rec == nil {
-		return sperrors.NoDataToStoreError
+		return ErrNoData
 	}
 	var ttl time.Duration
 	switch rec.State {
@@ -623,10 +684,12 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	keyString := encodeKey(pk)
 	raw, err := json.Marshal(rec)
 	if err != nil {
-		s.logger.Error("gomemc", "Failure to marshal item", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Failure to marshal item", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 		return err
 	}
 	err = s.client.Set(&mc.Item{
@@ -635,10 +698,12 @@ func (s *GomemcStore) storeRec(pk []byte, rec *ChannelRecord) error {
 		Expiration: int32(ttl.Seconds()),
 	})
 	if err != nil {
-		s.logger.Error("gomemc", "Failure to set item", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Failure to set item", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 	}
 	return nil
 }

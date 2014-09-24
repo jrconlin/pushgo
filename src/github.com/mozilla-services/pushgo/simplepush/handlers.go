@@ -10,14 +10,11 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
-
-	"github.com/mozilla-services/pushgo/simplepush/sperrors"
 )
 
 type HandlerConfig struct{}
@@ -68,8 +65,10 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 	resp.Header().Set("Content-Type", "application/json")
 	reply, err := json.Marshal(snapshot)
 	if err != nil {
-		self.logger.Error("handler", "Could not generate metrics report",
-			LogFields{"error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("handler", "Could not generate metrics report",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
 		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
@@ -132,6 +131,8 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	timer := time.Now()
+	requestID := req.Header.Get(HeaderID)
+	logWarning := self.logger.ShouldLog(WARNING)
 	var (
 		err        error
 		version    int64
@@ -142,25 +143,24 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		now := time.Now()
 		ok := *err == nil
 		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("update", "+++++++++++++ DONE +++", nil)
+			self.logger.Debug("update", "+++++++++++++ DONE +++",
+				LogFields{"rid": requestID})
 		}
-		if len(uaid) > 0 && len(chid) > 0 && self.logger.ShouldLog(INFO) {
-			self.logger.Info("dash", "Client Update complete",
-				LogFields{
-					"uaid":       uaid,
-					"path":       req.URL.Path,
-					"channelID":  chid,
-					"successful": strconv.FormatBool(ok),
-					"duration":   strconv.FormatInt(int64(now.Sub(timer)), 10)})
+		if self.logger.ShouldLog(INFO) {
+			self.logger.Info("dash", "Client Update complete", LogFields{
+				"rid":        requestID,
+				"uaid":       uaid,
+				"chid":       chid,
+				"successful": strconv.FormatBool(ok)})
 		}
 		if ok {
 			self.metrics.Timer("updates.handled", now.Sub(timer))
 		}
 	}(&err)
 
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("update", "Handling Update",
-			LogFields{"path": req.URL.Path})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("update", "Handling Update",
+			LogFields{"rid": requestID})
 	}
 
 	if req.Method != "PUT" {
@@ -182,8 +182,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		version = time.Now().UTC().Unix()
 	}
 
-	// elements := strings.Split(req.URL.Path, "/")
-	// pk := elements[len(elements)-1]
 	var pk string
 	pk, ok := mux.Vars(req)["key"]
 	// TODO:
@@ -191,28 +189,28 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
 	if !ok || len(pk) == 0 {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("update", "No token, rejecting request",
-				LogFields{"remoteAddr": req.RemoteAddr,
-					"path": req.URL.Path})
+		if logWarning {
+			self.logger.Warn("update", "No token, rejecting request",
+				LogFields{"rid": requestID})
 		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
-	if token := self.tokenKey; len(token) > 0 {
+	if tokenKey := self.tokenKey; len(tokenKey) > 0 {
 		// Note: dumping the []uint8 keys can produce terminal glitches
-		self.logger.Debug("main", "Decoding...", nil)
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("main", "Decoding...",
+				LogFields{"rid": requestID})
+		}
 		var err error
-		bpk, err := Decode(token, pk)
+		bpk, err := Decode(tokenKey, pk)
 		if err != nil {
-			self.logger.Debug("update",
-				"Could not decode token",
-				LogFields{"primarykey": pk,
-					"remoteAddr": req.RemoteAddr,
-					"path":       req.URL.Path,
-					"error":      ErrStr(err)})
+			if logWarning {
+				self.logger.Warn("update", "Could not decode primary key", LogFields{
+					"rid": requestID, "pk": pk, "error": err.Error()})
+			}
 			http.Error(resp, "", http.StatusNotFound)
 			self.metrics.Increment("updates.appserver.invalid")
 			return
@@ -222,11 +220,9 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if !validPK(pk) {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("update",
-				"Invalid token for update",
-				LogFields{"token": pk,
-					"path": req.URL.Path})
+		if logWarning {
+			self.logger.Warn("update", "Invalid primary key for update",
+				LogFields{"rid": requestID, "pk": pk})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
@@ -235,23 +231,18 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	uaid, chid, ok = self.store.KeyToIDs(pk)
 	if !ok {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("update",
-				"Could not resolve PK",
-				LogFields{"primaryKey": pk,
-					"path": req.URL.Path})
+		if logWarning {
+			self.logger.Warn("update", "Could not resolve primary key",
+				LogFields{"rid": requestID, "pk": pk})
 		}
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	if chid == "" {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("update",
-				"Incomplete primary key",
-				LogFields{"uaid": uaid,
-					"channelID":  chid,
-					"remoteAddr": req.RemoteAddr})
+		if logWarning {
+			self.logger.Warn("update", "Primary key missing channel ID",
+				LogFields{"rid": requestID, "uaid": uaid})
 		}
 		self.metrics.Increment("updates.appserver.invalid")
 		return
@@ -262,12 +253,16 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		// TODO: Move PropPinger here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
 		resp.Header().Set("Content-Type", "application/json")
-		if err = self.router.SendUpdate(uaid, chid, version, time.Now().UTC()); err == nil {
-			resp.Write([]byte("{}"))
-		} else {
+		var cancelSignal <-chan bool
+		if cn, ok := resp.(http.CloseNotifier); ok {
+			cancelSignal = cn.CloseNotify()
+		}
+		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
+			return
 		}
+		resp.Write([]byte("{}"))
 		return
 	}
 
@@ -280,10 +275,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		goto sendUpdate
 	}
 	if ok, err = pinger.Send(uaid, version); err != nil {
-		self.logger.Warn("update",
-			"Could not generate Proprietary Ping",
-			LogFields{"error": err.Error(),
-				"uaid": uaid})
+		if logWarning {
+			self.logger.Warn("update", "Could not send proprietary ping", LogFields{
+				"rid": requestID, "uaid": uaid, "error": err.Error()})
+		}
 		goto sendUpdate
 	}
 	/* if this is a GCM connected host, boot vers immediately to GCM
@@ -298,19 +293,23 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 sendUpdate:
 	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("update",
-			"setting version for ChannelID",
-			LogFields{"uaid": uaid, "channelID": chid,
-				"version": strconv.FormatInt(version, 10)})
+		self.logger.Info("update", "setting version for ChannelID", LogFields{
+			"rid":     requestID,
+			"uaid":    uaid,
+			"chid":    chid,
+			"version": strconv.FormatInt(version, 10)})
 	}
 
 	if err = self.store.Update(pk, version); err != nil {
-		self.logger.Warn("update", "Could not update channel",
-			LogFields{"UAID": uaid,
-				"channelID": chid,
-				"version":   strconv.FormatInt(version, 10),
-				"error":     err.Error()})
-		status, _ := sperrors.ErrToStatus(err)
+		if logWarning {
+			self.logger.Warn("update", "Could not update channel", LogFields{
+				"rid":     requestID,
+				"uaid":    uaid,
+				"chid":    chid,
+				"version": strconv.FormatInt(version, 10),
+				"error":   err.Error()})
+		}
+		status, _ := ErrToStatus(err)
 		self.metrics.Increment("updates.appserver.error")
 		http.Error(resp, "Could not update channel version", status)
 		return
@@ -326,6 +325,7 @@ sendUpdate:
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
+	requestID := ws.Request().Header.Get(HeaderID)
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,
@@ -333,19 +333,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		Born:   time.Now()}
 
 	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("handler", "websocket connection", LogFields{
-			"UserAgent":  ws.Request().Header.Get("User-Agent"),
-			"URI":        ws.Request().RequestURI,
-			"RemoteAddr": ws.Request().RemoteAddr,
-		})
+		self.logger.Info("handler", "websocket connection",
+			LogFields{"rid": requestID})
 	}
 	defer func() {
 		now := time.Now()
-		if r := recover(); r != nil {
-			debug.PrintStack()
-			self.logger.Error("main", "Unknown error",
-				LogFields{"error": r.(error).Error()})
-		}
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
 		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
@@ -354,10 +346,10 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 
 	self.metrics.Increment("socket.connect")
 
-	NewWorker(self.app).Run(&sock)
-
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("main", "Server for client shut-down", nil)
+	NewWorker(self.app, requestID).Run(&sock)
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("main", "Server for client shut-down",
+			LogFields{"rid": requestID})
 	}
 }
 
@@ -368,6 +360,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		err error
 		ts  time.Time
 	)
+	logWarning := self.logger.ShouldLog(WARNING)
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
@@ -383,8 +376,10 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// We know of this one.
 	if req.ContentLength < 1 {
-		self.logger.Warn("router", "Routed update contained no body",
-			LogFields{"uaid": uaid})
+		if logWarning {
+			self.logger.Warn("router", "Routed update contained no body",
+				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
+		}
 		http.Error(resp, "Missing body", http.StatusNotAcceptable)
 		self.metrics.Increment("updates.routed.invalid")
 		return
@@ -393,29 +388,36 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	request := new(Routable)
 	if err = decoder.Decode(request); err != nil {
-		self.logger.Error("router",
-			"Could not read update body",
-			LogFields{"error": err.Error()})
+		if logWarning {
+			self.logger.Warn("router", "Could not read update body",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
 		goto invalidBody
 	}
 	if len(request.ChannelID) == 0 {
-		self.logger.Error("router", "Missing channel ID", LogFields{"uaid": uaid})
+		if logWarning {
+			self.logger.Warn("router", "Missing channel ID",
+				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
+		}
 		goto invalidBody
 	}
 	if ts, err = time.Parse(time.RFC3339Nano, request.Time); err != nil {
-		self.logger.Error("router", "Could not parse time",
-			LogFields{"error": err.Error(),
+		if logWarning {
+			self.logger.Warn("router", "Could not parse time", LogFields{
+				"rid":  req.Header.Get(HeaderID),
 				"uaid": uaid,
 				"chid": request.ChannelID,
 				"time": request.Time})
+		}
 		goto invalidBody
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
 	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, ts); err != nil {
-		self.logger.Error("router",
-			"Could not update local user",
-			LogFields{"error": err.Error()})
+		if logWarning {
+			self.logger.Warn("router", "Could not update local user",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
 		http.Error(resp, "Server Error", http.StatusInternalServerError)
 		self.metrics.Increment("updates.routed.error")
 		return

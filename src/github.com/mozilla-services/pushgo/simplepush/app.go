@@ -17,6 +17,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
+const VERSION = "1.4"
+
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
@@ -152,7 +154,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting WebSocket server",
 				LogFields{"addr": clientLn.Addr().String()})
 		}
-		errChan <- http.Serve(clientLn, clientMux)
+		errChan <- http.Serve(clientLn, &LogHandler{clientMux, a.log})
 	}()
 
 	go func() {
@@ -161,7 +163,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting update server",
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		errChan <- http.Serve(endpointLn, endpointMux)
+		errChan <- http.Serve(endpointLn, &LogHandler{endpointMux, a.log})
 	}()
 
 	go func() {
@@ -170,7 +172,7 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting router",
 				LogFields{"addr": routeLn.Addr().String()})
 		}
-		errChan <- http.Serve(routeLn, routeMux)
+		errChan <- http.Serve(routeLn, &LogHandler{routeMux, a.log})
 	}()
 
 	return errChan

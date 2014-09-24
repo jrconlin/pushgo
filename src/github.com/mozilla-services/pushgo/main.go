@@ -25,7 +25,6 @@ var (
 )
 
 const SIGUSR1 = syscall.SIGUSR1
-const VERSION = "1.4"
 
 // -- main
 func main() {
@@ -64,7 +63,7 @@ func main() {
 	}
 
 	// Report what the app believes the current host to be, and what version.
-	log.Printf("CurrentHost: %s, Version: %s", app.Hostname(), VERSION)
+	log.Printf("CurrentHost: %s, Version: %s", app.Hostname(), simplepush.VERSION)
 
 	// wait for sigint
 	sigChan := make(chan os.Signal)

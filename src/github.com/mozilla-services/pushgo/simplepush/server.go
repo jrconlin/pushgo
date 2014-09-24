@@ -113,13 +113,13 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.hostname = app.Hostname()
 
 	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
-		self.logger.Critical("server", "Could not parse push endpoint template",
+		self.logger.Alert("server", "Could not parse push endpoint template",
 			LogFields{"error": err.Error()})
 		return err
 	}
 
 	if self.clientLn, err = conf.Client.Listen(); err != nil {
-		self.logger.Critical("server", "Could not attach WebSocket listener",
+		self.logger.Alert("server", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -134,7 +134,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.maxClientConns = conf.Client.MaxConns
 
 	if self.endpointLn, err = conf.Endpoint.Listen(); err != nil {
-		self.logger.Critical("server", "Could not attach update listener",
+		self.logger.Alert("server", "Could not attach update listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -224,9 +224,11 @@ func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result i
 
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
 		if err := self.prop.Register(uaid, connect); err != nil {
-			self.logger.Warn("server", "Could not set proprietary info",
-				LogFields{"error": err.Error(),
-					"connect": string(connect)})
+			if self.logger.ShouldLog(WARNING) {
+				self.logger.Warn("server", "Could not set proprietary info",
+					LogFields{"error": err.Error(),
+						"connect": string(connect)})
+			}
 		}
 	}
 
@@ -296,9 +298,11 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	if len(self.key) != 0 {
 		btoken := []byte(token)
 		if token, err = Encode(self.key, btoken); err != nil {
-			self.logger.Error("server", "Token Encoding error",
-				LogFields{"uaid": sock.Uaid,
-					"channelID": chid})
+			if self.logger.ShouldLog(ERROR) {
+				self.logger.Error("server", "Token Encoding error",
+					LogFields{"uaid": sock.Uaid,
+						"channelID": chid})
+			}
 			return 500, nil
 		}
 
@@ -313,18 +317,22 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		token,
 		self.EndpointURL(),
 	}); err != nil {
-		self.logger.Error("server",
-			"Could not generate Push Endpoint",
-			LogFields{"error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("server",
+				"Could not generate Push Endpoint",
+				LogFields{"error": err.Error()})
+		}
 		return 500, nil
 	}
 	args["push.endpoint"] = endpoint.String()
-	self.logger.Info("server",
-		"Generated Push Endpoint",
-		LogFields{"uaid": sock.Uaid,
-			"channelID": chid,
-			"token":     token,
-			"endpoint":  args["push.endpoint"].(string)})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("server",
+			"Generated Push Endpoint",
+			LogFields{"uaid": sock.Uaid,
+				"channelID": chid,
+				"token":     token,
+				"endpoint":  args["push.endpoint"].(string)})
+	}
 	return 200, args
 }
 
@@ -332,10 +340,12 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 	defer func(client *Client, version int64) {
 		r := recover()
 		if r != nil {
-			self.logger.Error("server",
-				"requestFlush failed",
-				LogFields{"error": r.(error).Error(),
-					"uaid": client.UAID})
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+				self.logger.Error("server",
+					"requestFlush failed",
+					LogFields{"error": r.(error).Error(),
+						"uaid": client.UAID})
+			}
 			debug.PrintStack()
 			if client != nil && self.prop != nil {
 				self.prop.Send(client.UAID, version)
@@ -349,7 +359,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 			self.logger.Info("server",
 				"Requesting flush",
 				LogFields{"uaid": client.UAID,
-					"channel": channel,
+					"chid":    channel,
 					"version": strconv.FormatInt(version, 10)})
 		}
 
@@ -392,11 +402,12 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 	reason = "Failed to flush"
 
 updateError:
-	self.logger.Error("server", reason,
-		LogFields{"error": err.Error(),
-			"UID":  uid,
-			"CHID": chid,
-		})
+	if self.logger.ShouldLog(ERROR) {
+		self.logger.Error("server", reason,
+			LogFields{"error": err.Error(),
+				"uaid": uid,
+				"chid": chid})
+	}
 	return err
 }
 

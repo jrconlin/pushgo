@@ -199,13 +199,13 @@ func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.dryRun = conf.DryRun
 
 	if r.apiKey = conf.APIKey; len(r.apiKey) == 0 {
-		r.logger.Critical("gcmping", "Missing GCM API key", nil)
+		r.logger.Alert("gcmping", "Missing GCM API key", nil)
 		return ConfigurationErr
 	}
 
 	ttl, err := time.ParseDuration(conf.TTL)
 	if err != nil {
-		r.logger.Critical("gcmping", "Could not parse TTL",
+		r.logger.Alert("gcmping", "Could not parse TTL",
 			LogFields{"error": err.Error(), "ttl": conf.TTL})
 		return err
 	}
@@ -243,13 +243,17 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 	}
 	requestData, err := json.Marshal(request)
 	if err != nil {
-		r.logger.Error("gcmping", "Could not marshal connection string for storage",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("gcmping", "Could not marshal connection string for storage",
+				LogFields{"error": err.Error()})
+		}
 		return err
 	}
 	if err = r.store.PutPing(uaid, requestData); err != nil {
-		r.logger.Error("gcmping", "Could not store connect",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(WARNING) {
+			r.logger.Warn("gcmping", "Could not store connect",
+				LogFields{"error": err.Error()})
+		}
 		return err
 	}
 	return nil
@@ -265,9 +269,11 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 	}
 	req, err := http.NewRequest("POST", r.url, bytes.NewBuffer(pingData))
 	if err != nil {
-		r.logger.Error("propping",
-			"Could not create request for GCM Post",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("propping",
+				"Could not create request for GCM Post",
+				LogFields{"error": err.Error()})
+		}
 		return false, err
 	}
 	req.Header.Add("Authorization", "key="+r.apiKey)
@@ -276,15 +282,19 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 	resp, err := r.client.Do(req)
 	defer resp.Body.Close()
 	if err != nil {
-		r.logger.Error("propping",
-			"Failed to send GCM message",
-			LogFields{"error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("propping",
+				"Failed to send GCM message",
+				LogFields{"error": err.Error()})
+		}
 		return false, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		r.logger.Error("propping",
-			"GCM returned non success message",
-			LogFields{"error": resp.Status})
+		if r.logger.ShouldLog(WARNING) {
+			r.logger.Warn("propping",
+				"GCM returned non success message",
+				LogFields{"error": resp.Status})
+		}
 		r.setLastErr(GCMError(resp.StatusCode))
 		return false, ProtocolErr
 	}

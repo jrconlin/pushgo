@@ -15,7 +15,7 @@ type TestServer struct {
 	ClientAddr   string
 	EndpointAddr string
 	RouterAddr   string
-	LogLevel     int
+	LogLevel     int32
 	Contacts     []string
 	app          *Application
 	lastErr      error
@@ -51,9 +51,9 @@ func (t *TestServer) load() (*Application, error) {
 			return app, nil
 		},
 		PluginLogger: func(app *Application) (HasConfigStruct, error) {
-			logger := new(StdOutLogger)
-			loggerConf := logger.ConfigStruct().(*StdOutLoggerConfig)
-			loggerConf.Filter = -1
+			logger := NewTextLogger()
+			loggerConf := logger.ConfigStruct().(*TextLoggerConfig)
+			loggerConf.Filter = int32(t.LogLevel)
 			if err := logger.Init(app, loggerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing logger: %#v", err)
 			}
@@ -120,7 +120,7 @@ func (t *TestServer) load() (*Application, error) {
 			return handlers, nil
 		},
 	}
-	return loaders.Load(t.LogLevel)
+	return loaders.Load(int(t.LogLevel))
 }
 
 func (t *TestServer) Listen() (app *Application, err error) {
