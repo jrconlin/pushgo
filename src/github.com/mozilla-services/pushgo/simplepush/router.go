@@ -279,7 +279,9 @@ func (r *Router) formatURL(contact, uaid string) (string, error) {
 
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
-func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string, uaid string, msg []byte, logID string) (ok bool, err error) {
+func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string,
+	uaid string, msg []byte, logID string) (ok bool, err error) {
+
 	for fromIndex := 0; !ok && fromIndex < len(contacts); {
 		toIndex := fromIndex + r.bucketSize
 		if toIndex > len(contacts) {
@@ -295,7 +297,9 @@ func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string, uaid str
 
 // notifyBucket routes a message to all contacts in a bucket, returning as soon
 // as a contact accepts the update.
-func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string, uaid string, msg []byte, logID string) (ok bool, err error) {
+func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
+	uaid string, msg []byte, logID string) (ok bool, err error) {
+
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	for _, contact := range contacts {
@@ -320,7 +324,9 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string, uaid 
 }
 
 // notifyContact routes a message to a single contact.
-func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact, url string, msg []byte, logID string) {
+func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
+	contact, url string, msg []byte, logID string) {
+
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {

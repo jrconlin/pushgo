@@ -132,6 +132,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// Handle the version updates.
 	timer := time.Now()
 	requestID := req.Header.Get(HeaderID)
+	logWarning := self.logger.ShouldLog(WARNING)
 	var (
 		err        error
 		version    int64
@@ -188,7 +189,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
 	if !ok || len(pk) == 0 {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "No token, rejecting request",
 				LogFields{"rid": requestID})
 		}
@@ -206,7 +207,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		var err error
 		bpk, err := Decode(tokenKey, pk)
 		if err != nil {
-			if self.logger.ShouldLog(WARNING) {
+			if logWarning {
 				self.logger.Warn("update", "Could not decode primary key", LogFields{
 					"rid": requestID, "pk": pk, "error": err.Error()})
 			}
@@ -219,7 +220,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if !validPK(pk) {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "Invalid primary key for update",
 				LogFields{"rid": requestID, "pk": pk})
 		}
@@ -230,7 +231,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	uaid, chid, ok = self.store.KeyToIDs(pk)
 	if !ok {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "Could not resolve primary key",
 				LogFields{"rid": requestID, "pk": pk})
 		}
@@ -239,7 +240,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if chid == "" {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "Primary key missing channel ID",
 				LogFields{"rid": requestID, "uaid": uaid})
 		}
@@ -274,7 +275,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		goto sendUpdate
 	}
 	if ok, err = pinger.Send(uaid, version); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "Could not send proprietary ping", LogFields{
 				"rid": requestID, "uaid": uaid, "error": err.Error()})
 		}
@@ -300,7 +301,7 @@ sendUpdate:
 	}
 
 	if err = self.store.Update(pk, version); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("update", "Could not update channel", LogFields{
 				"rid":     requestID,
 				"uaid":    uaid,
@@ -359,6 +360,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		err error
 		ts  time.Time
 	)
+	logWarning := self.logger.ShouldLog(WARNING)
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
 	if req.Method != "PUT" {
@@ -374,7 +376,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// We know of this one.
 	if req.ContentLength < 1 {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("router", "Routed update contained no body",
 				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
 		}
@@ -386,21 +388,21 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	request := new(Routable)
 	if err = decoder.Decode(request); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("router", "Could not read update body",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
 		}
 		goto invalidBody
 	}
 	if len(request.ChannelID) == 0 {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("router", "Missing channel ID",
 				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
 		}
 		goto invalidBody
 	}
 	if ts, err = time.Parse(time.RFC3339Nano, request.Time); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("router", "Could not parse time", LogFields{
 				"rid":  req.Header.Get(HeaderID),
 				"uaid": uaid,
@@ -412,7 +414,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
 	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, ts); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
 		}

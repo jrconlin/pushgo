@@ -109,6 +109,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
+	logWarning := self.logger.ShouldLog(WARNING)
 	var (
 		socket = sock.Socket
 		raw    []byte
@@ -147,7 +148,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		}
 		isPing, err := isPingBody(raw)
 		if err != nil {
-			if self.logger.ShouldLog(WARNING) {
+			if logWarning {
 				self.logger.Warn("worker", "Malformed request payload",
 					LogFields{"rid": self.id, "raw": string(raw), "error": ErrStr(err)})
 			}
@@ -159,7 +160,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 			header.Type = "ping"
 		} else if err = json.Unmarshal(raw, header); err != nil {
 			if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
-				if self.logger.ShouldLog(WARNING) {
+				if logWarning {
 					self.logger.Warn("worker", "Mismatched header field types", LogFields{
 						"rid":      self.id,
 						"expected": typeErr.Type.String(),
@@ -167,14 +168,14 @@ func (self *Worker) sniffer(sock *PushWS) {
 				}
 				self.handleError(sock, raw, ErrUnknownCommand)
 			} else if syntaxErr, ok := err.(*json.SyntaxError); ok {
-				if self.logger.ShouldLog(WARNING) {
+				if logWarning {
 					self.logger.Warn("worker", "Malformed request payload", LogFields{
 						"rid":      self.id,
 						"expected": string(raw[:syntaxErr.Offset]),
 						"error":    syntaxErr.Error()})
 				}
 			} else {
-				if self.logger.ShouldLog(WARNING) {
+				if logWarning {
 					self.logger.Warn("worker", "Error parsing request payload",
 						LogFields{"rid": self.id, "error": ErrStr(err)})
 				}
@@ -196,7 +197,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		case "purge":
 			err = self.Purge(sock, header, raw)
 		default:
-			if self.logger.ShouldLog(WARNING) {
+			if logWarning {
 				self.logger.Warn("worker", "Bad command",
 					LogFields{"rid": self.id, "cmd": header.Type})
 			}
@@ -264,6 +265,7 @@ func (self *Worker) Run(sock *PushWS) {
 // Associate the UAID for this socket connection (and flush any data that
 // may be pending for the connection)
 func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+	logWarning := self.logger.ShouldLog(WARNING)
 	// register the UAID
 	defer func() {
 		if r := recover(); r != nil {
@@ -346,7 +348,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	}
 	// if there's no UAID for the socket, accept or create a new one.
 	if forceReset = self.app.ClientExists(suggestedUAID); forceReset {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
 				LogFields{"rid": self.id, "uaid": suggestedUAID})
 		}
@@ -354,7 +356,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	}
 	// are there a suspicious number of channels?
 	if forceReset = len(request.ChannelIDs) > self.maxChannels; forceReset {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID", LogFields{
 				"rid":         self.id,
 				"uaid":        suggestedUAID,
@@ -365,7 +367,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		goto registerDevice
 	}
 	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
 				LogFields{"rid": self.id, "uaid": suggestedUAID})
 		}
@@ -525,6 +527,7 @@ func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte
 
 // Unregister a ChannelID.
 func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+	logWarning := self.logger.ShouldLog(WARNING)
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
@@ -535,7 +538,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 		}
 	}()
 	if sock.Uaid == "" {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
 				LogFields{"rid": self.id})
 		}
@@ -546,7 +549,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 		return ErrInvalidParams
 	}
 	if len(request.ChannelID) == 0 {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Unregister failed, missing channelID",
 				LogFields{"rid": self.id})
 		}
@@ -554,7 +557,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 	}
 	// Always return success for an UNREG.
 	if err = sock.Store.Unregister(sock.Uaid, request.ChannelID); err != nil {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Unregister failed, error updating backing store",
 				LogFields{"rid": self.id, "error": ErrStr(err)})
 		}
@@ -571,6 +574,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) (err error) {
 	// flush pending data back to Client
 	timer := time.Now()
+	logWarning := self.logger.ShouldLog(WARNING)
 	messageType := "notification"
 	defer func(timer time.Time, sock *PushWS) {
 		now := time.Now()
@@ -583,7 +587,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		self.metrics.Timer("client.flush", now.Sub(timer))
 	}(timer, sock)
 	if sock.Uaid == "" {
-		if self.logger.ShouldLog(WARNING) {
+		if logWarning {
 			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
 				LogFields{"rid": self.id})
 		}
@@ -602,7 +606,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	if len(channel) == 0 {
 		var expired []string
 		if updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0)); err != nil {
-			if self.logger.ShouldLog(WARNING) {
+			if logWarning {
 				self.logger.Warn("worker", "Failed to flush Update to client.",
 					LogFields{"rid": self.id, "uaid": sock.Uaid, "error": err.Error()})
 			}
