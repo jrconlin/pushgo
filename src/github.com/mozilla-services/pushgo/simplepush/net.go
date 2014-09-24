@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,18 +33,28 @@ func CanonicalURL(scheme, host string, port int) string {
 	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }
 
-// LimitConn tracks and returns leases for accepted connections. Based on
-// limitListenerConn from package netutil, copyright 2013, The Go Authors.
+// TooBusyError is a temporary error returned when too many simultaneous
+// connections are open. The server will sleep before accepting new
+// connections.
+type TooBusyError struct{}
+
+func (err TooBusyError) Error() string   { return "Too many requests" }
+func (err TooBusyError) Timeout() bool   { return false }
+func (err TooBusyError) Temporary() bool { return true }
+
+var errTooBusy = TooBusyError{}
+
+// LimitConn decrements the active connection count for closed connections.
 type LimitConn struct {
 	net.Conn
-	releaseOnce sync.Once
-	release     func()
+	removeOnce sync.Once
+	removeConn func()
 }
 
 // Close implements net.Conn.Close.
 func (c *LimitConn) Close() error {
 	err := c.Conn.Close()
-	c.releaseOnce.Do(c.release)
+	c.removeOnce.Do(c.removeConn)
 	return err
 }
 
@@ -53,42 +64,48 @@ func (c *LimitConn) Close() error {
 // The Go Authors.
 type LimitListener struct {
 	*net.TCPListener
-	pending         chan struct{}
+	maxConns        int
+	conns           int32
 	keepAlivePeriod time.Duration
 }
 
-func (l *LimitListener) acquire() { l.pending <- struct{}{} }
-func (l *LimitListener) release() { <-l.pending }
+func (l *LimitListener) addConn()    { atomic.AddInt32(&l.conns, 1) }
+func (l *LimitListener) removeConn() { atomic.AddInt32(&l.conns, -1) }
+
+// ConnCount returns the number of active connections.
+func (l *LimitListener) ConnCount() int { return int(atomic.LoadInt32(&l.conns)) }
 
 // Accept implements net.Listener.Addr.
 func (l *LimitListener) Accept() (conn net.Conn, err error) {
-	l.acquire()
+	if l.ConnCount() >= l.maxConns {
+		return nil, errTooBusy
+	}
 	socket, err := l.AcceptTCP()
 	if err != nil {
-		l.release()
 		return nil, err
 	}
 	socket.SetKeepAlive(true)
 	socket.SetKeepAlivePeriod(l.keepAlivePeriod)
-	return &LimitConn{Conn: socket, release: l.release}, nil
+	l.addConn()
+	return &LimitConn{Conn: socket, removeConn: l.removeConn}, nil
 }
 
 // Listen returns an active HTTP listener. This is identical to ListenAndServe
 // from package net/http, but listens on a random port if addr is omitted, and
 // does not call http.Server.Serve. Copyright 2009, The Go Authors.
 func Listen(addr string, maxConns int, keepAlivePeriod time.Duration) (net.Listener, error) {
-	listener, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	return &LimitListener{listener.(*net.TCPListener),
-		make(chan struct{}, maxConns), keepAlivePeriod}, nil
+	return &LimitListener{ln.(*net.TCPListener), maxConns, 0,
+		keepAlivePeriod}, nil
 }
 
 // ListenTLS returns an active HTTPS listener. Based on ListenAndServeTLS from
 // package net/http, copyright 2009, The Go Authors.
 func ListenTLS(addr, certFile, keyFile string, maxConns int, keepAlivePeriod time.Duration) (net.Listener, error) {
-	listener, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +117,8 @@ func ListenTLS(addr, certFile, keyFile string, maxConns int, keepAlivePeriod tim
 		NextProtos:   []string{"http/1.1"},
 		Certificates: []tls.Certificate{cert},
 	}
-	return tls.NewListener(&LimitListener{listener.(*net.TCPListener),
-		make(chan struct{}, maxConns), keepAlivePeriod}, config), nil
+	return tls.NewListener(&LimitListener{ln.(*net.TCPListener), maxConns,
+		0, keepAlivePeriod}, config), nil
 }
 
 // TimeoutDialer returns a dialer function suitable for use with an
