@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -17,6 +19,7 @@ type PropPinger interface {
 	Register(uaid string, pingData []byte) error
 	Send(uaid string, vers int64) (ok bool, err error)
 	CanBypassWebsocket() bool
+	Status() (bool, error)
 }
 
 var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
@@ -65,6 +68,10 @@ func (r *NoopPing) CanBypassWebsocket() bool {
 // try to send the ping.
 func (r *NoopPing) Send(string, int64) (bool, error) {
 	return false, UnsupportedProtocolErr
+}
+
+func (r *NoopPing) Status() (bool, error) {
+	return true, nil
 }
 
 //===
@@ -118,6 +125,10 @@ func (r *UDPPing) Send(string, int64) (bool, error) {
 	return false, UnsupportedProtocolErr
 }
 
+func (r *UDPPing) Status() (bool, error) {
+	return false, UnsupportedProtocolErr
+}
+
 // ===
 // Google Cloud Messaging Proprietary Ping interface
 // NOTE: This is still experimental.
@@ -131,6 +142,8 @@ type GCMPing struct {
 	dryRun      bool
 	apiKey      string
 	ttl         uint64
+	lastErr     error
+	errLock     sync.RWMutex
 }
 
 type GCMPingConfig struct {
@@ -150,6 +163,19 @@ type GCMRequest struct {
 
 type GCMPingData struct {
 	RegID string `json:"regid"`
+}
+
+type GCMError int
+
+func (err GCMError) Error() string {
+	switch err {
+	case 400:
+		return "Invalid request payload"
+	case 401:
+		return "Error authenticating sender account"
+	default:
+		return fmt.Sprintf("Unexpected status code: %d", err)
+	}
 }
 
 func (r *GCMPing) ConfigStruct() interface{} {
@@ -248,6 +274,7 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 	req.Header.Add("Content-Type", "application/json")
 	r.metrics.Increment("propretary.ping.gcm")
 	resp, err := r.client.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		r.logger.Error("propping",
 			"Failed to send GCM message",
@@ -258,7 +285,28 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 		r.logger.Error("propping",
 			"GCM returned non success message",
 			LogFields{"error": resp.Status})
+		r.setLastErr(GCMError(resp.StatusCode))
 		return false, ProtocolErr
 	}
 	return true, nil
+}
+
+func (r *GCMPing) Status() (ok bool, err error) {
+	if err = r.getLastErr(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (r *GCMPing) setLastErr(err error) {
+	r.errLock.Lock()
+	r.lastErr = err
+	r.errLock.Unlock()
+}
+
+func (r *GCMPing) getLastErr() (err error) {
+	r.errLock.RLock()
+	err = r.lastErr
+	r.errLock.RUnlock()
+	return
 }

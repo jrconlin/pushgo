@@ -23,24 +23,29 @@ import (
 type HandlerConfig struct{}
 
 type Handler struct {
-	app             *Application
-	logger          *SimpleLogger
-	store           Store
-	router          *Router
-	metrics         *Metrics
-	max_connections int
-	token_key       []byte
-	propping        PropPinger
+	app      *Application
+	logger   *SimpleLogger
+	store    Store
+	router   *Router
+	metrics  *Metrics
+	tokenKey []byte
+	propping PropPinger
 }
 
-type ServerStatus struct {
-	Healthy      bool   `json:"ok"`
-	Clients      int    `json:"clientCount"`
-	MaxClients   int    `json:"maxClients"`
-	StoreHealthy bool   `json:"mcstatus"`
-	Goroutines   int    `json:"goroutines"`
-	Error        string `json:"error,omitempty"`
-	Message      string `json:"message,omitempty"`
+type StatusReport struct {
+	Healthy          bool         `json:"ok"`
+	Clients          int          `json:"clientCount"`
+	MaxClientConns   int          `json:"maxClients"`
+	MaxEndpointConns int          `json:"maxEndpointConns"`
+	Store            PluginStatus `json:"store"`
+	Pinger           PluginStatus `json:"pinger"`
+	Locator          PluginStatus `json:"locator"`
+	Goroutines       int          `json:"goroutines"`
+}
+
+type PluginStatus struct {
+	Healthy bool  `json:"ok"`
+	Error   error `json:"error,omitempty"`
 }
 
 func (self *Handler) ConfigStruct() interface{} {
@@ -53,8 +58,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.store = app.Store()
 	self.metrics = app.Metrics()
 	self.router = app.Router()
-	self.max_connections = app.MaxConnections()
-	self.token_key = app.TokenKey()
+	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
 	return nil
 }
@@ -79,53 +83,46 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	// return "OK" only if all is well.
-	// TODO: make sure all is well.
-	clientCount := self.app.ClientCount()
-	ok := clientCount >= self.max_connections
-	statusText := "OK"
-	if !ok {
-		statusText = "NOPE"
-	}
-	reply := []byte(fmt.Sprintf(`{"status":"%s","clients":%d}`,
-		statusText, clientCount))
+	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d}`,
+		self.app.ClientCount()))
 
 	resp.Header().Set("Content-Type", "application/json")
-	if !ok {
-		resp.WriteHeader(http.StatusServiceUnavailable)
-	}
 	resp.Write(reply)
 }
 
 func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	var okClients bool
-	var msg string
 
-	clientCount := self.app.ClientCount()
-	if okClients = clientCount < self.max_connections; !okClients {
-		msg += "Exceeding max_connections, "
+	status := StatusReport{
+		MaxClientConns:   self.app.Server().MaxClientConns(),
+		MaxEndpointConns: self.app.Server().MaxEndpointConns(),
 	}
-	mcStatus, err := self.store.Status()
-	if !mcStatus {
-		msg += fmt.Sprintf(" Memcache error %s,", err)
+
+	status.Store.Healthy, status.Store.Error = self.store.Status()
+	if pinger := self.PropPinger(); pinger != nil {
+		status.Pinger.Healthy, status.Pinger.Error = pinger.Status()
 	}
-	ok := okClients && mcStatus
-	status := &ServerStatus{
-		Healthy:      ok,
-		Clients:      clientCount,
-		MaxClients:   self.max_connections,
-		StoreHealthy: mcStatus,
-		Goroutines:   runtime.NumGoroutine(),
-		Message:      msg,
+	if locator := self.router.Locator(); locator != nil {
+		status.Locator.Healthy, status.Locator.Error = locator.Status()
 	}
-	if err != nil {
-		status.Error = err.Error()
-	}
-	reply, err := json.Marshal(status)
+
+	status.Healthy = status.Store.Healthy && status.Pinger.Healthy &&
+		status.Locator.Healthy
+
+	status.Clients = self.app.ClientCount()
+	status.Goroutines = runtime.NumGoroutine()
 
 	resp.Header().Set("Content-Type", "application/json")
-	if !ok {
+	reply, err := json.Marshal(status)
+	if err != nil {
+		self.logger.Error("handler", "Could not generate status report",
+			LogFields{"error": err.Error()})
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Write([]byte("{}"))
+		return
+	}
+
+	if !status.Healthy {
 		resp.WriteHeader(http.StatusServiceUnavailable)
 	}
 	resp.Write(reply)
@@ -140,14 +137,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		version    int64
 		uaid, chid string
 	)
-
-	if self.app.ClientCount() >= self.max_connections {
-		resp.Header().Set("Content-Type", "application/json")
-		resp.WriteHeader(http.StatusServiceUnavailable)
-		resp.Write([]byte(`{"error": "Server unavailable"}`))
-		self.metrics.Increment("updates.appserver.too_many_connections")
-		return
-	}
 
 	defer func(err *error) {
 		now := time.Now()
@@ -212,7 +201,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if token := self.token_key; len(token) > 0 {
+	if token := self.tokenKey; len(token) > 0 {
 		// Note: dumping the []uint8 keys can produce terminal glitches
 		self.logger.Debug("main", "Decoding...", nil)
 		var err error
@@ -286,10 +275,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	self.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	if self.propping == nil {
+	pinger := self.PropPinger()
+	if pinger == nil {
 		goto sendUpdate
 	}
-	if ok, err = self.propping.Send(uaid, version); err != nil {
+	if ok, err = pinger.Send(uaid, version); err != nil {
 		self.logger.Warn("update",
 			"Could not generate Proprietary Ping",
 			LogFields{"error": err.Error(),
@@ -298,7 +288,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 	/* if this is a GCM connected host, boot vers immediately to GCM
 	 */
-	if ok && self.propping.CanBypassWebsocket() {
+	if ok && pinger.CanBypassWebsocket() {
 		// Neat! Might as well return.
 		self.metrics.Increment("updates.appserver.received")
 		resp.Header().Set("Content-Type", "application/json")
@@ -336,13 +326,6 @@ sendUpdate:
 }
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
-	if self.app.ClientCount() >= self.max_connections {
-		websocket.JSON.Send(ws, struct {
-			Status int    `json:"status"`
-			Error  string `json:"error"`
-		}{http.StatusServiceUnavailable, "Server Unavailable"})
-		return
-	}
 	sock := PushWS{Uaid: "",
 		Socket: ws,
 		Store:  self.store,

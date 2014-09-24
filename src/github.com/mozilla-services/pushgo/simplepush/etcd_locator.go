@@ -14,13 +14,18 @@ import (
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const (
 	minTTL = 2 * time.Second
 )
 
-var ErrMinTTL = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+var (
+	ErrMinTTL     = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+	ErrEtcdStatus = fmt.Errorf("etcd returned unexpected health check result")
+)
 
 type EtcdLocatorConf struct {
 	// Dir is the etcd key prefix for storing contacts. Defaults to
@@ -47,7 +52,6 @@ type etcdFetch struct {
 
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
-	sync.Mutex
 	logger          *SimpleLogger
 	metrics         *Metrics
 	refreshInterval time.Duration
@@ -186,6 +190,30 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 		contacts[index], contacts[length] = contacts[length], contacts[index]
 	}
 	return contacts, nil
+}
+
+// Status determines whether etcd can respond to requests. Implements
+// Locator.Status().
+func (l *EtcdLocator) Status() (ok bool, err error) {
+	fakeID, err := id.Generate()
+	if err != nil {
+		return false, err
+	}
+	key, expected := "status_"+fakeID, "test"
+	if _, err = l.client.Set(key, expected, uint64(6*time.Second)); err != nil {
+		return false, err
+	}
+	resp, err := l.client.Get(key, false, false)
+	if err != nil {
+		return false, err
+	}
+	if resp.Node.Value != expected {
+		l.logger.Error("etcd", "Unexpected health check result",
+			LogFields{"expected": expected, "actual": resp.Node.Value})
+		return false, ErrEtcdStatus
+	}
+	l.client.Delete(key, false)
+	return true, nil
 }
 
 // Register registers the server to the etcd cluster.

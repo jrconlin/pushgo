@@ -82,7 +82,7 @@ type UnregisterReply struct {
 
 type FlushReply struct {
 	Type    string   `json:"messageType"`
-	Updates []Update `json:"updates"`
+	Updates []Update `json:"updates,omitempty"`
 	Expired []string `json:"expired,omitempty"`
 }
 

@@ -70,7 +70,7 @@ type EmceeDriverConf struct {
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
 	// to 400.
-	MaxConns int `toml:"max_pool"`
+	MaxConns int `toml:"max_connections" env:"max_conns"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
@@ -263,18 +263,23 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	key := "status_" + fakeID
+	key, expected := "status_"+fakeID, "test"
 	client, err := s.getClient()
 	if err != nil {
 		return false, err
 	}
 	defer s.releaseWithout(client, &err)
-	if err = client.Set(key, "test", 6*time.Second); err != nil {
+	if err = client.Set(key, expected, 6*time.Second); err != nil {
 		return false, err
 	}
-	var val string
-	if err = client.Get(key, &val); err != nil || val != "test" {
-		return false, ErrStatusFailed
+	var actual string
+	if err = client.Get(key, &actual); err != nil {
+		return false, err
+	}
+	if expected != actual {
+		s.logger.Error("emcee", "Unexpected health check result",
+			LogFields{"expected": expected, "actual": actual})
+		return false, ErrMemcacheStatus
 	}
 	client.Delete(key, 0)
 	return true, nil
