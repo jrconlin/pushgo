@@ -22,6 +22,8 @@ get_ver(){
 }
 #Main...
 declare -a list=()
+ver=''
+# This function presumes you are running in the project root directory
 wd=`pwd`
 echo Fetching libraries...
 libs=`GOPATH=$wd/.godeps:$wd go list -f '{{join .Deps "\n"}}' ./... |xargs go list -f '{{if not .Standard}}{{.ImportPath}}{{end}}'`
@@ -51,3 +53,9 @@ cd $wd
 echo Adding to Godeps.new
 echo ${list[@]} | sed "s/|/\n/g" | sed "s/^\s*//" >> Godeps.new
 echo done!
+# clean up your toys
+unset wd
+unset ver
+unset list
+unset libs
+unset lib
