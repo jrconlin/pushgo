@@ -199,13 +199,13 @@ func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.dryRun = conf.DryRun
 
 	if r.apiKey = conf.APIKey; len(r.apiKey) == 0 {
-		r.logger.Critical("gcmping", "Missing GCM API key", nil)
+		r.logger.Alert("gcmping", "Missing GCM API key", nil)
 		return ConfigurationErr
 	}
 
 	ttl, err := time.ParseDuration(conf.TTL)
 	if err != nil {
-		r.logger.Critical("gcmping", "Could not parse TTL",
+		r.logger.Alert("gcmping", "Could not parse TTL",
 			LogFields{"error": err.Error(), "ttl": conf.TTL})
 		return err
 	}

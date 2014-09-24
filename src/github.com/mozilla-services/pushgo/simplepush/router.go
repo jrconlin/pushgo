@@ -120,26 +120,26 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.metrics = app.Metrics()
 
 	if r.template, err = template.New("Route").Parse(conf.UrlTemplate); err != nil {
-		r.logger.Critical("router", "Could not parse router template",
+		r.logger.Alert("router", "Could not parse router template",
 			LogFields{"error": err.Error(),
 				"template": conf.UrlTemplate})
 		return err
 	}
 	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
-		r.logger.Critical("router", "Could not parse ctimeout",
+		r.logger.Alert("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
 		return err
 	}
 	if r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout); err != nil {
-		r.logger.Critical("router", "Could not parse rwtimeout",
+		r.logger.Alert("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
 		return err
 	}
 
 	if r.listener, err = conf.Listener.Listen(); err != nil {
-		r.logger.Critical("router", "Could not attach listener",
+		r.logger.Alert("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err
 	}

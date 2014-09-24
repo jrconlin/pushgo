@@ -91,20 +91,20 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.metrics = app.Metrics()
 
 	if l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval); err != nil {
-		l.logger.Critical("etcd", "Could not parse refreshInterval",
+		l.logger.Alert("etcd", "Could not parse refreshInterval",
 			LogFields{"error": err.Error(),
 				"refreshInterval": conf.RefreshInterval})
 		return err
 	}
 	// default time for the server to be "live"
 	if l.defaultTTL, err = time.ParseDuration(conf.DefaultTTL); err != nil {
-		l.logger.Critical("etcd",
+		l.logger.Alert("etcd",
 			"Could not parse etcd default TTL",
 			LogFields{"value": conf.DefaultTTL, "error": err.Error()})
 		return err
 	}
 	if l.defaultTTL < minTTL {
-		l.logger.Critical("etcd",
+		l.logger.Alert("etcd",
 			"default TTL too short",
 			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
@@ -134,13 +134,13 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	if _, err = l.client.CreateDir(l.dir, 0); err != nil {
 		clientErr, ok := err.(*etcd.EtcdError)
 		if !ok || clientErr.ErrorCode != 105 {
-			l.logger.Critical("etcd", "etcd createDir error", LogFields{
+			l.logger.Alert("etcd", "etcd createDir error", LogFields{
 				"error": err.Error()})
 			return err
 		}
 	}
 	if err = l.Register(); err != nil {
-		l.logger.Critical("etcd", "Could not register with etcd",
+		l.logger.Alert("etcd", "Could not register with etcd",
 			LogFields{"error": err.Error()})
 		return err
 	}

@@ -158,7 +158,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	} else {
 		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Critical("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -169,18 +169,18 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Critical("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
 	}
 
 	// The send and receive timeouts are expressed in microseconds.
 	var recvTimeout, sendTimeout time.Duration
 	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
-		s.logger.Critical("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
-		s.logger.Critical("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
@@ -189,7 +189,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// `poll(2)` accepts a millisecond timeout.
 	var pollTimeout time.Duration
 	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
-		s.logger.Critical("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
@@ -197,7 +197,7 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// The memcached retry timeout is expressed in seconds.
 	var retryTimeout time.Duration
 	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
-		s.logger.Critical("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
+		s.logger.Alert("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
 		return err
 	}
 	s.retryTimeout = uint64(retryTimeout / time.Second)

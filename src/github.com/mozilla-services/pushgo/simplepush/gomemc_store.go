@@ -84,7 +84,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	} else {
 		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Critical("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -93,14 +93,14 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 
 	serverList := new(mc.ServerList)
 	if err = serverList.SetServers(s.Hosts...); err != nil {
-		s.logger.Critical("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
+		s.logger.Alert("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
 		return err
 	}
 
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Critical("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Alert("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
 		return err
 	}
 
