@@ -182,8 +182,10 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	case err = <-errors:
 	}
 	if err != nil {
-		l.logger.Error("etcd", "Could not get server list",
-			LogFields{"error": err.Error()})
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Could not get server list",
+				LogFields{"error": err.Error()})
+		}
 		return nil, err
 	}
 	for length := len(contacts); length > 0; {
@@ -220,12 +222,16 @@ func (l *EtcdLocator) Status() (ok bool, err error) {
 
 // Register registers the server to the etcd cluster.
 func (l *EtcdLocator) Register() (err error) {
-	l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
+	}
 	if _, err = l.client.Set(l.key, l.authority, uint64(l.defaultTTL/time.Second)); err != nil {
-		l.logger.Error("etcd", "Failed to register",
-			LogFields{"error": err.Error(),
-				"key":  l.key,
-				"host": l.authority})
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Failed to register",
+				LogFields{"error": err.Error(),
+					"key":  l.key,
+					"host": l.authority})
+		}
 		return err
 	}
 	return nil

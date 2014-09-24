@@ -55,8 +55,10 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 		name := strings.ToLower(conf.StatsdName)
 		client, err := statsd.New(conf.StatsdServer, name)
 		if err != nil {
-			m.logger.Error("metrics", "Could not init statsd connection",
-				LogFields{"error": err.Error()})
+			if m.logger.ShouldLog(ERROR) {
+				m.logger.Error("metrics", "Could not init statsd connection",
+					LogFields{"error": err.Error()})
+			}
 		} else {
 			m.statsd = client
 		}

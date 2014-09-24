@@ -127,8 +127,10 @@ func (self *Worker) sniffer(sock *PushWS) {
 		}
 		if err = websocket.Message.Receive(socket, &raw); err != nil {
 			self.stopped = true
-			self.logger.Error("worker", "Websocket Error",
-				LogFields{"rid": self.id, "error": ErrStr(err)})
+			if self.logger.ShouldLog(ERROR) {
+				self.logger.Error("worker", "Websocket Error",
+					LogFields{"rid": self.id, "error": ErrStr(err)})
+			}
 			continue
 		}
 		if len(raw) <= 0 {
@@ -194,8 +196,10 @@ func (self *Worker) sniffer(sock *PushWS) {
 		case "purge":
 			err = self.Purge(sock, header, raw)
 		default:
-			self.logger.Warn("worker", "Bad command",
-				LogFields{"rid": self.id, "cmd": header.Type})
+			if self.logger.ShouldLog(WARNING) {
+				self.logger.Warn("worker", "Bad command",
+					LogFields{"rid": self.id, "cmd": header.Type})
+			}
 			err = ErrUnknownCommand
 		}
 		if err != nil {
@@ -229,15 +233,17 @@ func (self *Worker) Run(sock *PushWS) {
 	time.AfterFunc(self.helloTimeout,
 		func() {
 			if sock.Uaid == "" {
-				self.logger.Debug("dash", "Worker Idle connection. Closing socket",
-					LogFields{"rid": self.id})
+				if self.logger.ShouldLog(DEBUG) {
+					self.logger.Debug("dash", "Worker Idle connection. Closing socket",
+						LogFields{"rid": self.id})
+				}
 				sock.Socket.Close()
 			}
 		})
 
 	defer func(sock *PushWS) {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil {
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Unhandled connection error",
 					LogFields{"rid": self.id, "error": ErrStr(err)})
 			}
@@ -249,8 +255,10 @@ func (self *Worker) Run(sock *PushWS) {
 	self.sniffer(sock)
 	sock.Socket.Close()
 
-	self.logger.Info("dash", "Run has completed a shut-down",
-		LogFields{"rid": self.id})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("dash", "Run has completed a shut-down",
+			LogFields{"rid": self.id})
+	}
 }
 
 // Associate the UAID for this socket connection (and flush any data that
@@ -260,7 +268,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	defer func() {
 		if r := recover(); r != nil {
 			debug.PrintStack()
-			if err, _ := r.(error); err != nil {
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "hello", "error": ErrStr(err)})
 			}
@@ -304,8 +312,10 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	} */
 	if request.ChannelIDs == nil {
 		// Must include "channelIDs" (even if empty)
-		self.logger.Debug("worker", "Missing ChannelIDs",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Missing ChannelIDs",
+				LogFields{"rid": self.id})
+		}
 		return ErrNoParams
 	}
 	if len(sock.Uaid) > 0 {
@@ -314,24 +324,32 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 			goto registerDevice
 		}
 		// if there's already a Uaid for this device, don't accept a new one
-		self.logger.Debug("worker", "Conflicting UAIDs",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Conflicting UAIDs",
+				LogFields{"rid": self.id})
+		}
 		return ErrExistingID
 	}
 	if forceReset = len(suggestedUAID) == 0; forceReset {
-		self.logger.Debug("worker", "Generating new UAID for device",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Generating new UAID for device",
+				LogFields{"rid": self.id})
+		}
 		goto registerDevice
 	}
 	if !id.Valid(suggestedUAID) {
-		self.logger.Debug("worker", "Invalid character in UAID",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Invalid character in UAID",
+				LogFields{"rid": self.id})
+		}
 		return ErrInvalidID
 	}
 	// if there's no UAID for the socket, accept or create a new one.
 	if forceReset = self.app.ClientExists(suggestedUAID); forceReset {
-		self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-			LogFields{"rid": self.id, "uaid": suggestedUAID})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
+				LogFields{"rid": self.id, "uaid": suggestedUAID})
+		}
 		goto registerDevice
 	}
 	// are there a suspicious number of channels?
@@ -347,8 +365,10 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		goto registerDevice
 	}
 	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
-		self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
-			LogFields{"rid": self.id, "uaid": suggestedUAID})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
+				LogFields{"rid": self.id, "uaid": suggestedUAID})
+		}
 		goto registerDevice
 	}
 	sock.Uaid = suggestedUAID
@@ -373,8 +393,10 @@ registerDevice:
 	// blocking call back to the boss.
 	status, _ := self.app.Server().HandleCommand(cmd, sock)
 
-	self.logger.Debug("worker", "sending response",
-		LogFields{"rid": self.id, "cmd": "hello", "uaid": sock.Uaid})
+	if self.logger.ShouldLog(DEBUG) {
+		self.logger.Debug("worker", "sending response",
+			LogFields{"rid": self.id, "cmd": "hello", "uaid": sock.Uaid})
+	}
 	// websocket.JSON.Send(sock.Socket, JsMap{
 	// 	"messageType": header.Type,
 	// 	"status":      status,
@@ -383,8 +405,10 @@ registerDevice:
 		header.Type, status, sock.Uaid))
 	_, err = sock.Socket.Write(msg)
 	self.metrics.Increment("updates.client.hello")
-	self.logger.Info("dash", "Client successfully connected",
-		LogFields{"rid": self.id})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("dash", "Client successfully connected",
+			LogFields{"rid": self.id})
+	}
 	self.state = WorkerActive
 	if err == nil {
 		// Get the lastAccessed time from wherever
@@ -398,7 +422,7 @@ registerDevice:
 func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil {
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "ack", "error": ErrStr(err)})
 			}
@@ -427,8 +451,10 @@ func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (er
 			goto logError
 		}
 	}
-	self.logger.Debug("worker", "sending response",
-		LogFields{"rid": self.id, "cmd": "ack"})
+	if self.logger.ShouldLog(DEBUG) {
+		self.logger.Debug("worker", "sending response",
+			LogFields{"rid": self.id, "cmd": "ack"})
+	}
 	// Get the lastAccessed time from wherever.
 	return self.Flush(sock, 0, "", 0)
 logError:
@@ -443,7 +469,7 @@ logError:
 func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil {
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
 			}
@@ -501,7 +527,7 @@ func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte
 func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil {
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Unhandled error",
 					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
 			}
@@ -509,8 +535,10 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 		}
 	}()
 	if sock.Uaid == "" {
-		self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
+				LogFields{"rid": self.id})
+		}
 		return ErrInvalidCommand
 	}
 	request := new(UnregisterRequest)
@@ -518,8 +546,10 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 		return ErrInvalidParams
 	}
 	if len(request.ChannelID) == 0 {
-		self.logger.Warn("worker", "Unregister failed, missing channelID",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("worker", "Unregister failed, missing channelID",
+				LogFields{"rid": self.id})
+		}
 		return ErrNoParams
 	}
 	// Always return success for an UNREG.
@@ -528,7 +558,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 			self.logger.Warn("worker", "Unregister failed, error updating backing store",
 				LogFields{"rid": self.id, "error": ErrStr(err)})
 		}
-	} else {
+	} else if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "unregister"})
 	}
@@ -553,8 +583,10 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 		self.metrics.Timer("client.flush", now.Sub(timer))
 	}(timer, sock)
 	if sock.Uaid == "" {
-		self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
-			LogFields{"rid": self.id})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
+				LogFields{"rid": self.id})
+		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
 		self.stopped = true

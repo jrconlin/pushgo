@@ -360,15 +360,15 @@ func (s *EmceeStore) storeUpdate(uaid, chid []byte, version int64) error {
 	if err != nil && !isMissing(err) {
 		if s.logger.ShouldLog(WARNING) {
 			s.logger.Warn("emcee", "Update error", LogFields{
-				"primarykey": hex.EncodeToString(key),
-				"error":      err.Error(),
+				"pk":    hex.EncodeToString(key),
+				"error": err.Error(),
 			})
 		}
 		return err
 	}
 	if cRec != nil {
 		if s.logger.ShouldLog(DEBUG) {
-			s.logger.Debug("emcee", "Replacing record", LogFields{"primarykey": hex.EncodeToString(key)})
+			s.logger.Debug("emcee", "Replacing record", LogFields{"pk": hex.EncodeToString(key)})
 		}
 		if cRec.State != StateDeleted {
 			newRecord := &ChannelRecord{
@@ -443,8 +443,8 @@ func (s *EmceeStore) storeUnregister(uaid, chid []byte) error {
 		if err != nil {
 			if s.logger.ShouldLog(WARNING) {
 				s.logger.Warn("emcee", "Could not delete Channel", LogFields{
-					"primarykey": hex.EncodeToString(key),
-					"error":      err.Error(),
+					"pk":    hex.EncodeToString(key),
+					"error": err.Error(),
 				})
 			}
 			continue
@@ -760,16 +760,18 @@ func (s *EmceeStore) fetchRec(pk []byte) (*ChannelRecord, error) {
 	defer s.releaseWithout(client, &err)
 	result := new(ChannelRecord)
 	if err = client.Get(keyString, result); err != nil && !isMissing(err) {
-		s.logger.Error("emcee", "Get Failed", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Get Failed", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 		return nil, err
 	}
 	if s.logger.ShouldLog(DEBUG) {
 		s.logger.Debug("emcee", "Fetched", LogFields{
-			"primarykey": keyString,
-			"result":     fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
+			"pk":     keyString,
+			"result": fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
 		})
 	}
 	return result, nil
@@ -800,10 +802,12 @@ func (s *EmceeStore) storeRec(pk []byte, rec *ChannelRecord) error {
 	defer s.releaseWithout(client, &err)
 	keyString := encodeKey(pk)
 	if err = client.Set(keyString, rec, ttl); err != nil {
-		s.logger.Error("emcee", "Failure to set item", LogFields{
-			"primarykey": keyString,
-			"error":      err.Error(),
-		})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Failure to set item", LogFields{
+				"pk":    keyString,
+				"error": err.Error(),
+			})
+		}
 	}
 	return nil
 }

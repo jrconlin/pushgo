@@ -65,8 +65,10 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 	resp.Header().Set("Content-Type", "application/json")
 	reply, err := json.Marshal(snapshot)
 	if err != nil {
-		self.logger.Error("handler", "Could not generate metrics report",
-			LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("handler", "Could not generate metrics report",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
 		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
@@ -139,8 +141,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	defer func(err *error) {
 		now := time.Now()
 		ok := *err == nil
-		self.logger.Debug("update", "+++++++++++++ DONE +++",
-			LogFields{"rid": requestID})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("update", "+++++++++++++ DONE +++",
+				LogFields{"rid": requestID})
+		}
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("dash", "Client Update complete", LogFields{
 				"rid":        requestID,
@@ -153,8 +157,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	}(&err)
 
-	self.logger.Info("update", "Handling Update",
-		LogFields{"rid": requestID})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("update", "Handling Update",
+			LogFields{"rid": requestID})
+	}
 
 	if req.Method != "PUT" {
 		http.Error(resp, "", http.StatusMethodNotAllowed)
@@ -182,8 +188,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
 	if !ok || len(pk) == 0 {
-		self.logger.Warn("update", "No token, rejecting request",
-			LogFields{"rid": requestID})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("update", "No token, rejecting request",
+				LogFields{"rid": requestID})
+		}
 		http.Error(resp, "Token not found", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
@@ -191,8 +199,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	if tokenKey := self.tokenKey; len(tokenKey) > 0 {
 		// Note: dumping the []uint8 keys can produce terminal glitches
-		self.logger.Debug("main", "Decoding...",
-			LogFields{"rid": requestID})
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("main", "Decoding...",
+				LogFields{"rid": requestID})
+		}
 		var err error
 		bpk, err := Decode(tokenKey, pk)
 		if err != nil {
@@ -209,8 +219,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if !validPK(pk) {
-		self.logger.Warn("update", "Invalid primary key for update",
-			LogFields{"rid": requestID, "pk": pk})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("update", "Invalid primary key for update",
+				LogFields{"rid": requestID, "pk": pk})
+		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
@@ -218,15 +230,19 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	uaid, chid, ok = self.store.KeyToIDs(pk)
 	if !ok {
-		self.logger.Warn("update", "Could not resolve primary key",
-			LogFields{"rid": requestID, "pk": pk})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("update", "Could not resolve primary key",
+				LogFields{"rid": requestID, "pk": pk})
+		}
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
 	if chid == "" {
-		self.logger.Warn("update", "Primary key missing channel ID",
-			LogFields{"rid": requestID, "uaid": uaid})
+		if self.logger.ShouldLog(WARNING) {
+			self.logger.Warn("update", "Primary key missing channel ID",
+				LogFields{"rid": requestID, "uaid": uaid})
+		}
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}

@@ -298,9 +298,11 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	if len(self.key) != 0 {
 		btoken := []byte(token)
 		if token, err = Encode(self.key, btoken); err != nil {
-			self.logger.Error("server", "Token Encoding error",
-				LogFields{"uaid": sock.Uaid,
-					"channelID": chid})
+			if self.logger.ShouldLog(ERROR) {
+				self.logger.Error("server", "Token Encoding error",
+					LogFields{"uaid": sock.Uaid,
+						"channelID": chid})
+			}
 			return 500, nil
 		}
 
@@ -315,18 +317,22 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		token,
 		self.EndpointURL(),
 	}); err != nil {
-		self.logger.Error("server",
-			"Could not generate Push Endpoint",
-			LogFields{"error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("server",
+				"Could not generate Push Endpoint",
+				LogFields{"error": err.Error()})
+		}
 		return 500, nil
 	}
 	args["push.endpoint"] = endpoint.String()
-	self.logger.Info("server",
-		"Generated Push Endpoint",
-		LogFields{"uaid": sock.Uaid,
-			"channelID": chid,
-			"token":     token,
-			"endpoint":  args["push.endpoint"].(string)})
+	if self.logger.ShouldLog(INFO) {
+		self.logger.Info("server",
+			"Generated Push Endpoint",
+			LogFields{"uaid": sock.Uaid,
+				"channelID": chid,
+				"token":     token,
+				"endpoint":  args["push.endpoint"].(string)})
+	}
 	return 200, args
 }
 
@@ -334,10 +340,12 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 	defer func(client *Client, version int64) {
 		r := recover()
 		if r != nil {
-			self.logger.Error("server",
-				"requestFlush failed",
-				LogFields{"error": r.(error).Error(),
-					"uaid": client.UAID})
+			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+				self.logger.Error("server",
+					"requestFlush failed",
+					LogFields{"error": r.(error).Error(),
+						"uaid": client.UAID})
+			}
 			debug.PrintStack()
 			if client != nil && self.prop != nil {
 				self.prop.Send(client.UAID, version)
@@ -351,7 +359,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 			self.logger.Info("server",
 				"Requesting flush",
 				LogFields{"uaid": client.UAID,
-					"channel": channel,
+					"chid":    channel,
 					"version": strconv.FormatInt(version, 10)})
 		}
 
@@ -394,11 +402,12 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 	reason = "Failed to flush"
 
 updateError:
-	self.logger.Error("server", reason,
-		LogFields{"error": err.Error(),
-			"UID":  uid,
-			"CHID": chid,
-		})
+	if self.logger.ShouldLog(ERROR) {
+		self.logger.Error("server", reason,
+			LogFields{"error": err.Error(),
+				"uaid": uid,
+				"chid": chid})
+	}
 	return err
 }
 

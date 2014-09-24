@@ -200,8 +200,10 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
-		r.logger.Error("router", "No discovery service set; unable to route message",
-			LogFields{"rid": logID, "uaid": uaid, "chid": chid})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "No discovery service set; unable to route message",
+				LogFields{"rid": logID, "uaid": uaid, "chid": chid})
+		}
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
@@ -211,15 +213,19 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 		Time:      sentAt.Format(time.RFC3339Nano),
 	})
 	if err != nil {
-		r.logger.Error("router", "Could not compose routing message",
-			LogFields{"rid": logID, "error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Could not compose routing message",
+				LogFields{"rid": logID, "error": err.Error()})
+		}
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
-		r.logger.Error("router", "Could not query discovery service for contacts",
-			LogFields{"rid": logID, "error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Could not query discovery service for contacts",
+				LogFields{"rid": logID, "error": err.Error()})
+		}
 		r.metrics.Increment("router.broadcast.error")
 		return err
 	}
@@ -295,8 +301,10 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string, uaid 
 	for _, contact := range contacts {
 		url, err := r.formatURL(contact, uaid)
 		if err != nil {
-			r.logger.Error("router", "Could not build routing URL",
-				LogFields{"rid": logID, "error": err.Error()})
+			if r.logger.ShouldLog(ERROR) {
+				r.logger.Error("router", "Could not build routing URL",
+					LogFields{"rid": logID, "error": err.Error()})
+			}
 			return false, err
 		}
 		go r.notifyContact(result, stop, contact, url, msg, logID)
@@ -316,8 +324,10 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {
-		r.logger.Error("router", "Router request failed",
-			LogFields{"rid": logID, "error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Router request failed",
+				LogFields{"rid": logID, "error": err.Error()})
+		}
 		return
 	}
 	req.Header.Set(HeaderID, logID)
@@ -328,17 +338,24 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{}, contact
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := r.rclient.Do(req)
 	if err != nil {
-		r.logger.Error("router", "Router send failed",
-			LogFields{"rid": logID, "error": err.Error()})
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Router send failed",
+				LogFields{"rid": logID, "error": err.Error()})
+		}
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		r.logger.Debug("router", "Denied", LogFields{"rid": logID, "server": contact})
+		if r.logger.ShouldLog(DEBUG) {
+			r.logger.Debug("router", "Denied",
+				LogFields{"rid": logID, "server": contact})
+		}
 		return
 	}
-	r.logger.Info("router", "Server accepted",
-		LogFields{"rid": logID, "server": contact})
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("router", "Server accepted",
+			LogFields{"rid": logID, "server": contact})
+	}
 	select {
 	case <-stop:
 	case result <- true:
