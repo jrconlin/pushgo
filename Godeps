@@ -17,4 +17,5 @@ github.com/gorilla/context 14f550f51af52180c2eefed15e5fd18d63c0a64a
 github.com/gorilla/mux 4b8fbc56f3b2400a7c7ea3dba9b3539787c486b6
 github.com/ianoshen/gomc 7b9f299f292d3dd707fe2749d966968c9bf1e128
 github.com/kitcambridge/envconf dc11cdbec4db51d60a1c6b0fb45c49586adabcaa
-github.com/mozilla-services/heka/message 7277e07e2a11527e7f570d57c9c84063d055ef7f
+github.com/mozilla-services/heka/client 7277e07e2a11527e7f570d57c9c84063d055ef7f
+github.com/mozilla-services/heka/message
