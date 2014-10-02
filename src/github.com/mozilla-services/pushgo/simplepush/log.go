@@ -373,10 +373,15 @@ func (w *logResponseWriter) Write(data []byte) (n int, err error) {
 // Hijack calls the Hijack method of the underlying ResponseWriter, allowing a
 // custom protocol handler (e.g., WebSockets) to take over the connection.
 func (w *logResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, io.EOF
 	}
-	return nil, nil, io.EOF
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.setStatus(http.StatusSwitchingProtocols)
+	}
+	return hj.Hijack()
 }
 
 // CloseNotify calls the CloseNotify method of the underlying ResponseWriter,
