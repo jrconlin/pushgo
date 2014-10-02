@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,7 +71,25 @@ const (
 	CommonLogTime = "02/Jan/2006:15:04:05 -0700"
 )
 
+// logNames sorts log field names lexicographically.
+type logNames []string
+
+func (n logNames) Len() int           { return len(n) }
+func (n logNames) Less(i, j int) bool { return n[i] < n[j] }
+func (n logNames) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
+
 type LogFields map[string]string
+
+func (l LogFields) Names() (names logNames) {
+	names = make(logNames, len(l))
+	i := 0
+	for name := range l {
+		names[i] = name
+		i++
+	}
+	sort.Sort(names)
+	return
+}
 
 type Logger interface {
 	HasConfigStruct
@@ -221,8 +240,8 @@ func (hl *HekaLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	m.SetEnvVersion(hl.envVersion)
 	m.SetPid(hl.pid)
 	m.SetHostname(hl.hostname)
-	for name, value := range fields {
-		message.NewStringField(m, name, value)
+	for _, name := range fields.Names() {
+		message.NewStringField(m, name, fields[name])
 	}
 	if err = hl.writeMessage(m); err != nil {
 		log.Fatalf("Error writing log message: %s", err)
@@ -241,6 +260,7 @@ type TextLoggerConfig struct {
 	Trace  bool
 }
 
+// A TextLogger writes human-readable log messages.
 type TextLogger struct {
 	pid      int32
 	hostname string
@@ -283,13 +303,12 @@ func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields Lo
 
 	if len(fields) > 0 {
 		reply.WriteByte(' ')
-		i := 0
-		for key, val := range fields {
-			fmt.Fprintf(reply, "%s:%s", key, val)
-			if i < len(fields)-1 {
+		names := fields.Names()
+		for i, name := range names {
+			fmt.Fprintf(reply, "%s:%s", name, fields[name])
+			if i < len(names)-1 {
 				reply.WriteString(", ")
 			}
-			i++
 		}
 	}
 
