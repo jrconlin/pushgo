@@ -96,6 +96,7 @@ type Logger interface {
 	Log(level LogLevel, messageType, payload string, fields LogFields) error
 	SetFilter(level LogLevel)
 	ShouldLog(level LogLevel) bool
+	Close() error
 }
 
 var AvailableLoggers = make(AvailableExtensions)
@@ -249,10 +250,15 @@ func (hl *HekaLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	return
 }
 
+func (hl *HekaLogger) Close() error {
+	hl.sender.Close()
+	return nil
+}
+
 // NewTextLogger creates a logger that writes human-readable log messages to
 // standard error.
 func NewTextLogger() *TextLogger {
-	return &TextLogger{writer: os.Stderr}
+	return &TextLogger{writer: writerOnly{os.Stderr}}
 }
 
 type TextLoggerConfig struct {
@@ -315,6 +321,13 @@ func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	reply.WriteByte('\n')
 	_, err = reply.WriteTo(tl.writer)
 
+	return
+}
+
+func (tl *TextLogger) Close() (err error) {
+	if c, ok := tl.writer.(io.Closer); ok {
+		err = c.Close()
+	}
 	return
 }
 
