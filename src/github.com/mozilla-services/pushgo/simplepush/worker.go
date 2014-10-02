@@ -45,7 +45,7 @@ type RequestHeader struct {
 }
 
 type HelloRequest struct {
-	DeviceID   *string         `json:"uaid"`
+	DeviceID   string          `json:"uaid"`
 	ChannelIDs []interface{}   `json:"channelIDs"`
 	PingData   json.RawMessage `json:"connect"`
 }
@@ -79,7 +79,7 @@ type FlushReply struct {
 }
 
 type ACKRequest struct {
-	Updates []Update `json:"update"`
+	Updates []Update `json:"updates"`
 	Expired []string `json:"expired"`
 }
 
@@ -280,19 +280,12 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 
 	//Force the client to re-register all it's clients.
 	// This is done by returning a new UAID.
-	var (
-		forceReset    bool
-		suggestedUAID string
-	)
+	var forceReset bool
 
 	request := new(HelloRequest)
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	if request.DeviceID == nil {
-		return ErrInvalidParams
-	}
-	suggestedUAID = *request.DeviceID
 	/* NOTE: This seems to be a redirect, which I don't believe we support
 	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
 		statusCode := 302
@@ -307,7 +300,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 				"cmd":      header.Type,
 				"code":     strconv.FormatInt(int64(statusCode), 10),
 				"redirect": redir,
-				"uaid":     suggestedUAID})
+				"uaid":     request.DeviceID})
 		}
 		websocket.JSON.Send(sock.Socket, resp)
 		return nil
@@ -321,7 +314,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		return ErrNoParams
 	}
 	if len(sock.Uaid) > 0 {
-		if len(suggestedUAID) == 0 || sock.Uaid == suggestedUAID {
+		if len(request.DeviceID) == 0 || sock.Uaid == request.DeviceID {
 			// Duplicate handshake with omitted or identical device ID.
 			goto registerDevice
 		}
@@ -332,14 +325,14 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		}
 		return ErrExistingID
 	}
-	if forceReset = len(suggestedUAID) == 0; forceReset {
+	if forceReset = len(request.DeviceID) == 0; forceReset {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("worker", "Generating new UAID for device",
 				LogFields{"rid": self.id})
 		}
 		goto registerDevice
 	}
-	if !id.Valid(suggestedUAID) {
+	if !id.Valid(request.DeviceID) {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("worker", "Invalid character in UAID",
 				LogFields{"rid": self.id})
@@ -347,10 +340,10 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		return ErrInvalidID
 	}
 	// if there's no UAID for the socket, accept or create a new one.
-	if forceReset = self.app.ClientExists(suggestedUAID); forceReset {
+	if forceReset = self.app.ClientExists(request.DeviceID); forceReset {
 		if logWarning {
 			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-				LogFields{"rid": self.id, "uaid": suggestedUAID})
+				LogFields{"rid": self.id, "uaid": request.DeviceID})
 		}
 		goto registerDevice
 	}
@@ -359,21 +352,21 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		if logWarning {
 			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID", LogFields{
 				"rid":         self.id,
-				"uaid":        suggestedUAID,
+				"uaid":        request.DeviceID,
 				"channels":    strconv.Itoa(len(request.ChannelIDs)),
 				"maxChannels": strconv.Itoa(self.maxChannels)})
 		}
-		sock.Store.DropAll(suggestedUAID)
+		sock.Store.DropAll(request.DeviceID)
 		goto registerDevice
 	}
 	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
 		if logWarning {
 			self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
-				LogFields{"rid": self.id, "uaid": suggestedUAID})
+				LogFields{"rid": self.id, "uaid": request.DeviceID})
 		}
 		goto registerDevice
 	}
-	sock.Uaid = suggestedUAID
+	sock.Uaid = request.DeviceID
 
 registerDevice:
 	if forceReset {
