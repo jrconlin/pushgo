@@ -141,20 +141,20 @@ func (c *Conn) Origin() string {
 // RegisterDecoder registers a decoder for the specified message type. Message
 // types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
-	defer c.decoderLock.Unlock()
 	c.decoderLock.Lock()
 	c.decoders[strings.ToLower(messageType)] = d
+	c.decoderLock.Unlock()
 }
 
 // Decoder returns a registered custom decoder, or the default decoder if
 // c.DecodeDefault == true.
 func (c *Conn) Decoder(messageType string) (d Decoder) {
-	defer c.decoderLock.RUnlock()
 	c.decoderLock.RLock()
 	name := strings.ToLower(messageType)
 	if d = c.decoders[name]; d == nil && c.DecodeDefault {
 		d = DefaultDecoders[name]
 	}
+	c.decoderLock.RUnlock()
 	return
 }
 
@@ -171,15 +171,19 @@ func (c *Conn) Close() (err error) {
 	return
 }
 
+// CloseNotify returns a receive-only channel that is closed when the
+// underlying socket is closed.
+func (c *Conn) CloseNotify() <-chan bool {
+	return c.signalChan
+}
+
 // Acquires c.closeLock, closes the socket, and releases the lock, recording
 // the error in c.lastErr.
 func (c *Conn) fatal(err error) {
-	defer c.closeLock.Unlock()
 	c.closeLock.Lock()
 	c.signalClose()
-	if c.lastErr == nil {
-		c.lastErr = err
-	}
+	c.lastErr = err
+	c.closeLock.Unlock()
 }
 
 // Acquires c.closeLock, closes the socket, and releases the lock, reporting
@@ -407,7 +411,7 @@ func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
 	}
 	endpoint, err = c.Register(channelId)
 	if err != nil {
-		return "", "", err
+		return channelId, "", err
 	}
 	return
 }
@@ -440,30 +444,31 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 
 // Registered indicates whether the client is subscribed to the specified
 // channel.
-func (c *Conn) Registered(channelId string) bool {
-	defer c.channelLock.RUnlock()
+func (c *Conn) Registered(channelId string) (ok bool) {
 	c.channelLock.RLock()
-	return c.channels[channelId]
+	ok = c.channels[channelId]
+	c.channelLock.RUnlock()
+	return
 }
 
 func (c *Conn) addChannel(channelId string) {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	c.channels[channelId] = true
+	c.channelLock.Unlock()
 }
 
 func (c *Conn) removeChannel(channelId string) {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	delete(c.channels, channelId)
+	c.channelLock.Unlock()
 }
 
 func (c *Conn) removeAllChannels() {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	for id := range c.channels {
 		delete(c.channels, id)
 	}
+	c.channelLock.Unlock()
 }
 
 // Unregister signals that the client is no longer interested in receiving
