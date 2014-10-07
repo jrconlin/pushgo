@@ -139,20 +139,22 @@ func (c *Conn) Origin() string {
 // RegisterDecoder registers a decoder for the specified message type. Message
 // types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
+	name := strings.ToLower(messageType)
 	c.decoderLock.Lock()
-	c.decoders[strings.ToLower(messageType)] = d
+	c.decoders[name] = d
 	c.decoderLock.Unlock()
 }
 
 // Decoder returns a registered custom decoder, or the default decoder if
 // c.DecodeDefault == true.
 func (c *Conn) Decoder(messageType string) (d Decoder) {
-	c.decoderLock.RLock()
 	name := strings.ToLower(messageType)
-	if d = c.decoders[name]; d == nil && c.DecodeDefault {
+	c.decoderLock.RLock()
+	d = c.decoders[name]
+	c.decoderLock.RUnlock()
+	if d == nil && c.DecodeDefault {
 		d = DefaultDecoders[name]
 	}
-	c.decoderLock.RUnlock()
 	return
 }
 
@@ -348,6 +350,7 @@ func (c *Conn) Send() {
 		}
 		if err != nil {
 			c.fatal(err)
+			break
 		}
 	}
 	// Unblock pending requests.
@@ -403,13 +406,11 @@ func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string
 
 // Subscribe subscribes a client to a new channel.
 func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
-	channelId, err = id.Generate()
-	if err != nil {
+	if channelId, err = id.Generate(); err != nil {
 		return "", "", err
 	}
-	endpoint, err = c.Register(channelId)
-	if err != nil {
-		return channelId, "", err
+	if endpoint, err = c.Register(channelId); err != nil {
+		return "", "", err
 	}
 	return
 }
