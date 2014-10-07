@@ -104,7 +104,7 @@ func TestMultiRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -138,7 +138,7 @@ func TestChannelTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -185,7 +185,7 @@ func TestRegisterSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}

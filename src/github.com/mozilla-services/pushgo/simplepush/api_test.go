@@ -454,7 +454,7 @@ func TestDuplicateRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -553,7 +553,7 @@ func TestMultipleRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -641,7 +641,7 @@ func (t idTest) TestRegister() error {
 	if err != nil {
 		return fmt.Errorf("On registration test %v, error initializing test server: %#v", t.name, err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		return fmt.Errorf("On registration test %v, error dialing origin: %#v", t.name, err)
 	}
@@ -776,7 +776,7 @@ func TestUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -913,7 +913,7 @@ func TestPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestACK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
