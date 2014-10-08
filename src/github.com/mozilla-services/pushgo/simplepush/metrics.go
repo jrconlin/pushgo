@@ -131,7 +131,7 @@ func (m *Metrics) Decrement(metric string) {
 }
 
 func (m *Metrics) Timer(metric string, duration time.Duration) {
-	// etcd supports millisecond granularity.
+	// statsd supports millisecond granularity.
 	value := int64(duration / time.Millisecond)
 
 	m.Lock()

@@ -50,6 +50,7 @@ type Conn struct {
 	closeWait     sync.WaitGroup
 	lastErr       error
 	isClosing     bool
+	isClosed      bool
 }
 
 type (
@@ -158,15 +159,20 @@ func (c *Conn) Decoder(messageType string) (d Decoder) {
 	return
 }
 
-// Close closes the connection to the push server, unblocking all
-// ReadMessage(), AcceptBatch(), and AcceptUpdate() calls. All registrations
-// and pending updates will be dropped.
+// Close closes the connection to the push server and waits for the read and
+// write loops to exit. Any pending ReadMessage(), AcceptBatch(), or
+// AcceptUpdate() calls will be unblocked with errors. All registrations and
+// pending updates will be dropped.
 func (c *Conn) Close() (err error) {
-	err, ok := c.stop()
-	if !ok {
+	c.closeLock.Lock()
+	err = c.lastErr
+	if c.isClosed {
+		c.closeLock.Unlock()
 		return err
 	}
-	c.closeWait.Wait()
+	c.isClosed = true
+	c.lastErr = c.signalClose()
+	c.closeLock.Unlock()
 	c.removeAllChannels()
 	return
 }
@@ -186,20 +192,17 @@ func (c *Conn) fatal(err error) {
 	c.closeLock.Unlock()
 }
 
-// Acquires c.closeLock, closes the socket, and releases the lock, reporting
-// any errors to the caller. ok specifies whether the caller should wait for
-// the socket to close before returning.
-func (c *Conn) stop() (err error, ok bool) {
-	defer c.closeLock.Unlock()
+// stop closes the socket without waiting for the read and write loops to
+// complete.
+func (c *Conn) stop() (err error) {
 	c.closeLock.Lock()
-	if c.isClosing {
-		return c.lastErr, false
-	}
-	return c.signalClose(), true
+	err = c.signalClose()
+	c.closeLock.Unlock()
+	return
 }
 
-// Closes the underlying socket and unblocks the read and write loops. Assumes
-// the caller holds c.closeLock.
+// signalClose closes the underlying socket. Assumes the caller holds
+// c.closeLock.
 func (c *Conn) signalClose() (err error) {
 	if c.isClosing {
 		return
