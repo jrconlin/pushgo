@@ -179,6 +179,49 @@ func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) 
 		return err
 	}
 	nl.Logger = NewHekaLogger(sender, client.NewProtobufEncoder(nil))
+	hekaConf := nl.Logger.ConfigStruct().(*HekaLoggerConfig)
+	hekaConf.EnvVersion = conf.EnvVersion
+	hekaConf.Filter = conf.Filter
+	if err = nl.Logger.Init(app, hekaConf); err != nil {
+		return err
+	}
+	return nil
+}
+
+// A FileLogger writes Protobuf-encoded Heka log messages to a local log file.
+type FileLogger struct {
+	Logger
+}
+
+type FileLoggerConfig struct {
+	Path       string
+	EnvVersion string `toml:"env_version" env:"env_version"`
+	Filter     int32
+}
+
+func (fl *FileLogger) ConfigStruct() interface{} {
+	return &FileLoggerConfig{
+		EnvVersion: "2",
+		Filter:     0,
+	}
+}
+
+func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*FileLoggerConfig)
+	if len(conf.Path) == 0 {
+		return fmt.Errorf("FileLogger: Missing log file path")
+	}
+	logFile, err := os.OpenFile(conf.Path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	fl.Logger = NewHekaLogger(&HekaSender{logFile}, client.NewProtobufEncoder(nil))
+	hekaConf := fl.Logger.ConfigStruct().(*HekaLoggerConfig)
+	hekaConf.EnvVersion = conf.EnvVersion
+	hekaConf.Filter = conf.Filter
+	if err = fl.Logger.Init(app, hekaConf); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -556,6 +599,7 @@ func init() {
 	AvailableLoggers["protobuf"] = func() HasConfigStruct { return NewProtobufLogger() }
 	AvailableLoggers["json"] = func() HasConfigStruct { return NewJSONLogger() }
 	AvailableLoggers["net"] = func() HasConfigStruct { return new(NetworkLogger) }
+	AvailableLoggers["file"] = func() HasConfigStruct { return new(FileLogger) }
 	AvailableLoggers["text"] = func() HasConfigStruct { return NewTextLogger() }
 	AvailableLoggers["default"] = AvailableLoggers["text"]
 }
