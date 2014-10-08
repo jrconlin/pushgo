@@ -61,23 +61,16 @@ const (
 	CommonLogTime = "02/Jan/2006:15:04:05 -0700"
 )
 
-// logNames sorts log field names lexicographically.
-type logNames []string
-
-func (n logNames) Len() int           { return len(n) }
-func (n logNames) Less(i, j int) bool { return n[i] < n[j] }
-func (n logNames) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
-
 type LogFields map[string]string
 
-func (l LogFields) Names() (names logNames) {
-	names = make(logNames, len(l))
+func (l LogFields) Names() (names []string) {
+	names = make([]string, len(l))
 	i := 0
 	for name := range l {
 		names[i] = name
 		i++
 	}
-	sort.Sort(names)
+	sort.Strings(names)
 	return
 }
 
@@ -428,7 +421,7 @@ type logResponseWriter struct {
 	RespondedAt   time.Time
 }
 
-// writerOnly hides the optional ReadFrom method of an io.Writer from io.Copy.
+// writerOnly hides the optional ReadFrom and Close methods of an io.Writer.
 // Taken from package net/http, copyright 2009, The Go Authors.
 type writerOnly struct {
 	io.Writer

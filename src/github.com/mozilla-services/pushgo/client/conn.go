@@ -183,8 +183,8 @@ func (c *Conn) CloseNotify() <-chan bool {
 	return c.signalChan
 }
 
-// Acquires c.closeLock, closes the socket, and releases the lock, recording
-// the error in c.lastErr.
+// fatal acquires c.closeLock, closes the socket, and releases the lock,
+// recording the error in c.lastErr.
 func (c *Conn) fatal(err error) {
 	c.closeLock.Lock()
 	c.signalClose()
@@ -201,8 +201,7 @@ func (c *Conn) stop() (err error) {
 	return
 }
 
-// signalClose closes the underlying socket. Assumes the caller holds
-// c.closeLock.
+// signalClose closes the underlying socket. The caller must hold c.closeLock.
 func (c *Conn) signalClose() (err error) {
 	if c.isClosing {
 		return
@@ -242,7 +241,7 @@ func (c *Conn) Receive() {
 	close(c.Packets)
 }
 
-// Cancels a pending request.
+// cancel cancels a pending request.
 func cancel(request Request) {
 	request.Error(io.EOF)
 	request.Close()
@@ -370,8 +369,8 @@ func (c *Conn) Send() {
 	}
 }
 
-// Attempts to send an outgoing request, returning an error if the connection
-// has been closed.
+// WriteRequest sends an outgoing request, returning io.EOF if the connection
+// is closed.
 func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
 	select {
 	case c.requests <- request:
