@@ -51,8 +51,9 @@ func (t *TestServer) load() (*Application, error) {
 			return app, nil
 		},
 		PluginLogger: func(app *Application) (HasConfigStruct, error) {
-			logger := NewTextLogger()
-			loggerConf := logger.ConfigStruct().(*TextLoggerConfig)
+			logger := new(StdOutLogger)
+			loggerConf := logger.ConfigStruct().(*StdOutLoggerConfig)
+			loggerConf.Format = "text"
 			loggerConf.Filter = int32(t.LogLevel)
 			if err := logger.Init(app, loggerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing logger: %#v", err)
