@@ -1,5 +1,3 @@
 .hg
-/pkg/
-go/
-Godeps/_workspace/
+.godeps/
 bin/
