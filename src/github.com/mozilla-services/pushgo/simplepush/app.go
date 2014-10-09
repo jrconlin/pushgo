@@ -250,4 +250,5 @@ func (a *Application) Stop() {
 	a.server.Close()
 	a.router.Close()
 	a.store.Close()
+	a.log.Close()
 }
