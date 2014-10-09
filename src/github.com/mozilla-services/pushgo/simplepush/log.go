@@ -6,8 +6,7 @@ package simplepush
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -17,11 +16,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mozilla-services/heka/client"
-	"github.com/mozilla-services/heka/message"
 	"github.com/mozilla-services/pushgo/id"
 )
 
@@ -57,7 +54,6 @@ func (l LogLevel) String() string {
 
 const (
 	HeaderID      = "X-Request-Id"
-	TextLogTime   = "2006-01-02 15:04:05 -0700"
 	CommonLogTime = "02/Jan/2006:15:04:05 -0700"
 )
 
@@ -145,13 +141,15 @@ func (sl *SimpleLogger) Panic(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(EMERGENCY, mtype, msg, fields)
 }
 
-// A NetworkLogger sends Protobuf-encoded log messages to a remote Heka
-// instance over TCP or UDP.
+// A NetworkLogger sends log messages to a remote Heka instance over TCP,
+// UDP, or a Unix domain socket.
 type NetworkLogger struct {
-	Logger
+	LogEmitter
+	filter LogLevel
 }
 
 type NetworkLoggerConfig struct {
+	Format     string
 	Proto      string
 	Addr       string
 	UseTLS     bool   `toml:"use_tls" env:"use_tls"`
@@ -161,6 +159,7 @@ type NetworkLoggerConfig struct {
 
 func (nl *NetworkLogger) ConfigStruct() interface{} {
 	return &NetworkLoggerConfig{
+		Format:     "protobuf",
 		Proto:      "tcp",
 		EnvVersion: "2",
 		Filter:     0,
@@ -169,31 +168,71 @@ func (nl *NetworkLogger) ConfigStruct() interface{} {
 
 func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*NetworkLoggerConfig)
-	var sender client.Sender
-	if conf.UseTLS {
-		sender, err = client.NewTlsSender(conf.Proto, conf.Addr, nil)
-	} else {
-		sender, err = client.NewNetworkSender(conf.Proto, conf.Addr)
+	if len(conf.Addr) == 0 {
+		return fmt.Errorf("NetworkLogger: Missing remote address")
 	}
-	if err != nil {
-		return err
+
+	switch conf.Format {
+	case "json", "protobuf":
+		var sender client.Sender
+		if conf.UseTLS {
+			sender, err = client.NewTlsSender(conf.Proto, conf.Addr, nil)
+		} else {
+			sender, err = client.NewNetworkSender(conf.Proto, conf.Addr)
+		}
+		if err != nil {
+			return err
+		}
+		hostname := app.Hostname()
+		if conf.Format == "json" {
+			nl.LogEmitter = NewJSONEmitter(sender, conf.EnvVersion, hostname)
+		} else {
+			nl.LogEmitter = NewProtobufEmitter(sender, conf.EnvVersion, hostname)
+		}
+
+	case "text":
+		var conn net.Conn
+		if conf.UseTLS {
+			conn, err = tls.Dial(conf.Proto, conf.Addr, nil)
+		} else {
+			conn, err = net.Dial(conf.Proto, conf.Addr)
+		}
+		if err != nil {
+			return err
+		}
+		nl.LogEmitter = NewTextEmitter(conn)
+
+	default:
+		return fmt.Errorf("NetworkLogger: Unrecognized log format '%s'", conf.Format)
 	}
-	nl.Logger = NewHekaLogger(sender, client.NewProtobufEncoder(nil))
-	hekaConf := nl.Logger.ConfigStruct().(*HekaLoggerConfig)
-	hekaConf.EnvVersion = conf.EnvVersion
-	hekaConf.Filter = conf.Filter
-	if err = nl.Logger.Init(app, hekaConf); err != nil {
-		return err
-	}
+
+	nl.filter = LogLevel(conf.Filter)
 	return nil
 }
 
-// A FileLogger writes Protobuf-encoded Heka log messages to a local log file.
+func (nl *NetworkLogger) ShouldLog(level LogLevel) bool {
+	return level <= nl.filter
+}
+
+func (nl *NetworkLogger) SetFilter(level LogLevel) {
+	nl.filter = level
+}
+
+func (nl *NetworkLogger) Log(level LogLevel, messageType, payload string, fields LogFields) (err error) {
+	if !nl.ShouldLog(level) {
+		return
+	}
+	return nl.Emit(level, messageType, payload, fields)
+}
+
+// A FileLogger writes log messages to a file.
 type FileLogger struct {
-	Logger
+	LogEmitter
+	filter LogLevel
 }
 
 type FileLoggerConfig struct {
+	Format     string
 	Path       string
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Filter     int32
@@ -201,6 +240,7 @@ type FileLoggerConfig struct {
 
 func (fl *FileLogger) ConfigStruct() interface{} {
 	return &FileLoggerConfig{
+		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
 	}
@@ -215,241 +255,102 @@ func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
 	if err != nil {
 		return err
 	}
-	fl.Logger = NewHekaLogger(&HekaSender{logFile}, client.NewProtobufEncoder(nil))
-	hekaConf := fl.Logger.ConfigStruct().(*HekaLoggerConfig)
-	hekaConf.EnvVersion = conf.EnvVersion
-	hekaConf.Filter = conf.Filter
-	if err = fl.Logger.Init(app, hekaConf); err != nil {
-		return err
+
+	switch conf.Format {
+	case "json":
+		fl.LogEmitter = NewJSONEmitter(&HekaSender{logFile}, conf.EnvVersion,
+			app.Hostname())
+
+	case "protobuf":
+		fl.LogEmitter = NewProtobufEmitter(&HekaSender{logFile}, conf.EnvVersion,
+			app.Hostname())
+
+	case "text":
+		fl.LogEmitter = NewTextEmitter(logFile)
+
+	default:
+		logFile.Close()
+		return fmt.Errorf("FileLogger: Unsupported log format '%s'", conf.Format)
 	}
+
+	fl.filter = LogLevel(conf.Filter)
 	return nil
 }
 
-// NewProtobufLogger creates a logger that writes Protobuf-encoded Heka
-// log messages to standard output. Protobuf encoding should be preferred
-// over JSON for efficiency.
-func NewProtobufLogger() *HekaLogger {
-	return NewHekaLogger(&HekaSender{writerOnly{os.Stdout}}, client.NewProtobufEncoder(nil))
+func (fl *FileLogger) ShouldLog(level LogLevel) bool {
+	return level <= fl.filter
 }
 
-// NewJSONLogger creates a logger that writes JSON-encoded log messages to
-// standard output.
-func NewJSONLogger() *HekaLogger {
-	return NewHekaLogger(&HekaSender{writerOnly{os.Stdout}}, hekaJSONEncoder)
+func (fl *FileLogger) SetFilter(level LogLevel) {
+	fl.filter = level
 }
 
-// NewHekaLogger creates a Heka message logger with the specified message
-// sender and encoder.
-func NewHekaLogger(sender client.Sender, encoder client.StreamEncoder) *HekaLogger {
-	return &HekaLogger{
-		sender:  sender,
-		encoder: encoder,
-	}
-}
-
-var hekaMessagePool = sync.Pool{New: func() interface{} {
-	return &hekaMessage{msg: new(message.Message)}
-}}
-
-func newHekaMessage() *hekaMessage {
-	return hekaMessagePool.Get().(*hekaMessage)
-}
-
-type hekaMessage struct {
-	msg      *message.Message
-	outBytes []byte
-}
-
-func (hm *hekaMessage) free() {
-	if cap(hm.outBytes) > 1024 {
+func (fl *FileLogger) Log(level LogLevel, messageType, payload string, fields LogFields) (err error) {
+	if !fl.ShouldLog(level) {
 		return
 	}
-	hm.outBytes = hm.outBytes[:0]
-	hm.msg.Fields = nil
-	hekaMessagePool.Put(hm)
+	return fl.Emit(level, messageType, payload, fields)
 }
 
-type HekaLoggerConfig struct {
+// StdOutLogger writes log messages to standard output.
+type StdOutLogger struct {
+	LogEmitter
+	filter LogLevel
+}
+
+type StdOutLoggerConfig struct {
+	Format     string
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Filter     int32
 }
 
-type HekaLogger struct {
-	sender     client.Sender
-	encoder    client.StreamEncoder
-	logName    string
-	pid        int32
-	envVersion string
-	hostname   string
-	filter     LogLevel
-}
-
-func (hl *HekaLogger) ConfigStruct() interface{} {
-	return &HekaLoggerConfig{
+func (ml *StdOutLogger) ConfigStruct() interface{} {
+	return &StdOutLoggerConfig{
+		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
 	}
 }
 
-func (hl *HekaLogger) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*HekaLoggerConfig)
-	hl.pid = int32(os.Getpid())
-	hl.hostname = app.Hostname()
-	hl.logName = fmt.Sprintf("pushgo-%s", VERSION)
-	hl.envVersion = conf.EnvVersion
-	hl.filter = LogLevel(conf.Filter)
-	return
-}
+func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*StdOutLoggerConfig)
 
-func (hl *HekaLogger) ShouldLog(level LogLevel) bool {
-	return level <= hl.filter
-}
+	writer := writerOnly{os.Stdout}
+	switch conf.Format {
+	case "json":
+		ml.LogEmitter = NewJSONEmitter(&HekaSender{writer}, conf.EnvVersion,
+			app.Hostname())
 
-func (hl *HekaLogger) SetFilter(level LogLevel) {
-	hl.filter = level
-}
+	case "protobuf":
+		ml.LogEmitter = NewProtobufEmitter(&HekaSender{writer}, conf.EnvVersion,
+			app.Hostname())
 
-func (hl *HekaLogger) Log(level LogLevel, messageType, payload string, fields LogFields) (err error) {
-	if !hl.ShouldLog(level) {
-		return
-	}
-	hm := newHekaMessage()
-	defer hm.free()
-	messageID, _ := id.GenerateBytes()
-	hm.msg.SetUuid(messageID)
-	hm.msg.SetTimestamp(time.Now().UnixNano())
-	hm.msg.SetType(messageType)
-	hm.msg.SetLogger(hl.logName)
-	hm.msg.SetSeverity(int32(level))
-	hm.msg.SetPayload(payload)
-	hm.msg.SetEnvVersion(hl.envVersion)
-	hm.msg.SetPid(hl.pid)
-	hm.msg.SetHostname(hl.hostname)
-	for _, name := range fields.Names() {
-		message.NewStringField(hm.msg, name, fields[name])
-	}
-	if err = hl.encoder.EncodeMessageStream(hm.msg, &hm.outBytes); err != nil {
-		log.Fatalf("Error encoding log message: %s", err)
-	}
-	if err = hl.sender.SendMessage(hm.outBytes); err != nil {
-		log.Fatalf("Error sending log message: %s", err)
-	}
-	return
-}
+	case "text":
+		ml.LogEmitter = NewTextEmitter(writer)
 
-func (hl *HekaLogger) Close() error {
-	hl.sender.Close()
+	default:
+		return fmt.Errorf("StdOutLogger: Unsupported log format '%s'", conf.Format)
+	}
+
+	ml.filter = LogLevel(conf.Filter)
 	return nil
 }
 
-// A HekaSender writes serialized Heka messages to an underlying writer.
-type HekaSender struct {
-	io.Writer
+func (ml *StdOutLogger) ShouldLog(level LogLevel) bool {
+	return level <= ml.filter
 }
 
-// SendMessage writes a serialized Heka message. Implements
-// client.Sender.SendMessage.
-func (s *HekaSender) SendMessage(data []byte) (err error) {
-	_, err = s.Writer.Write(data)
-	return
+func (ml *StdOutLogger) SetFilter(level LogLevel) {
+	ml.filter = level
 }
 
-// Close closes the underlying writer. Implements client.Sender.Close.
-func (s *HekaSender) Close() {
-	if c, ok := s.Writer.(io.Closer); ok {
-		c.Close()
-	}
-}
-
-// A HekaJSONEncoder encodes Heka messages to JSON.
-type HekaJSONEncoder struct{}
-
-func (j *HekaJSONEncoder) EncodeMessage(m *message.Message) ([]byte, error) {
-	return json.Marshal(m)
-}
-
-func (j *HekaJSONEncoder) EncodeMessageStream(m *message.Message, dest *[]byte) (err error) {
-	if *dest, err = j.EncodeMessage(m); err != nil {
-		return
-	}
-	*dest = append(*dest, '\n')
-	return
-}
-
-var hekaJSONEncoder = &HekaJSONEncoder{}
-
-// NewTextLogger creates a logger that writes human-readable log messages to
-// standard error.
-func NewTextLogger() *TextLogger {
-	return &TextLogger{writer: writerOnly{os.Stderr}}
-}
-
-type TextLoggerConfig struct {
-	Filter int32
-	Trace  bool
-}
-
-// A TextLogger writes human-readable log messages.
-type TextLogger struct {
-	pid      int32
-	hostname string
-	filter   LogLevel
-	writer   io.Writer
-}
-
-func (tl *TextLogger) ConfigStruct() interface{} {
-	return &TextLoggerConfig{
-		Filter: 0,
-		Trace:  false,
-	}
-}
-
-func (tl *TextLogger) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*TextLoggerConfig)
-	tl.pid = int32(os.Getpid())
-	tl.hostname = app.Hostname()
-	tl.filter = LogLevel(conf.Filter)
-	return
-}
-
-func (tl *TextLogger) ShouldLog(level LogLevel) bool {
-	return level <= tl.filter
-}
-
-func (tl *TextLogger) SetFilter(level LogLevel) {
-	tl.filter = level
-}
-
-func (tl *TextLogger) Log(level LogLevel, messageType, payload string, fields LogFields) (err error) {
+func (ml *StdOutLogger) Log(level LogLevel, messageType, payload string, fields LogFields) (err error) {
 	// Return ASAP if we shouldn't be logging
-	if !tl.ShouldLog(level) {
+	if !ml.ShouldLog(level) {
 		return
 	}
-
-	reply := new(bytes.Buffer)
-	fmt.Fprintf(reply, "%s [% 8s] %s %s", time.Now().Format(TextLogTime),
-		level, messageType, strconv.Quote(payload))
-
-	if len(fields) > 0 {
-		reply.WriteByte(' ')
-		names := fields.Names()
-		for i, name := range names {
-			fmt.Fprintf(reply, "%s:%s", name, fields[name])
-			if i < len(names)-1 {
-				reply.WriteString(", ")
-			}
-		}
-	}
-
-	reply.WriteByte('\n')
-	_, err = reply.WriteTo(tl.writer)
-
-	return
-}
-
-func (tl *TextLogger) Close() (err error) {
-	if c, ok := tl.writer.(io.Closer); ok {
-		err = c.Close()
+	if err = ml.Emit(level, messageType, payload, fields); err != nil {
+		log.Fatal(err)
 	}
 	return
 }
@@ -596,10 +497,8 @@ func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 }
 
 func init() {
-	AvailableLoggers["protobuf"] = func() HasConfigStruct { return NewProtobufLogger() }
-	AvailableLoggers["json"] = func() HasConfigStruct { return NewJSONLogger() }
+	AvailableLoggers["stdout"] = func() HasConfigStruct { return new(StdOutLogger) }
 	AvailableLoggers["net"] = func() HasConfigStruct { return new(NetworkLogger) }
 	AvailableLoggers["file"] = func() HasConfigStruct { return new(FileLogger) }
-	AvailableLoggers["text"] = func() HasConfigStruct { return NewTextLogger() }
 	AvailableLoggers["default"] = AvailableLoggers["text"]
 }
