@@ -29,7 +29,7 @@ To compile this server:
 1. extract this directory into target directory
 2. Run: make
 3. Run: make simplepush
-4. Copy config.sample.ini to config.ini, and edit appropriately
+4. Copy config.sample.toml to config.toml, and edit appropriately
 
 Step 3 should be re-run whenever code has been changed and the server
 should be recompiled.
@@ -93,8 +93,8 @@ Install the container:
 
 * docker pull bbangert/pushgo:dev
 
-It's recommended that you create a config.ini as described above, and
+It's recommended that you create a config.toml as described above, and
 then volume mount it into the container. If you had your config as
-``config/pushgo.ini`` then you could run:
+``config/pushgo.toml`` then you could run:
 
-* docker run --rm -v `pwd`/config:/opt/config bbangert/pushgo:dev -config="/opt/config/push.ini"
+* docker run --rm -v `pwd`/config:/opt/config bbangert/pushgo:dev -config="/opt/config/pushgo.toml"
