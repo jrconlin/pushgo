@@ -41,7 +41,6 @@ If you would like to use an existing go on your system:
 
 This will build "simplepush" as an executable.
 
-
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
 AWS). For our build, we've found that AWS small instances can manage
