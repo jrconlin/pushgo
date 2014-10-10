@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	configFile *string = flag.String("config", "config.ini", "Configuration File")
+	configFile *string = flag.String("config", "config.toml", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,

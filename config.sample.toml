@@ -1,5 +1,5 @@
 # General config options to define the server.
-# Please copy to config.ini
+# Please copy to config.toml
 
 [default]
 # FQDN of the current hostname. (Note, AWS returns an invalid value
