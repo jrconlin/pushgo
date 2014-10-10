@@ -20,8 +20,8 @@ recording, closed channel responses for third party servers, etc.)
 If you require offline storage (e.g. for mobile device usage), we
 currently recommend memcache storage.
 
-You will need to have Go installed on your system, and the GOROOT and
-PATH should be set appropriately for 'go' to be found.
+You will need to have Go 1.3 or higher installed on your system, and the
+GOROOT and PATH should be set appropriately for 'go' to be found.
 
 ## Compiling
 To compile this server:
@@ -82,8 +82,9 @@ explaining things.
 
 ## Testing
 
-To test this, or any other SimplePush server, please use [the stand
-alone test suite](https://github.com/jrconlin/simplepush_test).
+`make test` runs the accompanying smoke tests. You can also use the
+[stand alone test suite](https://github.com/jrconlin/simplepush_test) to test
+this or any other SimplePush server.
 
 ## Docker
 
