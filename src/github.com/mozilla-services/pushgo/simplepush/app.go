@@ -7,6 +7,7 @@ package simplepush
 import (
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -154,7 +155,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting WebSocket server",
 				LogFields{"addr": clientLn.Addr().String()})
 		}
-		errChan <- http.Serve(clientLn, &LogHandler{clientMux, a.log})
+		clientSrv := &http.Server{
+			Handler:  &LogHandler{clientMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "worker", ERROR}, "", 0)}
+		errChan <- clientSrv.Serve(clientLn)
 	}()
 
 	go func() {
@@ -163,7 +167,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting update server",
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		errChan <- http.Serve(endpointLn, &LogHandler{endpointMux, a.log})
+		endpointSrv := &http.Server{
+			Handler:  &LogHandler{endpointMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "endpoint", ERROR}, "", 0)}
+		errChan <- endpointSrv.Serve(endpointLn)
 	}()
 
 	go func() {
@@ -172,7 +179,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting router",
 				LogFields{"addr": routeLn.Addr().String()})
 		}
-		errChan <- http.Serve(routeLn, &LogHandler{routeMux, a.log})
+		routeSrv := &http.Server{
+			Handler:  &LogHandler{routeMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "router", ERROR}, "", 0)}
+		errChan <- routeSrv.Serve(routeLn)
 	}()
 
 	return errChan
