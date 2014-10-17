@@ -11,6 +11,10 @@
 #use_aws_host = false
 # Specifies whether the hostname should be resolved to an IP address.
 resolve_host = true
+# A list of allowed WebSocket origins. An empty list allows all origins;
+# otherwise, the scheme, hostname, and port specified in the client's
+# `Origin` header must match at least one allowed origin.
+#origins = []
 
 # This defines what endpoint to use for updates.
 # {{.CurrentHost}} = the current host to connect to.
