@@ -446,7 +446,8 @@ func validPK(pk string) bool {
 		if b >= 'A' && b <= 'Z' {
 			b += 'a' - 'A'
 		}
-		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' && b != '.' && b != '=' {
+		// Accept bin64 && UUID encoding
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' && b != '.' && b != '=' && b != '-' {
 			return false
 		}
 	}
