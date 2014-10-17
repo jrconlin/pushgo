@@ -182,8 +182,10 @@ func (self *Worker) sniffer(sock *PushWS) {
 			}
 			self.stopped = true
 			continue
+		} else {
+			header.Type = strings.ToLower(header.Type)
 		}
-		switch strings.ToLower(header.Type) {
+		switch header.Type {
 		case "ping":
 			err = self.Ping(sock, header, raw)
 		case "hello":

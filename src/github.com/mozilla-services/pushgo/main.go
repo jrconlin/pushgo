@@ -6,6 +6,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,11 +18,12 @@ import (
 )
 
 var (
-	configFile *string = flag.String("config", "config.ini", "Configuration File")
+	configFile *string = flag.String("config", "config.toml", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
 	logging    *int    = flag.Int("logging", 0,
 		"logging level (0=none,1=critical ... 10=verbose")
+	version *bool = flag.Bool("version", false, "Print the version and exit")
 )
 
 const SIGUSR1 = syscall.SIGUSR1
@@ -29,6 +31,11 @@ const SIGUSR1 = syscall.SIGUSR1
 // -- main
 func main() {
 	flag.Parse()
+
+	if *version {
+		fmt.Println(simplepush.VERSION)
+		return
+	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Only create profiles if requested. To view the application profiles,

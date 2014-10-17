@@ -6,8 +6,12 @@ package simplepush
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -19,16 +23,24 @@ import (
 
 const VERSION = "1.4"
 
+var (
+	ErrMissingOrigin = errors.New("Missing WebSocket origin")
+	ErrInvalidOrigin = errors.New("WebSocket origin not allowed")
+)
+
 type ApplicationConfig struct {
+	Origins            []string
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
+	ResolveHost        bool   `toml:"resolve_host" env:"resolve_host"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
 }
 
 type Application struct {
+	origins            []*url.URL
 	hostname           string
 	host               string
 	port               int
@@ -53,6 +65,7 @@ func (a *Application) ConfigStruct() interface{} {
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
 		UseAwsHost:         false,
+		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
 	}
@@ -65,17 +78,32 @@ func (a *Application) ConfigStruct() interface{} {
 func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
+	if len(conf.Origins) > 0 {
+		a.origins = make([]*url.URL, len(conf.Origins))
+		for index, origin := range conf.Origins {
+			if a.origins[index], err = url.ParseRequestURI(origin); err != nil {
+				return fmt.Errorf("Error parsing origin: %s", err)
+			}
+		}
+	}
+
 	if conf.UseAwsHost {
 		if a.hostname, err = GetAWSPublicHostname(); err != nil {
-			return err
+			return fmt.Errorf("Error querying AWS instance metadata service: %s", err)
 		}
+	} else if conf.ResolveHost {
+		addr, err := net.ResolveIPAddr("ip", conf.Hostname)
+		if err != nil {
+			return fmt.Errorf("Error resolving hostname: %s", err)
+		}
+		a.hostname = addr.String()
 	} else {
 		a.hostname = conf.Hostname
 	}
 
 	if len(conf.TokenKey) > 0 {
 		if a.tokenKey, err = base64.URLEncoding.DecodeString(conf.TokenKey); err != nil {
-			return err
+			return fmt.Errorf("Malformed token key: %s", err)
 		}
 	}
 
@@ -136,7 +164,8 @@ func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
 	clientMux := mux.NewRouter()
-	clientMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
+	clientMux.Handle("/", websocket.Server{Handler: a.handlers.PushSocketHandler,
+		Handshake: a.checkOrigin})
 
 	endpointMux := mux.NewRouter()
 	endpointMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
@@ -154,7 +183,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting WebSocket server",
 				LogFields{"addr": clientLn.Addr().String()})
 		}
-		errChan <- http.Serve(clientLn, &LogHandler{clientMux, a.log})
+		clientSrv := &http.Server{
+			Handler:  &LogHandler{clientMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "worker", ERROR}, "", 0)}
+		errChan <- clientSrv.Serve(clientLn)
 	}()
 
 	go func() {
@@ -163,7 +195,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting update server",
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		errChan <- http.Serve(endpointLn, &LogHandler{endpointMux, a.log})
+		endpointSrv := &http.Server{
+			Handler:  &LogHandler{endpointMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "endpoint", ERROR}, "", 0)}
+		errChan <- endpointSrv.Serve(endpointLn)
 	}()
 
 	go func() {
@@ -172,7 +207,10 @@ func (a *Application) Run() (errChan chan error) {
 			a.log.Info("app", "Starting router",
 				LogFields{"addr": routeLn.Addr().String()})
 		}
-		errChan <- http.Serve(routeLn, &LogHandler{routeMux, a.log})
+		routeSrv := &http.Server{
+			Handler:  &LogHandler{routeMux, a.log},
+			ErrorLog: log.New(&LogWriter{a.log.Logger, "router", ERROR}, "", 0)}
+		errChan <- routeSrv.Serve(routeLn)
 	}()
 
 	return errChan
@@ -227,6 +265,34 @@ func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
 	return
 }
 
+func (a *Application) checkOrigin(conf *websocket.Config,
+	req *http.Request) (err error) {
+
+	if len(a.origins) == 0 {
+		return nil
+	}
+	if conf.Origin, err = websocket.Origin(conf, req); err != nil {
+		if a.log.ShouldLog(WARNING) {
+			a.log.Warn("http", "Error parsing WebSocket origin",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
+		return err
+	}
+	if conf.Origin == nil {
+		return ErrMissingOrigin
+	}
+	for _, origin := range a.origins {
+		if isSameOrigin(conf.Origin, origin) {
+			return nil
+		}
+	}
+	if a.log.ShouldLog(WARNING) {
+		a.log.Warn("http", "Rejected WebSocket connection from unknown origin",
+			LogFields{"rid": req.Header.Get(HeaderID), "origin": conf.Origin.String()})
+	}
+	return ErrInvalidOrigin
+}
+
 func (a *Application) AddClient(uaid string, client *Client) {
 	a.clientMux.Lock()
 	a.clients[uaid] = client
@@ -251,4 +317,8 @@ func (a *Application) Stop() {
 	a.router.Close()
 	a.store.Close()
 	a.log.Close()
+}
+
+func isSameOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && a.Host == b.Host
 }

@@ -496,6 +496,23 @@ func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	h.Handler.ServeHTTP(writer, req)
 }
 
+// LogWriter implements the io.Writer interface for log messages. Defined for
+// compatibility with package log.
+type LogWriter struct {
+	Logger
+	Name  string
+	Level LogLevel
+}
+
+// Write implements io.Writer.Write. Each write corresponds to a single log
+// message.
+func (lw *LogWriter) Write(payload []byte) (written int, err error) {
+	if err = lw.Log(lw.Level, lw.Name, string(payload), nil); err != nil {
+		return 0, err
+	}
+	return len(payload), nil
+}
+
 func init() {
 	AvailableLoggers["stdout"] = func() HasConfigStruct { return new(StdOutLogger) }
 	AvailableLoggers["net"] = func() HasConfigStruct { return new(NetworkLogger) }
