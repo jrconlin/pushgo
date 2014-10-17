@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
+	ResolveHost        bool   `toml:"resolve_host" env:"resolve_host"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
@@ -54,6 +56,7 @@ func (a *Application) ConfigStruct() interface{} {
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
 		UseAwsHost:         false,
+		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
 	}
@@ -70,6 +73,12 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 		if a.hostname, err = GetAWSPublicHostname(); err != nil {
 			return err
 		}
+	} else if conf.ResolveHost {
+		addr, err := net.ResolveIPAddr("ip", conf.Hostname)
+		if err != nil {
+			return err
+		}
+		a.hostname = addr.String()
 	} else {
 		a.hostname = conf.Hostname
 	}

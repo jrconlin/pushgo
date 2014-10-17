@@ -9,6 +9,8 @@
 # If you're running on Amazon, try pulling the public hostname from the
 # metadata service
 #use_aws_host = false
+# Specifies whether the hostname should be resolved to an IP address.
+#resolve_host = false
 
 # This defines what endpoint to use for updates.
 # {{.CurrentHost}} = the current host to connect to.
