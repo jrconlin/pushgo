@@ -137,7 +137,7 @@ func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
 	clientMux := mux.NewRouter()
-	clientMux.Handle("/", websocket.Handler(a.handlers.PushSocketHandler))
+	clientMux.Handle("/", websocket.Server{Handler: a.handlers.PushSocketHandler})
 
 	endpointMux := mux.NewRouter()
 	endpointMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
