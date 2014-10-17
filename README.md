@@ -83,8 +83,8 @@ explaining things.
 ## Testing
 
 `make test` runs the accompanying smoke tests. You can also use the
-[stand alone test suite](https://github.com/jrconlin/simplepush_test) to test
-this or any other SimplePush server.
+[stand alone test suite](https://github.com/mozilla-services/simplepush_test)
+to test this or any other SimplePush server.
 
 ## Docker
 
