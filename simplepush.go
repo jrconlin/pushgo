@@ -11,6 +11,7 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
+	"crypto/tls"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -48,7 +49,7 @@ func main() {
 	flag.Parse()
 	config, err := util.ReadMzConfig(*configFile)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalf("Could not read config file: %s", err.Error())
 	}
 	// The config file requires some customization and normalization
 	config = simplepush.FixConfig(config)
@@ -65,7 +66,7 @@ func main() {
 		log.Printf("Creating profile...")
 		f, err := os.Create(*profile)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("Could not create profile: %s", err.Error())
 		}
 		defer func() {
 			log.Printf("Closing profile...")
@@ -77,7 +78,7 @@ func main() {
 		defer func() {
 			profFile, err := os.Create(*memProfile)
 			if err != nil {
-				log.Fatalln(err)
+				log.Fatalf("Could not create memory profile: %s", err.Error())
 			}
 			pprof.WriteHeapProfile(profFile)
 			profFile.Close()
@@ -136,7 +137,7 @@ func main() {
 	if len(token_str) > 0 {
 		key, err = base64.URLEncoding.DecodeString(token_str)
 		if err != nil {
-			log.Fatal(err.Error())
+			log.Fatalf("Could not decode token_string: %s", err.Error())
 		}
 	}
 
@@ -205,7 +206,35 @@ func main() {
 		go func() {
 			wsaddr := wshost + ":" + wsport
 			if len(wscertFile) > 0 && len(wskeyFile) > 0 {
-				errChan <- http.ListenAndServeTLS(wsaddr, wscertFile, wskeyFile, WSMux)
+				cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+				if err != nil {
+					logger.Error("main", "Could not load key pair",
+						util.Fields{"error": err.Error()})
+					return
+				}
+				server := &http.Server{
+					TLSConfig: &tls.Config{
+						NextProtos:   []string{"http/1.1"},
+						Certificates: []tls.Certificate{cert},
+						// The following are Mozilla required TLS settings.
+						MinVersion:               tls.VersionTLS10,
+						PreferServerCipherSuites: true,
+						CipherSuites: []uint16{
+							tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+							tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+							tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+							tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+							tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+							tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+							tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+							tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+							tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+							tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+					},
+					Addr:    wsaddr,
+					Handler: WSMux,
+				}
+				errChan <- server.ListenAndServeTLS(wscertFile, wskeyFile)
 			} else {
 				errChan <- http.ListenAndServe(wsaddr, WSMux)
 			}
