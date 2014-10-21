@@ -3,7 +3,7 @@ HERE = $(shell pwd)
 BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
-GOPATH := $(DEPS):$(HERE)
+GOPATH = $(DEPS):$(HERE)
 GOBIN = $(BIN)
 
 PLATFORM=$(shell uname)
@@ -12,8 +12,9 @@ PLATFORM=$(shell uname)
 PATH := $(HERE)/bin:$(DEPS)/bin:$(PATH)
 
 PACKAGE = github.com/mozilla-services/pushgo
+TARGET = simplepush
 
-.PHONY: all build clean test simplepush memcached
+.PHONY: all build clean test $(TARGET) memcached
 
 all: build
 
@@ -22,7 +23,7 @@ $(BIN):
 
 $(DEPS):
 	@echo "Installing dependencies"
-	$(GPM) install
+	GOPATH=$(GOPATH) $(GPM) install
 
 build: $(DEPS)
 
@@ -42,17 +43,17 @@ endif
 memcached: libmemcached-1.0.18
 	cd libmemcached-1.0.18 && sudo make install
 
-simplepush:
-	rm -f simplepush
+$(TARGET):
+	rm -f $(TARGET)
 	@echo "Building simplepush"
-	go build -o simplepush github.com/mozilla-services/pushgo
+	GOPATH=$(GOPATH) go build -o $(TARGET) $(PACKAGE)
 
 test:
-	go test $(addprefix $(PACKAGE)/,id simplepush)
+	GOPATH=$(GOPATH) go test $(addprefix $(PACKAGE)/,id simplepush)
 
 vet:
-	go vet $(addprefix $(PACKAGE)/,client id simplepush)
+	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id simplepush)
 
 clean:
 	rm -rf bin $(DEPS)
-	rm -f simplepush
+	rm -f $(TARGET)
