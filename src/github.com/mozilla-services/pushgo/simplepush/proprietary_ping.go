@@ -67,7 +67,7 @@ func (r *NoopPing) CanBypassWebsocket() bool {
 
 // try to send the ping.
 func (r *NoopPing) Send(string, int64) (bool, error) {
-	return false, UnsupportedProtocolErr
+	return false, nil
 }
 
 func (r *NoopPing) Status() (bool, error) {
