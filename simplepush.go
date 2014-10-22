@@ -11,6 +11,7 @@ import (
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	"mozilla.org/util"
 
+	"crypto/tls"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -190,6 +191,7 @@ func main() {
 			if logger != nil {
 				logger.Info("main", "Using TLS", nil)
 			}
+
 			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, nil)
 		} else {
 			errChan <- http.ListenAndServe(addr, nil)
@@ -205,7 +207,33 @@ func main() {
 		go func() {
 			wsaddr := wshost + ":" + wsport
 			if len(wscertFile) > 0 && len(wskeyFile) > 0 {
-				errChan <- http.ListenAndServeTLS(wsaddr, wscertFile, wskeyFile, WSMux)
+				cert, err := tls.LoadX509KeyPair(wscertFile, wskeyFile)
+				if err != nil {
+					log.Fatalf("Could not load TLS certs: %s", err.Error())
+				}
+				server := &http.Server{Addr: wsaddr, Handler: WSMux}
+				tlsConfig := &tls.Config{
+					NextProtos:   []string{"http/1.1"},
+					Certificates: []tls.Certificate{cert},
+					// The following are Mozilla required TLS settings.
+					MinVersion: tls.VersionTLS10,
+					CipherSuites: []uint16{
+						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+						tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+						tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+						tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+						tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+						tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+						tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+				}
+				listener, err := tls.Listen("tcp", wsaddr, tlsConfig)
+				if err != nil {
+					log.Fatalf("Could not create TLS listener: %s", err.Error())
+				}
+				errChan <- server.Serve(listener)
 			} else {
 				errChan <- http.ListenAndServe(wsaddr, WSMux)
 			}
