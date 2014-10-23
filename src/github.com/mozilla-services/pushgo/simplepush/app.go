@@ -164,6 +164,7 @@ func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
 	clientMux := mux.NewRouter()
+	clientMux.HandleFunc("/status/", a.handlers.StatusHandler)
 	clientMux.Handle("/", websocket.Server{Handler: a.handlers.PushSocketHandler,
 		Handshake: a.checkOrigin})
 
