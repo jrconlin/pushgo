@@ -176,7 +176,9 @@ func LoadConfigStruct(sectionName string, env envconf.Environment,
 	config toml.Primitive, configable HasConfigStruct) (
 	configStruct interface{}, err error) {
 
-	configStruct = configable.ConfigStruct()
+	if configStruct = configable.ConfigStruct(); configStruct == nil {
+		return configStruct, nil
+	}
 
 	// Global section options
 	// SimplePush defines some common parameters
@@ -228,6 +230,9 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 		return fmt.Errorf("Error loading config file, section: %s", sectionName)
 	}
 	confStruct := obj.ConfigStruct()
+	if confStruct == nil {
+		return nil
+	}
 
 	if err = toml.PrimitiveDecode(conf, confStruct); err != nil {
 		return fmt.Errorf("Unable to decode config for section '%s': %s",
