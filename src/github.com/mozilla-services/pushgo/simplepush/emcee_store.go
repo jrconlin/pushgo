@@ -220,10 +220,10 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	return nil
 }
 
-// MaxChannels returns the maximum number of channel registrations allowed per
-// client. Implements Store.MaxChannels().
-func (s *EmceeStore) MaxChannels() int {
-	return s.maxChannels
+// CanStore indicates whether the specified number of channel registrations
+// are allowed per client. Implements Store.CanStore().
+func (s *EmceeStore) CanStore(channels int) bool {
+	return channels < s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with

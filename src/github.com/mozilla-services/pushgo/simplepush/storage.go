@@ -50,9 +50,9 @@ type DbConf struct {
 
 // Store describes a storage adapter.
 type Store interface {
-	// MaxChannels returns the maximum number of channel registrations allowed
-	// per client.
-	MaxChannels() int
+	// CanStore indicates whether the storage adapter can store the specified
+	// number of channels per client.
+	CanStore(channels int) bool
 
 	// Close closes a storage adapter. Any resources (e.g., connections, open
 	// files) associated with the adapter should be cleaned up, and all pending

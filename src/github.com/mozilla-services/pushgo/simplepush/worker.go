@@ -26,7 +26,6 @@ type Worker struct {
 	id           string
 	state        WorkerState
 	stopped      bool
-	maxChannels  int
 	lastPing     time.Time
 	pingInt      time.Duration
 	metrics      *Metrics
@@ -99,7 +98,6 @@ func NewWorker(app *Application, id string) *Worker {
 		state:        WorkerActive,
 		stopped:      false,
 		pingInt:      app.clientMinPing,
-		maxChannels:  app.Store().MaxChannels(),
 		helloTimeout: app.clientHelloTimeout,
 	}
 }
@@ -355,13 +353,12 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		goto registerDevice
 	}
 	// are there a suspicious number of channels?
-	if forceReset = len(request.ChannelIDs) > self.maxChannels; forceReset {
+	if forceReset = sock.Store.CanStore(len(request.ChannelIDs)); forceReset {
 		if logWarning {
 			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID", LogFields{
-				"rid":         self.id,
-				"uaid":        request.DeviceID,
-				"channels":    strconv.Itoa(len(request.ChannelIDs)),
-				"maxChannels": strconv.Itoa(self.maxChannels)})
+				"rid":      self.id,
+				"uaid":     request.DeviceID,
+				"channels": strconv.Itoa(len(request.ChannelIDs))})
 		}
 		sock.Store.DropAll(request.DeviceID)
 		goto registerDevice
