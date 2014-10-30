@@ -283,99 +283,17 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		}
 	}()
 
-	//Force the client to re-register all it's clients.
-	// This is done by returning a new UAID.
-	var forceReset bool
-
 	request := new(HelloRequest)
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	/* NOTE: This seems to be a redirect, which I don't believe we support
-	if redir := self.config.Get("db.redirect", ""); len(redir) > 0 {
-		statusCode := 302
-		resp := JsMap{
-			"messageType": header.Type,
-			"status":      statusCode,
-			"redirect":    redir,
-			"uaid":        sock.Uaid}
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "sending redirect", LogFields{
-				"rid":      self.id,
-				"cmd":      header.Type,
-				"code":     strconv.FormatInt(int64(statusCode), 10),
-				"redirect": redir,
-				"uaid":     request.DeviceID})
-		}
-		websocket.JSON.Send(sock.Socket, resp)
-		return nil
-	} */
-	if request.ChannelIDs == nil {
-		// Must include "channelIDs" (even if empty)
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Missing ChannelIDs",
-				LogFields{"rid": self.id})
-		}
-		return ErrNoParams
-	}
-	if len(sock.Uaid) > 0 {
-		if len(request.DeviceID) == 0 || sock.Uaid == request.DeviceID {
-			// Duplicate handshake with omitted or identical device ID.
-			goto registerDevice
-		}
-		// if there's already a Uaid for this device, don't accept a new one
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Conflicting UAIDs",
-				LogFields{"rid": self.id})
-		}
-		return ErrExistingID
-	}
-	if forceReset = len(request.DeviceID) == 0; forceReset {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Generating new UAID for device",
-				LogFields{"rid": self.id})
-		}
-		goto registerDevice
-	}
-	if !id.Valid(request.DeviceID) {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Invalid character in UAID",
-				LogFields{"rid": self.id})
-		}
-		return ErrInvalidID
-	}
-	// if there's no UAID for the socket, accept or create a new one.
-	if forceReset = self.app.ClientExists(request.DeviceID); forceReset {
-		if logWarning {
-			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-				LogFields{"rid": self.id, "uaid": request.DeviceID})
-		}
-		goto registerDevice
-	}
-	// are there a suspicious number of channels?
-	if forceReset = sock.Store.CanStore(len(request.ChannelIDs)); forceReset {
-		if logWarning {
-			self.logger.Warn("worker", "Too many channel IDs in handshake; resetting UAID", LogFields{
-				"rid":      self.id,
-				"uaid":     request.DeviceID,
-				"channels": strconv.Itoa(len(request.ChannelIDs))})
-		}
-		sock.Store.DropAll(request.DeviceID)
-		goto registerDevice
-	}
-	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
-		if logWarning {
-			self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
-				LogFields{"rid": self.id, "uaid": request.DeviceID})
-		}
-		goto registerDevice
-	}
-	sock.Uaid = request.DeviceID
 
-registerDevice:
-	if forceReset {
-		sock.Uaid, _ = id.Generate()
+	deviceID, _, err := self.handshake(sock, request)
+	if err != nil {
+		return err
 	}
+	sock.Uaid = deviceID
+
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
 	// It's not a bad idea from a security POV to only send
@@ -400,9 +318,15 @@ registerDevice:
 	// 	"messageType": header.Type,
 	// 	"status":      status,
 	// 	"uaid":        sock.Uaid})
-	msg := []byte(fmt.Sprintf(`{"messageType":"%s","status":%d,"uaid":"%s"}`,
-		header.Type, status, sock.Uaid))
-	_, err = sock.Socket.Write(msg)
+	_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":%d,"uaid":"%s"}`,
+		header.Type, status, sock.Uaid)
+	if err != nil {
+		if logWarning {
+			self.logger.Warn("dash", "Error writing client handshake", LogFields{
+				"rid": self.id, "error": err.Error()})
+		}
+		return err
+	}
 	self.metrics.Increment("updates.client.hello")
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("dash", "Client successfully connected",
@@ -414,6 +338,88 @@ registerDevice:
 		return self.Flush(sock, 0, "", 0)
 	}
 	return err
+}
+
+func (self *Worker) handshake(sock *PushWS, request *HelloRequest) (
+	deviceID string, canRedirect bool, err error) {
+
+	logWarning := self.logger.ShouldLog(WARNING)
+	currentID := sock.Uaid
+
+	if request.ChannelIDs == nil {
+		// Must include "channelIDs" (even if empty)
+		if logWarning {
+			self.logger.Warn("worker", "Missing ChannelIDs",
+				LogFields{"rid": self.id})
+		}
+		return "", false, ErrNoParams
+	}
+
+	if len(currentID) > 0 {
+		if len(request.DeviceID) == 0 || currentID == request.DeviceID {
+			// Duplicate handshake with omitted or identical device ID. Allow the
+			// caller to flush pending notifications, but avoid querying the balancer.
+			if self.logger.ShouldLog(DEBUG) {
+				self.logger.Debug("worker", "Duplicate client handshake",
+					LogFields{"rid": self.id})
+			}
+			return currentID, false, nil
+		}
+		// if there's already a Uaid for this device, don't accept a new one
+		if logWarning {
+			self.logger.Warn("worker", "Conflicting UAIDs",
+				LogFields{"rid": self.id})
+		}
+		return "", false, ErrExistingID
+	}
+	if len(request.DeviceID) == 0 {
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Generating new UAID for device",
+				LogFields{"rid": self.id})
+		}
+		goto forceReset
+	}
+	if !id.Valid(request.DeviceID) {
+		if logWarning {
+			self.logger.Warn("worker", "Invalid character in UAID",
+				LogFields{"rid": self.id})
+		}
+		return "", false, ErrInvalidID
+	}
+	if self.app.ClientExists(request.DeviceID) {
+		if logWarning {
+			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
+				LogFields{"rid": self.id, "uaid": request.DeviceID})
+		}
+		goto forceReset
+	}
+	if !sock.Store.CanStore(len(request.ChannelIDs)) {
+		// are there a suspicious number of channels?
+		if logWarning {
+			self.logger.Warn("worker",
+				"Too many channel IDs in handshake; resetting UAID", LogFields{
+					"rid":      self.id,
+					"uaid":     request.DeviceID,
+					"channels": strconv.Itoa(len(request.ChannelIDs))})
+		}
+		sock.Store.DropAll(request.DeviceID)
+		goto forceReset
+	}
+	if len(request.ChannelIDs) > 0 && !sock.Store.Exists(request.DeviceID) {
+		if logWarning {
+			self.logger.Warn("worker",
+				"Channel IDs specified in handshake for nonexistent UAID",
+				LogFields{"rid": self.id, "uaid": request.DeviceID})
+		}
+		goto forceReset
+	}
+	return request.DeviceID, true, nil
+
+forceReset:
+	if deviceID, err = id.Generate(); err != nil {
+		return "", false, err
+	}
+	return deviceID, true, nil
 }
 
 // Clear the data that the client stated it received, then re-flush any
