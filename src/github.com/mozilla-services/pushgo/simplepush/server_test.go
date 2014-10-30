@@ -10,6 +10,24 @@ import (
 	"sync"
 )
 
+type ConfigStore interface {
+	HasConfigStruct
+	Store
+}
+
+type TestStore struct {
+	ConfigStore
+	Ids map[string]bool
+}
+
+func (s *TestStore) Exists(deviceId string) (ok bool) {
+	var hasId bool
+	if ok, hasId = s.Ids[deviceId]; hasId {
+		return
+	}
+	return s.ConfigStore.Exists(deviceId)
+}
+
 type TestServer struct {
 	sync.Mutex
 	ClientAddr   string
@@ -17,6 +35,7 @@ type TestServer struct {
 	RouterAddr   string
 	LogLevel     int32
 	Contacts     []string
+	NewStore     func() ConfigStore
 	app          *Application
 	lastErr      error
 	isStopping   bool
@@ -77,8 +96,13 @@ func (t *TestServer) load() (*Application, error) {
 			return metrics, nil
 		},
 		PluginStore: func(app *Application) (HasConfigStruct, error) {
-			store := new(NoStore)
-			storeConf := store.ConfigStruct().(*NoStoreConfig)
+			var store ConfigStore
+			if t.NewStore != nil {
+				store = t.NewStore()
+			} else {
+				store = new(NoStore)
+			}
+			storeConf := store.ConfigStruct()
 			if err := store.Init(app, storeConf); err != nil {
 				return nil, fmt.Errorf("Error initializing store: %#v", err)
 			}
