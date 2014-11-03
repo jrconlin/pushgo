@@ -154,8 +154,6 @@ max_connections = 60000
 
 [discovery]
 type = "static"
-# Static list of peer Simple Push servers.
-contacts = []
 
 [metrics]
 prefix = "docker"
