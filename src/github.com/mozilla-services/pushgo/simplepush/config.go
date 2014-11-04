@@ -18,6 +18,31 @@ import (
 // Extensible sections
 type AvailableExtensions map[string]func() HasConfigStruct
 
+// Get returns an extension with the given name, or the default
+// extension if one has not been registered.
+func (e AvailableExtensions) Get(name string) (
+	ext func() HasConfigStruct, ok bool) {
+
+	if ext, ok = e[name]; !ok {
+		ext, ok = e["default"]
+	}
+	return
+}
+
+// SetDefault sets the extension with the given name as the default. If a
+// default has already been set or the extension has not been registered,
+// SetDefault panics.
+func (e AvailableExtensions) SetDefault(name string) {
+	ext, ok := e[name]
+	if !ok {
+		panic(fmt.Sprintf("AvailableExtensions: '%s' not registered", name))
+	}
+	if _, ok = e["default"]; ok {
+		panic("AvailableExtensions: Default already set")
+	}
+	e["default"] = ext
+}
+
 type ExtensibleGlobals struct {
 	Typ string `toml:"type" env:"type"`
 }
@@ -266,13 +291,11 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	if err = env.Decode(toEnvName(sectionName), EnvSep, confSection); err != nil {
 		return nil, err
 	}
-	ext, ok := extensions[confSection.Typ]
+	ext, ok := extensions.Get(confSection.Typ)
 	if !ok {
-		if ext, ok = extensions["default"]; !ok {
-			return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
-				confSection.Typ, sectionName)
-		}
 		//TODO: Add log info to indicate using "default"
+		return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
+			confSection.Typ, sectionName)
 	}
 
 	obj = ext()
