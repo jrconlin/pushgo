@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"fmt"
+	"math/rand"
 	"path"
 	"strings"
 	"sync"
@@ -234,6 +235,11 @@ func (l *EtcdLocator) getServers() (servers []string, err error) {
 			continue
 		}
 		servers = append(servers, node.Value)
+	}
+	for length := len(servers); length > 0; {
+		i := rand.Intn(length)
+		length--
+		servers[i], servers[length] = servers[length], servers[i]
 	}
 	return servers, nil
 }
