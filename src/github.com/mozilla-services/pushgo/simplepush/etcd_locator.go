@@ -175,7 +175,9 @@ func (l *EtcdLocator) Close() (err error) {
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 	l.contactsLock.RLock()
-	contacts, err = l.contacts, l.contactsErr
+	contacts = make([]string, len(l.contacts))
+	copy(contacts, l.contacts)
+	err = l.contactsErr
 	l.contactsLock.RUnlock()
 	return
 }
