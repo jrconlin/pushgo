@@ -7,6 +7,7 @@ package simplepush
 import (
 	"fmt"
 	"math/rand"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -52,7 +53,7 @@ type EtcdLocator struct {
 	defaultTTL      time.Duration
 	serverList      []string
 	dir             string
-	authority       string
+	url             string
 	key             string
 	client          *etcd.Client
 	contactsLock    sync.RWMutex
@@ -108,15 +109,16 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.serverList = conf.Servers
 	l.dir = path.Clean(conf.Dir)
 
-	// The authority of the current server is used as the etcd key.
-	router := app.Router()
-	if hostname := router.hostname; hostname != "" {
-		if router.scheme == "https" && router.port != 443 || router.scheme == "http" && router.port != 80 {
-			l.authority = fmt.Sprintf("%s:%d", hostname, router.port)
-		} else {
-			l.authority = hostname
-		}
-		l.key = path.Join(l.dir, l.authority)
+	// Use the hostname and port of the current server as the etcd key.
+	l.url = app.Router().URL()
+	uri, err := url.ParseRequestURI(l.url)
+	if err != nil {
+		l.logger.Alert("etcd", "Error parsing router URL", LogFields{
+			"error": err.Error(), "url": l.url})
+		return err
+	}
+	if len(uri.Host) > 0 {
+		l.key = path.Join(l.dir, uri.Host)
 	}
 
 	if l.logger.ShouldLog(INFO) {
@@ -205,14 +207,14 @@ func (l *EtcdLocator) Status() (ok bool, err error) {
 // Register registers the server to the etcd cluster.
 func (l *EtcdLocator) Register() (err error) {
 	if l.logger.ShouldLog(INFO) {
-		l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
+		l.logger.Info("etcd", "Registering host", LogFields{
+			"key": l.key, "url": l.url})
 	}
-	if _, err = l.client.Set(l.key, l.authority, uint64(l.defaultTTL/time.Second)); err != nil {
+	if _, err = l.client.Set(l.key, l.url,
+		uint64(l.defaultTTL/time.Second)); err != nil {
 		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Failed to register",
-				LogFields{"error": err.Error(),
-					"key":  l.key,
-					"host": l.authority})
+			l.logger.Error("etcd", "Failed to register", LogFields{
+				"error": err.Error(), "key": l.key, "url": l.url})
 		}
 		return err
 	}
@@ -231,7 +233,7 @@ func (l *EtcdLocator) getServers() (servers []string, err error) {
 	}
 	servers = make([]string, 0, len(nodeList.Node.Nodes))
 	for _, node := range nodeList.Node.Nodes {
-		if node.Value == l.authority || node.Value == "" {
+		if node.Value == l.url || node.Value == "" {
 			continue
 		}
 		servers = append(servers, node.Value)

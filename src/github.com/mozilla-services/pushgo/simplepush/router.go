@@ -20,13 +20,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 )
 
@@ -125,18 +125,9 @@ type RouterConfig struct {
 	// HTTP request to complete. Defaults to 3 seconds.
 	Rwtimeout string
 
-	// Scheme is the scheme component of the proxy endpoint, used by the router
-	// to construct the endpoint of a peer. Defaults to "http".
-	Scheme string
-
 	// DefaultHost is the default hostname of the proxy endpoint. No default
 	// value; overrides simplepush.Application.Hostname() if specified.
 	DefaultHost string `toml:"default_host" env:"default_host"`
-
-	// UrlTemplate is a text/template source string for constructing the proxy
-	// endpoint URL. Interpolated variables are {{.Scheme}}, {{.Host}}, and
-	// {{.Uaid}}.
-	UrlTemplate string `toml:"url_template" env:"url_template"`
 
 	// Listener specifies the address and port, maximum connections, TCP
 	// keep-alive period, and certificate information for the routing listener.
@@ -150,13 +141,11 @@ type Router struct {
 	listener    net.Listener
 	logger      *SimpleLogger
 	metrics     *Metrics
-	template    *template.Template
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	bucketSize  int
-	scheme      string
-	hostname    string
-	port        int
+	poolSize    int
+	url         string
 	runs        chan func()
 	rclient     *http.Client
 	closeWait   sync.WaitGroup
@@ -175,12 +164,10 @@ func NewRouter() *Router {
 
 func (*Router) ConfigStruct() interface{} {
 	return &RouterConfig{
-		BucketSize:  10,
-		PoolSize:    30,
-		Ctimeout:    "3s",
-		Rwtimeout:   "3s",
-		Scheme:      "http",
-		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
+		BucketSize: 10,
+		PoolSize:   30,
+		Ctimeout:   "3s",
+		Rwtimeout:  "3s",
 		Listener: ListenerConfig{
 			Addr:            ":3000",
 			MaxConns:        1000,
@@ -194,12 +181,6 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 
-	if r.template, err = template.New("Route").Parse(conf.UrlTemplate); err != nil {
-		r.logger.Alert("router", "Could not parse router template",
-			LogFields{"error": err.Error(),
-				"template": conf.UrlTemplate})
-		return err
-	}
 	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
 		r.logger.Alert("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
@@ -218,17 +199,24 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 			LogFields{"error": err.Error()})
 		return err
 	}
-	if r.hostname = conf.DefaultHost; len(r.hostname) == 0 {
-		r.hostname = app.Hostname()
+	var scheme string
+	if conf.Listener.UseTLS() {
+		scheme = "https"
+	} else {
+		scheme = "http"
+	}
+	host := conf.DefaultHost
+	if len(host) == 0 {
+		host = app.Hostname()
 	}
 	addr := r.listener.Addr().(*net.TCPAddr)
-	if len(r.hostname) == 0 {
-		r.hostname = addr.IP.String()
+	if len(host) == 0 {
+		host = addr.IP.String()
 	}
-	r.port = addr.Port
+	r.url = CanonicalURL(scheme, host, addr.Port)
 
 	r.bucketSize = conf.BucketSize
-	r.scheme = conf.Scheme
+	r.poolSize = conf.PoolSize
 
 	r.rclient = &http.Client{
 		Transport: &http.Transport{
@@ -238,8 +226,8 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		},
 	}
 
-	r.closeWait.Add(conf.PoolSize)
-	for i := 0; i < conf.PoolSize; i++ {
+	r.closeWait.Add(r.poolSize)
+	for i := 0; i < r.poolSize; i++ {
 		go r.runLoop()
 	}
 
@@ -257,6 +245,10 @@ func (r *Router) Locator() Locator {
 
 func (r *Router) Listener() net.Listener {
 	return r.listener
+}
+
+func (r *Router) URL() string {
+	return r.url
 }
 
 func (r *Router) Close() (err error) {
@@ -350,18 +342,6 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 	return nil
 }
 
-// formatURL constructs a proxy endpoint for the given contact and device ID.
-func (r *Router) formatURL(contact, uaid string) (string, error) {
-	url := new(bytes.Buffer)
-	err := r.template.Execute(url, struct {
-		Scheme, Host, Uaid string
-	}{r.scheme, contact, uaid})
-	if err != nil {
-		return "", err
-	}
-	return url.String(), nil
-}
-
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
 func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string,
@@ -388,17 +368,9 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	for _, contact := range contacts {
-		contact := contact
-		url, err := r.formatURL(contact, uaid)
-		if err != nil {
-			if r.logger.ShouldLog(ERROR) {
-				r.logger.Error("router", "Could not build routing URL",
-					LogFields{"rid": logID, "error": err.Error()})
-			}
-			return false, err
-		}
+		url := fmt.Sprintf("%s/route/%s", contact, uaid)
 		notify := func() {
-			r.notifyContact(result, stop, contact, url, msg, logID)
+			r.notifyContact(result, stop, url, msg, logID)
 		}
 		r.Submit(notify)
 	}
@@ -414,7 +386,7 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 
 // notifyContact routes a message to a single contact.
 func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
-	contact, url string, msg []byte, logID string) {
+	url string, msg []byte, logID string) {
 
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
@@ -428,7 +400,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	req.Header.Set(HeaderID, logID)
 	if r.logger.ShouldLog(DEBUG) {
 		r.logger.Debug("router", "Sending request",
-			LogFields{"rid": logID, "server": contact, "url": url})
+			LogFields{"rid": logID, "url": url})
 	}
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := r.rclient.Do(req)
@@ -443,13 +415,13 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	if resp.StatusCode != 200 {
 		if r.logger.ShouldLog(DEBUG) {
 			r.logger.Debug("router", "Denied",
-				LogFields{"rid": logID, "server": contact})
+				LogFields{"rid": logID, "url": url})
 		}
 		return
 	}
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Server accepted",
-			LogFields{"rid": logID, "server": contact})
+			LogFields{"rid": logID, "url": url})
 	}
 	select {
 	case <-stop:
