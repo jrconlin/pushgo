@@ -19,7 +19,6 @@ package simplepush
 import (
 	"bytes"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -31,13 +30,81 @@ import (
 	"time"
 )
 
-var ErrNoLocator = errors.New("Discovery service not configured")
+var (
+	ErrNoLocator       = errors.New("Discovery service not configured")
+	ErrInvalidRoutable = errors.New("Malformed routable")
+)
+
+var routablePool = sync.Pool{New: func() interface{} {
+	return new(Routable)
+}}
+
+func NewRoutable() *Routable {
+	return routablePool.Get().(*Routable)
+}
 
 // Routable is the update payload sent to each contact.
 type Routable struct {
-	ChannelID string `json:"chid"`
-	Version   int64  `json:"version"`
-	Time      string `json:"time"`
+	ChannelID string
+	Version   int64
+	Time      time.Time
+	bytes     []byte
+}
+
+func (r *Routable) MarshalText() ([]byte, error) {
+	version := strconv.FormatInt(r.Version, 10)
+	sentAt := r.Time.Format(time.RFC3339Nano)
+	size := len(r.ChannelID) + len(version) + len(sentAt) + 2
+	if cap(r.bytes) < size {
+		r.bytes = make([]byte, size)
+	} else {
+		r.bytes = r.bytes[:size]
+	}
+	offset := copy(r.bytes, r.ChannelID)
+	r.bytes[offset] = '\n'
+	offset++
+	offset += copy(r.bytes[offset:], version)
+	r.bytes[offset] = '\n'
+	offset++
+	offset += copy(r.bytes[offset:], sentAt)
+	return r.bytes, nil
+}
+
+func (r *Routable) UnmarshalText(data []byte) (err error) {
+	if len(data) == 0 {
+		return ErrInvalidRoutable
+	}
+	if cap(data) > cap(r.bytes) {
+		r.bytes = data
+	}
+	startVersion := bytes.IndexByte(data, '\n')
+	if startVersion < 0 {
+		return ErrInvalidRoutable
+	}
+	r.ChannelID = string(data[:startVersion])
+	startVersion++
+	startTime := bytes.IndexByte(data[startVersion:], '\n')
+	if startTime < 0 {
+		return ErrInvalidRoutable
+	}
+	version := string(data[startVersion : startVersion+startTime])
+	startTime++
+	if r.Version, err = strconv.ParseInt(version, 10, 64); err != nil {
+		return err
+	}
+	sentAt := string(data[startVersion+startTime:])
+	if r.Time, err = time.Parse(time.RFC3339Nano, sentAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Routable) Recycle() {
+	if cap(r.bytes) > 1024 {
+		return
+	}
+	r.bytes = r.bytes[:0]
+	routablePool.Put(r)
 }
 
 type RouterConfig struct {
@@ -45,6 +112,10 @@ type RouterConfig struct {
 	// will defer requests until all nodes in a bucket have responded. Defaults
 	// to 10 contacts.
 	BucketSize int `toml:"bucket_size" env:"bucket_size"`
+
+	// PoolSize is the number of goroutines to spawn for routing messages.
+	// Defaults to 30.
+	PoolSize int `toml:"pool_size" env:"pool_size"`
 
 	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
@@ -86,8 +157,10 @@ type Router struct {
 	scheme      string
 	hostname    string
 	port        int
+	runs        chan func()
 	rclient     *http.Client
-	isClosing   bool
+	closeWait   sync.WaitGroup
+	isClosed    bool
 	closeSignal chan bool
 	closeLock   sync.Mutex
 	lastErr     error
@@ -95,6 +168,7 @@ type Router struct {
 
 func NewRouter() *Router {
 	return &Router{
+		runs:        make(chan func()),
 		closeSignal: make(chan bool),
 	}
 }
@@ -102,6 +176,7 @@ func NewRouter() *Router {
 func (*Router) ConfigStruct() interface{} {
 	return &RouterConfig{
 		BucketSize:  10,
+		PoolSize:    30,
 		Ctimeout:    "3s",
 		Rwtimeout:   "3s",
 		Scheme:      "http",
@@ -163,6 +238,11 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 		},
 	}
 
+	r.closeWait.Add(conf.PoolSize)
+	for i := 0; i < conf.PoolSize; i++ {
+		go r.runLoop()
+	}
+
 	return nil
 }
 
@@ -180,18 +260,22 @@ func (r *Router) Listener() net.Listener {
 }
 
 func (r *Router) Close() (err error) {
-	defer r.closeLock.Unlock()
 	r.closeLock.Lock()
-	if r.isClosing {
-		return r.lastErr
+	err = r.lastErr
+	if r.isClosed {
+		r.closeLock.Unlock()
+		return err
 	}
+	r.isClosed = true
 	close(r.closeSignal)
 	if locator := r.Locator(); locator != nil {
-		err = locator.Close()
+		r.lastErr = locator.Close()
 	}
-	r.listener.Close()
-	r.isClosing = true
-	r.lastErr = err
+	if err := r.listener.Close(); err != nil {
+		r.lastErr = err
+	}
+	r.closeLock.Unlock()
+	r.closeWait.Wait()
 	return err
 }
 
@@ -207,11 +291,12 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
-	msg, err := json.Marshal(&Routable{
-		ChannelID: chid,
-		Version:   version,
-		Time:      sentAt.Format(time.RFC3339Nano),
-	})
+	routable := NewRoutable()
+	defer routable.Recycle()
+	routable.ChannelID = chid
+	routable.Version = version
+	routable.Time = sentAt
+	msg, err := routable.MarshalText()
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Could not compose routing message",
@@ -303,6 +388,7 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	for _, contact := range contacts {
+		contact := contact
 		url, err := r.formatURL(contact, uaid)
 		if err != nil {
 			if r.logger.ShouldLog(ERROR) {
@@ -311,7 +397,10 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 			}
 			return false, err
 		}
-		go r.notifyContact(result, stop, contact, url, msg, logID)
+		notify := func() {
+			r.notifyContact(result, stop, contact, url, msg, logID)
+		}
+		r.Submit(notify)
 	}
 	select {
 	case ok = <-r.closeSignal:
@@ -365,5 +454,23 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	select {
 	case <-stop:
 	case result <- true:
+	}
+}
+
+func (r *Router) Submit(run func()) {
+	select {
+	case <-r.closeSignal:
+	case r.runs <- run:
+	}
+}
+
+func (r *Router) runLoop() {
+	defer r.closeWait.Done()
+	for ok := true; ok; {
+		select {
+		case ok = <-r.closeSignal:
+		case run := <-r.runs:
+			run()
+		}
 	}
 }

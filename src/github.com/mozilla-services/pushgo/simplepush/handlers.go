@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -356,10 +357,7 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 // Boy Golly, sure would be nice to put this in router.go, huh?
 // well, thanks to go being picky about circular references, you can't.
 func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
-	var (
-		err error
-		ts  time.Time
-	)
+	var err error
 	logWarning := self.logger.ShouldLog(WARNING)
 	// get the uaid from the url
 	uaid, ok := mux.Vars(req)["uaid"]
@@ -384,12 +382,20 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		self.metrics.Increment("updates.routed.invalid")
 		return
 	}
-	defer req.Body.Close()
-	decoder := json.NewDecoder(req.Body)
-	request := new(Routable)
-	if err = decoder.Decode(request); err != nil {
+	var request *Routable
+	body, err := ioutil.ReadAll(http.MaxBytesReader(resp, req.Body, 1024))
+	if err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not read update body",
+				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
+		}
+		goto invalidBody
+	}
+	request = NewRoutable()
+	defer request.Recycle()
+	if err = request.UnmarshalText(body); err != nil {
+		if logWarning {
+			self.logger.Warn("router", "Invalid update body",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
 		}
 		goto invalidBody
@@ -401,19 +407,9 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		}
 		goto invalidBody
 	}
-	if ts, err = time.Parse(time.RFC3339Nano, request.Time); err != nil {
-		if logWarning {
-			self.logger.Warn("router", "Could not parse time", LogFields{
-				"rid":  req.Header.Get(HeaderID),
-				"uaid": uaid,
-				"chid": request.ChannelID,
-				"time": request.Time})
-		}
-		goto invalidBody
-	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, ts); err != nil {
+	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, request.Time); err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
