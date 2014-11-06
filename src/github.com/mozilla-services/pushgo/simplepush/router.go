@@ -19,25 +19,92 @@ package simplepush
 import (
 	"bytes"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 )
 
-var ErrNoLocator = errors.New("Discovery service not configured")
+var (
+	ErrNoLocator       = errors.New("Discovery service not configured")
+	ErrInvalidRoutable = errors.New("Malformed routable")
+)
+
+var routablePool = sync.Pool{New: func() interface{} {
+	return new(Routable)
+}}
+
+func NewRoutable() *Routable {
+	return routablePool.Get().(*Routable)
+}
 
 // Routable is the update payload sent to each contact.
 type Routable struct {
-	ChannelID string `json:"chid"`
-	Version   int64  `json:"version"`
-	Time      string `json:"time"`
+	ChannelID string
+	Version   int64
+	Time      time.Time
+	bytes     []byte
+}
+
+func (r *Routable) MarshalText() ([]byte, error) {
+	version := strconv.FormatInt(r.Version, 10)
+	sentAt := r.Time.Format(time.RFC3339Nano)
+	size := len(r.ChannelID) + len(version) + len(sentAt) + 2
+	if cap(r.bytes) < size {
+		r.bytes = make([]byte, size)
+	} else {
+		r.bytes = r.bytes[:size]
+	}
+	offset := copy(r.bytes, r.ChannelID)
+	r.bytes[offset] = '\n'
+	offset++
+	offset += copy(r.bytes[offset:], version)
+	r.bytes[offset] = '\n'
+	offset++
+	offset += copy(r.bytes[offset:], sentAt)
+	return r.bytes, nil
+}
+
+func (r *Routable) UnmarshalText(data []byte) (err error) {
+	if len(data) == 0 {
+		return ErrInvalidRoutable
+	}
+	if cap(data) > cap(r.bytes) {
+		r.bytes = data
+	}
+	startVersion := bytes.IndexByte(data, '\n')
+	if startVersion < 0 {
+		return ErrInvalidRoutable
+	}
+	r.ChannelID = string(data[:startVersion])
+	startVersion++
+	startTime := bytes.IndexByte(data[startVersion:], '\n')
+	if startTime < 0 {
+		return ErrInvalidRoutable
+	}
+	version := string(data[startVersion : startVersion+startTime])
+	startTime++
+	if r.Version, err = strconv.ParseInt(version, 10, 64); err != nil {
+		return err
+	}
+	sentAt := string(data[startVersion+startTime:])
+	if r.Time, err = time.Parse(time.RFC3339Nano, sentAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Routable) Recycle() {
+	if cap(r.bytes) > 1024 {
+		return
+	}
+	r.bytes = r.bytes[:0]
+	routablePool.Put(r)
 }
 
 type RouterConfig struct {
@@ -45,6 +112,10 @@ type RouterConfig struct {
 	// will defer requests until all nodes in a bucket have responded. Defaults
 	// to 10 contacts.
 	BucketSize int `toml:"bucket_size" env:"bucket_size"`
+
+	// PoolSize is the number of goroutines to spawn for routing messages.
+	// Defaults to 30.
+	PoolSize int `toml:"pool_size" env:"pool_size"`
 
 	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
@@ -54,18 +125,9 @@ type RouterConfig struct {
 	// HTTP request to complete. Defaults to 3 seconds.
 	Rwtimeout string
 
-	// Scheme is the scheme component of the proxy endpoint, used by the router
-	// to construct the endpoint of a peer. Defaults to "http".
-	Scheme string
-
 	// DefaultHost is the default hostname of the proxy endpoint. No default
 	// value; overrides simplepush.Application.Hostname() if specified.
 	DefaultHost string `toml:"default_host" env:"default_host"`
-
-	// UrlTemplate is a text/template source string for constructing the proxy
-	// endpoint URL. Interpolated variables are {{.Scheme}}, {{.Host}}, and
-	// {{.Uaid}}.
-	UrlTemplate string `toml:"url_template" env:"url_template"`
 
 	// Listener specifies the address and port, maximum connections, TCP
 	// keep-alive period, and certificate information for the routing listener.
@@ -79,15 +141,15 @@ type Router struct {
 	listener    net.Listener
 	logger      *SimpleLogger
 	metrics     *Metrics
-	template    *template.Template
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	bucketSize  int
-	scheme      string
-	hostname    string
-	port        int
+	poolSize    int
+	url         string
+	runs        chan func()
 	rclient     *http.Client
-	isClosing   bool
+	closeWait   sync.WaitGroup
+	isClosed    bool
 	closeSignal chan bool
 	closeLock   sync.Mutex
 	lastErr     error
@@ -95,17 +157,17 @@ type Router struct {
 
 func NewRouter() *Router {
 	return &Router{
+		runs:        make(chan func()),
 		closeSignal: make(chan bool),
 	}
 }
 
 func (*Router) ConfigStruct() interface{} {
 	return &RouterConfig{
-		BucketSize:  10,
-		Ctimeout:    "3s",
-		Rwtimeout:   "3s",
-		Scheme:      "http",
-		UrlTemplate: "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}",
+		BucketSize: 10,
+		PoolSize:   30,
+		Ctimeout:   "3s",
+		Rwtimeout:  "3s",
 		Listener: ListenerConfig{
 			Addr:            ":3000",
 			MaxConns:        1000,
@@ -119,12 +181,6 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 
-	if r.template, err = template.New("Route").Parse(conf.UrlTemplate); err != nil {
-		r.logger.Alert("router", "Could not parse router template",
-			LogFields{"error": err.Error(),
-				"template": conf.UrlTemplate})
-		return err
-	}
 	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
 		r.logger.Alert("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
@@ -143,17 +199,24 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 			LogFields{"error": err.Error()})
 		return err
 	}
-	if r.hostname = conf.DefaultHost; len(r.hostname) == 0 {
-		r.hostname = app.Hostname()
+	var scheme string
+	if conf.Listener.UseTLS() {
+		scheme = "https"
+	} else {
+		scheme = "http"
+	}
+	host := conf.DefaultHost
+	if len(host) == 0 {
+		host = app.Hostname()
 	}
 	addr := r.listener.Addr().(*net.TCPAddr)
-	if len(r.hostname) == 0 {
-		r.hostname = addr.IP.String()
+	if len(host) == 0 {
+		host = addr.IP.String()
 	}
-	r.port = addr.Port
+	r.url = CanonicalURL(scheme, host, addr.Port)
 
 	r.bucketSize = conf.BucketSize
-	r.scheme = conf.Scheme
+	r.poolSize = conf.PoolSize
 
 	r.rclient = &http.Client{
 		Transport: &http.Transport{
@@ -161,6 +224,11 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 			ResponseHeaderTimeout: r.rwtimeout,
 			TLSClientConfig:       new(tls.Config),
 		},
+	}
+
+	r.closeWait.Add(r.poolSize)
+	for i := 0; i < r.poolSize; i++ {
+		go r.runLoop()
 	}
 
 	return nil
@@ -179,19 +247,27 @@ func (r *Router) Listener() net.Listener {
 	return r.listener
 }
 
+func (r *Router) URL() string {
+	return r.url
+}
+
 func (r *Router) Close() (err error) {
-	defer r.closeLock.Unlock()
 	r.closeLock.Lock()
-	if r.isClosing {
-		return r.lastErr
+	err = r.lastErr
+	if r.isClosed {
+		r.closeLock.Unlock()
+		return err
 	}
+	r.isClosed = true
 	close(r.closeSignal)
 	if locator := r.Locator(); locator != nil {
-		err = locator.Close()
+		r.lastErr = locator.Close()
 	}
-	r.listener.Close()
-	r.isClosing = true
-	r.lastErr = err
+	if err := r.listener.Close(); err != nil {
+		r.lastErr = err
+	}
+	r.closeLock.Unlock()
+	r.closeWait.Wait()
 	return err
 }
 
@@ -207,11 +283,12 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
-	msg, err := json.Marshal(&Routable{
-		ChannelID: chid,
-		Version:   version,
-		Time:      sentAt.Format(time.RFC3339Nano),
-	})
+	routable := NewRoutable()
+	defer routable.Recycle()
+	routable.ChannelID = chid
+	routable.Version = version
+	routable.Time = sentAt
+	msg, err := routable.MarshalText()
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Could not compose routing message",
@@ -265,18 +342,6 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 	return nil
 }
 
-// formatURL constructs a proxy endpoint for the given contact and device ID.
-func (r *Router) formatURL(contact, uaid string) (string, error) {
-	url := new(bytes.Buffer)
-	err := r.template.Execute(url, struct {
-		Scheme, Host, Uaid string
-	}{r.scheme, contact, uaid})
-	if err != nil {
-		return "", err
-	}
-	return url.String(), nil
-}
-
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
 func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string,
@@ -303,15 +368,11 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	for _, contact := range contacts {
-		url, err := r.formatURL(contact, uaid)
-		if err != nil {
-			if r.logger.ShouldLog(ERROR) {
-				r.logger.Error("router", "Could not build routing URL",
-					LogFields{"rid": logID, "error": err.Error()})
-			}
-			return false, err
+		url := fmt.Sprintf("%s/route/%s", contact, uaid)
+		notify := func() {
+			r.notifyContact(result, stop, url, msg, logID)
 		}
-		go r.notifyContact(result, stop, contact, url, msg, logID)
+		r.Submit(notify)
 	}
 	select {
 	case ok = <-r.closeSignal:
@@ -325,7 +386,7 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 
 // notifyContact routes a message to a single contact.
 func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
-	contact, url string, msg []byte, logID string) {
+	url string, msg []byte, logID string) {
 
 	body := bytes.NewReader(msg)
 	req, err := http.NewRequest("PUT", url, body)
@@ -339,7 +400,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	req.Header.Set(HeaderID, logID)
 	if r.logger.ShouldLog(DEBUG) {
 		r.logger.Debug("router", "Sending request",
-			LogFields{"rid": logID, "server": contact, "url": url})
+			LogFields{"rid": logID, "url": url})
 	}
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := r.rclient.Do(req)
@@ -354,16 +415,34 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	if resp.StatusCode != 200 {
 		if r.logger.ShouldLog(DEBUG) {
 			r.logger.Debug("router", "Denied",
-				LogFields{"rid": logID, "server": contact})
+				LogFields{"rid": logID, "url": url})
 		}
 		return
 	}
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Server accepted",
-			LogFields{"rid": logID, "server": contact})
+			LogFields{"rid": logID, "url": url})
 	}
 	select {
 	case <-stop:
 	case result <- true:
+	}
+}
+
+func (r *Router) Submit(run func()) {
+	select {
+	case <-r.closeSignal:
+	case r.runs <- run:
+	}
+}
+
+func (r *Router) runLoop() {
+	defer r.closeWait.Done()
+	for ok := true; ok; {
+		select {
+		case ok = <-r.closeSignal:
+		case run := <-r.runs:
+			run()
+		}
 	}
 }

@@ -6,8 +6,8 @@ package simplepush
 
 import (
 	"fmt"
-	"io"
 	"math/rand"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -23,8 +23,9 @@ const (
 )
 
 var (
-	ErrMinTTL     = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
-	ErrEtcdStatus = fmt.Errorf("etcd returned unexpected health check result")
+	ErrMinTTL       = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+	ErrEtcdStatus   = fmt.Errorf("etcd returned unexpected health check result")
+	ErrRouterClosed = fmt.Errorf("Router closed")
 )
 
 type EtcdLocatorConf struct {
@@ -44,12 +45,6 @@ type EtcdLocatorConf struct {
 	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
 }
 
-// etcdFetch is an etcd contact list request.
-type etcdFetch struct {
-	replies chan []string
-	errors  chan error
-}
-
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
 	logger          *SimpleLogger
@@ -58,10 +53,12 @@ type EtcdLocator struct {
 	defaultTTL      time.Duration
 	serverList      []string
 	dir             string
-	authority       string
+	url             string
 	key             string
 	client          *etcd.Client
-	fetches         chan etcdFetch
+	contactsLock    sync.RWMutex
+	contacts        []string
+	contactsErr     error
 	isClosing       bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
@@ -71,7 +68,6 @@ type EtcdLocator struct {
 
 func NewEtcdLocator() *EtcdLocator {
 	return &EtcdLocator{
-		fetches:     make(chan etcdFetch),
 		closeSignal: make(chan bool),
 	}
 }
@@ -113,15 +109,16 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.serverList = conf.Servers
 	l.dir = path.Clean(conf.Dir)
 
-	// The authority of the current server is used as the etcd key.
-	router := app.Router()
-	if hostname := router.hostname; hostname != "" {
-		if router.scheme == "https" && router.port != 443 || router.scheme == "http" && router.port != 80 {
-			l.authority = fmt.Sprintf("%s:%d", hostname, router.port)
-		} else {
-			l.authority = hostname
-		}
-		l.key = path.Join(l.dir, l.authority)
+	// Use the hostname and port of the current server as the etcd key.
+	l.url = app.Router().URL()
+	uri, err := url.ParseRequestURI(l.url)
+	if err != nil {
+		l.logger.Alert("etcd", "Error parsing router URL", LogFields{
+			"error": err.Error(), "url": l.url})
+		return err
+	}
+	if len(uri.Host) > 0 {
+		l.key = path.Join(l.dir, uri.Host)
 	}
 
 	if l.logger.ShouldLog(INFO) {
@@ -141,6 +138,11 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	}
 	if err = l.Register(); err != nil {
 		l.logger.Alert("etcd", "Could not register with etcd",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	if l.contacts, err = l.getServers(); err != nil {
+		l.logger.Alert("etcd", "Could not fetch contact list",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -172,28 +174,12 @@ func (l *EtcdLocator) Close() (err error) {
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
-	replies, errors := make(chan []string, 1), make(chan error, 1)
-	l.fetches <- etcdFetch{replies, errors}
-	select {
-	case <-l.closeSignal:
-		return nil, io.EOF
-
-	case contacts = <-replies:
-	case err = <-errors:
-	}
-	if err != nil {
-		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Could not get server list",
-				LogFields{"error": err.Error()})
-		}
-		return nil, err
-	}
-	for length := len(contacts); length > 0; {
-		index := rand.Intn(length)
-		length--
-		contacts[index], contacts[length] = contacts[length], contacts[index]
-	}
-	return contacts, nil
+	l.contactsLock.RLock()
+	contacts = make([]string, len(l.contacts))
+	copy(contacts, l.contacts)
+	err = l.contactsErr
+	l.contactsLock.RUnlock()
+	return
 }
 
 // Status determines whether etcd can respond to requests. Implements
@@ -223,14 +209,14 @@ func (l *EtcdLocator) Status() (ok bool, err error) {
 // Register registers the server to the etcd cluster.
 func (l *EtcdLocator) Register() (err error) {
 	if l.logger.ShouldLog(INFO) {
-		l.logger.Info("etcd", "Registering host", LogFields{"host": l.authority})
+		l.logger.Info("etcd", "Registering host", LogFields{
+			"key": l.key, "url": l.url})
 	}
-	if _, err = l.client.Set(l.key, l.authority, uint64(l.defaultTTL/time.Second)); err != nil {
+	if _, err = l.client.Set(l.key, l.url,
+		uint64(l.defaultTTL/time.Second)); err != nil {
 		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Failed to register",
-				LogFields{"error": err.Error(),
-					"key":  l.key,
-					"host": l.authority})
+			l.logger.Error("etcd", "Failed to register", LogFields{
+				"error": err.Error(), "key": l.key, "url": l.url})
 		}
 		return err
 	}
@@ -241,16 +227,25 @@ func (l *EtcdLocator) Register() (err error) {
 func (l *EtcdLocator) getServers() (servers []string, err error) {
 	nodeList, err := l.client.Get(l.dir, false, false)
 	if err != nil {
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Could not get server list",
+				LogFields{"error": err.Error()})
+		}
 		return nil, err
 	}
-	reply := make([]string, 0, len(nodeList.Node.Nodes))
+	servers = make([]string, 0, len(nodeList.Node.Nodes))
 	for _, node := range nodeList.Node.Nodes {
-		if node.Value == l.authority || node.Value == "" {
+		if node.Value == l.url || node.Value == "" {
 			continue
 		}
-		reply = append(reply, node.Value)
+		servers = append(servers, node.Value)
 	}
-	return reply, nil
+	for length := len(servers); length > 0; {
+		i := rand.Intn(length)
+		length--
+		servers[i], servers[length] = servers[length], servers[i]
+	}
+	return servers, nil
 }
 
 // refreshLoop periodically re-registers the current node with etcd.
@@ -269,37 +264,21 @@ func (l *EtcdLocator) registerLoop() {
 	ticker.Stop()
 }
 
-// fetchLoop polls etcd for new nodes and responds to requests for contacts.
+// fetchLoop polls etcd for new nodes.
 func (l *EtcdLocator) fetchLoop() {
 	defer l.closeWait.Done()
-	var (
-		lastReply   []string
-		lastRefresh time.Time
-	)
+	fetchTick := time.NewTicker(l.refreshInterval)
 	for ok := true; ok; {
 		select {
 		case ok = <-l.closeSignal:
-		case <-time.After(l.refreshInterval):
-			if reply, err := l.getServers(); err == nil {
-				lastReply = reply
-				lastRefresh = time.Now()
-			}
-
-		case fetch := <-l.fetches:
-			if !lastRefresh.IsZero() && time.Now().Sub(lastRefresh) < l.refreshInterval {
-				fetch.replies <- lastReply
-				break
-			}
-			reply, err := l.getServers()
-			if err != nil {
-				fetch.errors <- err
-				break
-			}
-			lastReply = reply
-			lastRefresh = time.Now()
-			fetch.replies <- reply
+		case <-fetchTick.C:
+			contacts, err := l.getServers()
+			l.contactsLock.Lock()
+			l.contacts, l.contactsErr = contacts, err
+			l.contactsLock.Unlock()
 		}
 	}
+	fetchTick.Stop()
 }
 
 func init() {
