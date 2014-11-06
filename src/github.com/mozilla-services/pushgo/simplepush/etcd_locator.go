@@ -6,8 +6,6 @@ package simplepush
 
 import (
 	"fmt"
-	"io"
-	"math/rand"
 	"path"
 	"strings"
 	"sync"
@@ -23,8 +21,9 @@ const (
 )
 
 var (
-	ErrMinTTL     = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
-	ErrEtcdStatus = fmt.Errorf("etcd returned unexpected health check result")
+	ErrMinTTL       = fmt.Errorf("Default TTL too short; want at least %s", minTTL)
+	ErrEtcdStatus   = fmt.Errorf("etcd returned unexpected health check result")
+	ErrRouterClosed = fmt.Errorf("Router closed")
 )
 
 type EtcdLocatorConf struct {
@@ -44,12 +43,6 @@ type EtcdLocatorConf struct {
 	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
 }
 
-// etcdFetch is an etcd contact list request.
-type etcdFetch struct {
-	replies chan []string
-	errors  chan error
-}
-
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
 	logger          *SimpleLogger
@@ -61,7 +54,9 @@ type EtcdLocator struct {
 	authority       string
 	key             string
 	client          *etcd.Client
-	fetches         chan etcdFetch
+	contactsLock    sync.RWMutex
+	contacts        []string
+	contactsErr     error
 	isClosing       bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
@@ -71,7 +66,6 @@ type EtcdLocator struct {
 
 func NewEtcdLocator() *EtcdLocator {
 	return &EtcdLocator{
-		fetches:     make(chan etcdFetch),
 		closeSignal: make(chan bool),
 	}
 }
@@ -144,6 +138,11 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 			LogFields{"error": err.Error()})
 		return err
 	}
+	if l.contacts, err = l.getServers(); err != nil {
+		l.logger.Alert("etcd", "Could not fetch contact list",
+			LogFields{"error": err.Error()})
+		return err
+	}
 
 	l.closeWait.Add(2)
 	go l.registerLoop()
@@ -172,28 +171,10 @@ func (l *EtcdLocator) Close() (err error) {
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
-	replies, errors := make(chan []string, 1), make(chan error, 1)
-	l.fetches <- etcdFetch{replies, errors}
-	select {
-	case <-l.closeSignal:
-		return nil, io.EOF
-
-	case contacts = <-replies:
-	case err = <-errors:
-	}
-	if err != nil {
-		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Could not get server list",
-				LogFields{"error": err.Error()})
-		}
-		return nil, err
-	}
-	for length := len(contacts); length > 0; {
-		index := rand.Intn(length)
-		length--
-		contacts[index], contacts[length] = contacts[length], contacts[index]
-	}
-	return contacts, nil
+	l.contactsLock.RLock()
+	contacts, err = l.contacts, l.contactsErr
+	l.contactsLock.RUnlock()
+	return
 }
 
 // Status determines whether etcd can respond to requests. Implements
@@ -241,16 +222,20 @@ func (l *EtcdLocator) Register() (err error) {
 func (l *EtcdLocator) getServers() (servers []string, err error) {
 	nodeList, err := l.client.Get(l.dir, false, false)
 	if err != nil {
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Could not get server list",
+				LogFields{"error": err.Error()})
+		}
 		return nil, err
 	}
-	reply := make([]string, 0, len(nodeList.Node.Nodes))
+	servers = make([]string, 0, len(nodeList.Node.Nodes))
 	for _, node := range nodeList.Node.Nodes {
 		if node.Value == l.authority || node.Value == "" {
 			continue
 		}
-		reply = append(reply, node.Value)
+		servers = append(servers, node.Value)
 	}
-	return reply, nil
+	return servers, nil
 }
 
 // refreshLoop periodically re-registers the current node with etcd.
@@ -269,37 +254,21 @@ func (l *EtcdLocator) registerLoop() {
 	ticker.Stop()
 }
 
-// fetchLoop polls etcd for new nodes and responds to requests for contacts.
+// fetchLoop polls etcd for new nodes.
 func (l *EtcdLocator) fetchLoop() {
 	defer l.closeWait.Done()
-	var (
-		lastReply   []string
-		lastRefresh time.Time
-	)
+	fetchTick := time.NewTicker(l.refreshInterval)
 	for ok := true; ok; {
 		select {
 		case ok = <-l.closeSignal:
-		case <-time.After(l.refreshInterval):
-			if reply, err := l.getServers(); err == nil {
-				lastReply = reply
-				lastRefresh = time.Now()
-			}
-
-		case fetch := <-l.fetches:
-			if !lastRefresh.IsZero() && time.Now().Sub(lastRefresh) < l.refreshInterval {
-				fetch.replies <- lastReply
-				break
-			}
-			reply, err := l.getServers()
-			if err != nil {
-				fetch.errors <- err
-				break
-			}
-			lastReply = reply
-			lastRefresh = time.Now()
-			fetch.replies <- reply
+		case <-fetchTick.C:
+			contacts, err := l.getServers()
+			l.contactsLock.Lock()
+			l.contacts, l.contactsErr = contacts, err
+			l.contactsLock.Unlock()
 		}
 	}
+	fetchTick.Stop()
 }
 
 func init() {

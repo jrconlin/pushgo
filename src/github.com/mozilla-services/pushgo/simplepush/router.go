@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
@@ -302,7 +303,8 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
-	for _, contact := range contacts {
+	for _, i := range rand.Perm(len(contacts)) {
+		contact := contacts[i]
 		url, err := r.formatURL(contact, uaid)
 		if err != nil {
 			if r.logger.ShouldLog(ERROR) {
