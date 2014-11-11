@@ -17,6 +17,7 @@
 package simplepush
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -322,9 +323,15 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	url string, segment *capn.Segment, logID string) {
 
-	reader, writer := io.Pipe()
-	go pipeTo(writer, segment)
-	req, err := http.NewRequest("PUT", url, reader)
+	body := new(bytes.Buffer)
+	if _, err := segment.WriteTo(body); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Error buffering router request",
+				LogFields{"rid": logID, "error": err.Error()})
+		}
+		return
+	}
+	req, err := http.NewRequest("PUT", url, body)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Router request failed",
@@ -374,11 +381,4 @@ func (r *Router) runLoop() {
 			run()
 		}
 	}
-}
-
-func pipeTo(dest io.WriteCloser, src io.WriterTo) (err error) {
-	if _, err = src.WriteTo(dest); err != nil {
-		return
-	}
-	return dest.Close()
 }
