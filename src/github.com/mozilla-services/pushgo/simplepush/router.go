@@ -17,7 +17,6 @@
 package simplepush
 
 import (
-	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -28,84 +27,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	capn "github.com/glycerine/go-capnproto"
 )
 
 var (
 	ErrNoLocator       = errors.New("Discovery service not configured")
 	ErrInvalidRoutable = errors.New("Malformed routable")
 )
-
-var routablePool = sync.Pool{New: func() interface{} {
-	return new(Routable)
-}}
-
-func NewRoutable() *Routable {
-	return routablePool.Get().(*Routable)
-}
-
-// Routable is the update payload sent to each contact.
-type Routable struct {
-	ChannelID string
-	Version   int64
-	Time      time.Time
-	bytes     []byte
-}
-
-func (r *Routable) MarshalText() ([]byte, error) {
-	version := strconv.FormatInt(r.Version, 10)
-	sentAt := r.Time.Format(time.RFC3339Nano)
-	size := len(r.ChannelID) + len(version) + len(sentAt) + 2
-	if cap(r.bytes) < size {
-		r.bytes = make([]byte, size)
-	} else {
-		r.bytes = r.bytes[:size]
-	}
-	offset := copy(r.bytes, r.ChannelID)
-	r.bytes[offset] = '\n'
-	offset++
-	offset += copy(r.bytes[offset:], version)
-	r.bytes[offset] = '\n'
-	offset++
-	offset += copy(r.bytes[offset:], sentAt)
-	return r.bytes, nil
-}
-
-func (r *Routable) UnmarshalText(data []byte) (err error) {
-	if len(data) == 0 {
-		return ErrInvalidRoutable
-	}
-	if cap(data) > cap(r.bytes) {
-		r.bytes = data
-	}
-	startVersion := bytes.IndexByte(data, '\n')
-	if startVersion < 0 {
-		return ErrInvalidRoutable
-	}
-	r.ChannelID = string(data[:startVersion])
-	startVersion++
-	startTime := bytes.IndexByte(data[startVersion:], '\n')
-	if startTime < 0 {
-		return ErrInvalidRoutable
-	}
-	version := string(data[startVersion : startVersion+startTime])
-	startTime++
-	if r.Version, err = strconv.ParseInt(version, 10, 64); err != nil {
-		return err
-	}
-	sentAt := string(data[startVersion+startTime:])
-	if r.Time, err = time.Parse(time.RFC3339Nano, sentAt); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *Routable) Recycle() {
-	if cap(r.bytes) > 1024 {
-		return
-	}
-	r.bytes = r.bytes[:0]
-	routablePool.Put(r)
-}
 
 type RouterConfig struct {
 	// BucketSize is the maximum number of contacts to probe at once. The router
@@ -283,20 +212,11 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 		r.metrics.Increment("router.broadcast.error")
 		return ErrNoLocator
 	}
-	routable := NewRoutable()
-	defer routable.Recycle()
-	routable.ChannelID = chid
-	routable.Version = version
-	routable.Time = sentAt
-	msg, err := routable.MarshalText()
-	if err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("router", "Could not compose routing message",
-				LogFields{"rid": logID, "error": err.Error()})
-		}
-		r.metrics.Increment("router.broadcast.error")
-		return err
-	}
+	segment := capn.NewBuffer(nil)
+	routable := NewRootRoutable(segment)
+	routable.SetChannelID(chid)
+	routable.SetVersion(version)
+	routable.SetTime(sentAt.UnixNano())
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
@@ -318,7 +238,7 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 			"version": strconv.FormatInt(version, 10),
 			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
 	}
-	ok, err := r.notifyAll(cancelSignal, contacts, uaid, msg, logID)
+	ok, err := r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
 	endTime := time.Now()
 	if err != nil {
 		if r.logger.ShouldLog(WARNING) {
@@ -345,14 +265,15 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
 func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string,
-	uaid string, msg []byte, logID string) (ok bool, err error) {
+	uaid string, segment *capn.Segment, logID string) (ok bool, err error) {
 
 	for fromIndex := 0; !ok && fromIndex < len(contacts); {
 		toIndex := fromIndex + r.bucketSize
 		if toIndex > len(contacts) {
 			toIndex = len(contacts)
 		}
-		if ok, err = r.notifyBucket(cancelSignal, contacts[fromIndex:toIndex], uaid, msg, logID); err != nil {
+		if ok, err = r.notifyBucket(cancelSignal, contacts[fromIndex:toIndex],
+			uaid, segment, logID); err != nil {
 			break
 		}
 		fromIndex += toIndex
@@ -363,15 +284,16 @@ func (r *Router) notifyAll(cancelSignal <-chan bool, contacts []string,
 // notifyBucket routes a message to all contacts in a bucket, returning as soon
 // as a contact accepts the update.
 func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
-	uaid string, msg []byte, logID string) (ok bool, err error) {
+	uaid string, segment *capn.Segment, logID string) (ok bool, err error) {
 
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	timeout := r.ctimeout + r.rwtimeout + 1*time.Second
+	timer := time.NewTimer(timeout)
 	for _, contact := range contacts {
 		url := fmt.Sprintf("%s/route/%s", contact, uaid)
 		notify := func() {
-			r.notifyContact(result, stop, url, msg, logID)
+			r.notifyContact(result, stop, url, segment, logID)
 		}
 		select {
 		case <-r.closeSignal:
@@ -380,27 +302,29 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 			return false, nil
 		case ok = <-result:
 			return ok, nil
-		case <-time.After(timeout):
+		case <-timer.C:
 			return false, nil
 		case r.runs <- notify:
 		}
 	}
+	timer.Reset(timeout)
 	select {
 	case ok = <-r.closeSignal:
 		return false, io.EOF
 	case <-cancelSignal:
 	case ok = <-result:
-	case <-time.After(timeout):
+	case <-timer.C:
 	}
 	return ok, nil
 }
 
 // notifyContact routes a message to a single contact.
 func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
-	url string, msg []byte, logID string) {
+	url string, segment *capn.Segment, logID string) {
 
-	body := bytes.NewReader(msg)
-	req, err := http.NewRequest("PUT", url, body)
+	reader, writer := io.Pipe()
+	go pipeTo(writer, segment)
+	req, err := http.NewRequest("PUT", url, reader)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Router request failed",
@@ -437,7 +361,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	select {
 	case <-stop:
 	case result <- true:
-	case <-time.After(r.ctimeout + r.rwtimeout + 1*time.Second):
+	case <-time.After(1 * time.Second):
 	}
 }
 
@@ -450,4 +374,11 @@ func (r *Router) runLoop() {
 			run()
 		}
 	}
+}
+
+func pipeTo(dest io.WriteCloser, src io.WriterTo) (err error) {
+	if _, err = src.WriteTo(dest); err != nil {
+		return
+	}
+	return dest.Close()
 }

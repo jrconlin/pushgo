@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"net"
-	"runtime/debug"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -338,17 +338,22 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 
 func (self *Serv) RequestFlush(client *Client, channel string, version int64) (err error) {
 	defer func(client *Client, version int64) {
-		r := recover()
-		if r != nil {
+		if r := recover(); r != nil {
+			var uaid string
+			if client != nil {
+				uaid = client.UAID
+			}
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
 				self.logger.Error("server",
 					"requestFlush failed",
-					LogFields{"error": r.(error).Error(),
-						"uaid": client.UAID})
+					LogFields{"error": err.Error(),
+						"uaid":  uaid,
+						"stack": string(stack[:n])})
 			}
-			debug.PrintStack()
-			if client != nil && self.prop != nil {
-				self.prop.Send(client.UAID, version)
+			if len(uaid) > 0 && self.prop != nil {
+				self.prop.Send(uaid, version)
 			}
 		}
 		return

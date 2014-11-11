@@ -156,6 +156,7 @@ max_connections = 60000
 type = "static"
 
 [metrics]
+store_snapshots = false
 prefix = "docker"
 statsd_name = "pushgo"
 statsd_server = ":8125"

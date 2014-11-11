@@ -7,7 +7,7 @@ package simplepush
 import (
 	"encoding/json"
 	"fmt"
-	"runtime/debug"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -247,8 +247,12 @@ func (self *Worker) Run(sock *PushWS) {
 	defer func(sock *PushWS) {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Unhandled connection error",
-					LogFields{"rid": self.id, "error": ErrStr(err)})
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
+				self.logger.Error("worker", "Unhandled connection error", LogFields{
+					"rid":   self.id,
+					"error": ErrStr(err),
+					"stack": string(stack[:n])})
 			}
 			sock.Socket.Close()
 		}
@@ -271,10 +275,11 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	// register the UAID
 	defer func() {
 		if r := recover(); r != nil {
-			debug.PrintStack()
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Unhandled error",
-					LogFields{"rid": self.id, "cmd": "hello", "error": ErrStr(err)})
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
+				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.id,
+					"cmd": "hello", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
 		}
@@ -420,10 +425,11 @@ func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (er
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Unhandled error",
-					LogFields{"rid": self.id, "cmd": "ack", "error": ErrStr(err)})
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
+				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.id,
+					"cmd": "ack", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
-			debug.PrintStack()
 			err = ErrInvalidParams
 		}
 	}()
@@ -467,10 +473,11 @@ func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Unhandled error",
-					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
+				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.id,
+					"cmd": "register", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
-			debug.PrintStack()
 			err = ErrInvalidParams
 		}
 	}()
@@ -526,8 +533,10 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Unhandled error",
-					LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
+				stack := make([]byte, 1<<16)
+				n := runtime.Stack(stack, false)
+				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.id,
+					"cmd": "register", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
 		}

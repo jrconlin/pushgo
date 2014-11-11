@@ -46,7 +46,7 @@ memcached: libmemcached-1.0.18
 $(TARGET):
 	rm -f $(TARGET)
 	@echo "Building simplepush"
-	GOPATH=$(GOPATH) go build -o $(TARGET) $(PACKAGE)
+	GOPATH=$(GOPATH) go build -tags libmemcached -o $(TARGET) $(PACKAGE)
 
 test:
 	GOPATH=$(GOPATH) go test $(addprefix $(PACKAGE)/,id simplepush)

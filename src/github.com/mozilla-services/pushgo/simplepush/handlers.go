@@ -8,13 +8,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"runtime"
 	"strconv"
 	"time"
 
 	"code.google.com/p/go.net/websocket"
+	capn "github.com/glycerine/go-capnproto"
 	"github.com/gorilla/mux"
 )
 
@@ -373,17 +373,13 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// We know of this one.
-	if req.ContentLength < 1 {
-		if logWarning {
-			self.logger.Warn("router", "Routed update contained no body",
-				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
-		}
-		http.Error(resp, "Missing body", http.StatusNotAcceptable)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	}
-	var request *Routable
-	body, err := ioutil.ReadAll(http.MaxBytesReader(resp, req.Body, 1024))
+	var (
+		r        Routable
+		chid     string
+		timeNano int64
+		sentAt   time.Time
+	)
+	segment, err := capn.ReadFromStream(req.Body, nil)
 	if err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not read update body",
@@ -391,16 +387,9 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		}
 		goto invalidBody
 	}
-	request = NewRoutable()
-	defer request.Recycle()
-	if err = request.UnmarshalText(body); err != nil {
-		if logWarning {
-			self.logger.Warn("router", "Invalid update body",
-				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
-		}
-		goto invalidBody
-	}
-	if len(request.ChannelID) == 0 {
+	r = ReadRootRoutable(segment)
+	chid = r.ChannelID()
+	if len(chid) == 0 {
 		if logWarning {
 			self.logger.Warn("router", "Missing channel ID",
 				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
@@ -409,7 +398,9 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 	// routed data is already in storage.
 	self.metrics.Increment("updates.routed.incoming")
-	if err = self.app.Server().Update(request.ChannelID, uaid, request.Version, request.Time); err != nil {
+	timeNano = r.Time()
+	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
+	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt); err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
