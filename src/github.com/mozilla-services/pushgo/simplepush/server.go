@@ -345,12 +345,12 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 			}
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
-				stack = stack[:runtime.Stack(stack, false)]
+				n := runtime.Stack(stack, false)
 				self.logger.Error("server",
 					"requestFlush failed",
 					LogFields{"error": err.Error(),
 						"uaid":  uaid,
-						"stack": string(stack)})
+						"stack": string(stack[:n])})
 			}
 			if len(uaid) > 0 && self.prop != nil {
 				self.prop.Send(uaid, version)
