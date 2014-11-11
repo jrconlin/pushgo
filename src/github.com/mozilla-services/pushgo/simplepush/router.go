@@ -439,7 +439,7 @@ func (r *Router) notifyContact(result chan<- bool, stop <-chan struct{},
 	select {
 	case <-stop:
 	case result <- true:
-	case <-time.After(r.ctimeout + r.rwtimeout + 1*time.Second):
+	case <-time.After(1 * time.Second):
 	}
 }
 
