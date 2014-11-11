@@ -368,6 +368,7 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 	result, stop := make(chan bool), make(chan struct{})
 	defer close(stop)
 	timeout := r.ctimeout + r.rwtimeout + 1*time.Second
+	timer := time.NewTimer(timeout)
 	for _, contact := range contacts {
 		url := fmt.Sprintf("%s/route/%s", contact, uaid)
 		notify := func() {
@@ -380,17 +381,18 @@ func (r *Router) notifyBucket(cancelSignal <-chan bool, contacts []string,
 			return false, nil
 		case ok = <-result:
 			return ok, nil
-		case <-time.After(timeout):
+		case <-timer.C:
 			return false, nil
 		case r.runs <- notify:
 		}
 	}
+	timer.Reset(timeout)
 	select {
 	case ok = <-r.closeSignal:
 		return false, io.EOF
 	case <-cancelSignal:
 	case ok = <-result:
-	case <-time.After(timeout):
+	case <-timer.C:
 	}
 	return ok, nil
 }
