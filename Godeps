@@ -13,6 +13,8 @@ github.com/bbangert/toml a2063ce2e5cf10e54ab24075840593d60f59b611
 github.com/bradfitz/gomemcache/memcache 4faecadd4f695d18a912ba110120fcfd460aca98
 github.com/cactus/go-statsd-client/statsd f934df28073069859c4b8a26e837e0fc55e79d37
 github.com/coreos/go-etcd/etcd 23142f6773a676cc2cae8dd0cb90b2ea761c853f
+github.com/glycerine/go-capnproto d56197a98e456a3b42c3bd9b25ff40a1a8f31420
+github.com/glycerine/rbtree cd7940bb26b149ce2faf398e7c63fff01aa7b394
 github.com/gorilla/context 14f550f51af52180c2eefed15e5fd18d63c0a64a
 github.com/gorilla/mux 4b8fbc56f3b2400a7c7ea3dba9b3539787c486b6
 github.com/ianoshen/gomc 7b9f299f292d3dd707fe2749d966968c9bf1e128
