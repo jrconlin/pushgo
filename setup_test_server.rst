@@ -9,7 +9,7 @@ AWS Setup
 =========
 
 1) Choose CoreOS Stable, latest version as AMI
-2) Create instance XXX or better
+2) Create instance t2.micro or better
 3) Configure Security Group ports to allow from any IP
     - 8090/tcp  Push Websocket
     - 8081/tcp  Push Endpoint
@@ -18,7 +18,7 @@ AWS Setup
     - 8000/tcp  Grafana
     - 8080/tcp  Kibana
     - 9200/tcp  ElasticSearch
-4) Start with chosen SSH keypair
+4) Start with your preferred SSH keypair
 
 Machine Setup
 =============
