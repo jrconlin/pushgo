@@ -147,3 +147,23 @@ Setup Kibana
 Kibana is already setup! Just go to
 http://PUBLIC_IP:8080/index.html#/dashboard/file/logstash.json and watch the
 data flow in.
+
+Run a basic Push Test Client
+============================
+
+Want to make sure this actually works? Sure!
+
+In your ssh session, pull the test client:
+
+.. code-block:: bash
+
+    $ docker pull bbangert/simpletest:dev
+
+Now start it up:
+
+.. code-block:: bash
+
+    $ docker run -t -i bbangert/simpletest:dev $PUBLIC_IP 8090 1 ping $STATSD_IP:8125
+
+You should now be able to see some data in the dashboards, and after 5 seconds
+see some output on the ssh session that 1 client is connected.
