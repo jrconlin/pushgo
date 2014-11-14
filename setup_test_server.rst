@@ -167,3 +167,6 @@ Now start it up:
 
 You should now be able to see some data in the dashboards, and after 5 seconds
 see some output on the ssh session that 1 client is connected.
+
+You can hit Ctrl-C to stop it, and move on with such a happy happy life as
+things work so wonderfully (Yea computers!).
