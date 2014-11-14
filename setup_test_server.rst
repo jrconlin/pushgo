@@ -8,18 +8,28 @@ single AWS t2.micro can run all the following without too much whimpering.
 AWS Setup
 =========
 
-1) Choose CoreOS Stable, latest version as AMI
-2) Create instance t2.micro or better
-3) Configure Security Group ports to allow from any IP
-    - 8090/tcp  Push Websocket
-    - 8081/tcp  Push Endpoint
-    - 8086/tcp  InfluxDB REST Endpoint
-    - 8083/tcp  InfluxDB Admin UI
-    - 8000/tcp  Grafana
-    - 8080/tcp  Kibana
-    - 9200/tcp  ElasticSearch
-4) Start with your preferred SSH keypair
-5) Note the public IP address of the instance created, you will need it below as ``PUBLIC_IP``
+1) Login to the AWS console and go to EC2
+2) Choose Instances under the Instances drop-down on the left sidebar
+3) Click the big blue Launch Instance button
+4) Select Community AMI's on the right side, then search for "coreos stable"
+   in the search box and hit enter
+5) Choose the highest CoreOS stable version you see (usually right under 367).
+   Make sure to choose the one that has virtualization type of 'hvm'.
+6) Choose instance t2.micro or better
+7) Click "Review & Launch"
+8) Click "Edit Security Groups", then Add Rule's to allow the following ports
+   access from Anywhere:
+
+   - 8090/tcp  Push Websocket
+   - 8081/tcp  Push Endpoint
+   - 8086/tcp  InfluxDB REST Endpoint
+   - 8083/tcp  InfluxDB Admin UI
+   - 8000/tcp  Grafana
+   - 8080/tcp  Kibana
+   - 9200/tcp  ElasticSearch
+9) Click "Review & Launch"
+10) Click "Launch", and choose your preferred SSH keypair
+11) Note the public IP address of the instance created, you will need it below as ``PUBLIC_IP``
 
 Machine Setup
 =============
