@@ -19,16 +19,18 @@ AWS Setup
     - 8080/tcp  Kibana
     - 9200/tcp  ElasticSearch
 4) Start with your preferred SSH keypair
+5) Note the public IP address of the instance created, you will need it below as ``PUBLIC_IP``
 
 Machine Setup
 =============
 
-SSH into the instance, where you will be running the remaining commands.
+SSH into the AWS instance, then setup the environment var ``PUBLIC_IP`` to refer to the AWS instances public IP:
 
-Setup the environment var ``PUBLIC_IP`` to refer to the AWS instances public IP:
-PUBLIC_IP=AWS_PUBLIC_IP_HERE
+.. code-block:: bash
 
-Copy/Paste the following, these instructions will pull the appropriate containers and run them:
+    $ PUBLIC_IP=AWS_PUBLIC_IP_HERE
+
+Copy/Paste the following into your ssh session to the instance, these instructions will pull the appropriate containers and run them:
 
 .. code-block:: text
 
