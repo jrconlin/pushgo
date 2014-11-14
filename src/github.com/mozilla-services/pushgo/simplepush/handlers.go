@@ -298,7 +298,6 @@ sendUpdate:
 		return
 	}
 	resp.Header().Set("Content-Type", "application/json")
-	resp.Write([]byte("{}"))
 	self.metrics.Increment("updates.appserver.received")
 
 	// Ping the appropriate server
@@ -307,7 +306,6 @@ sendUpdate:
 	if !clientConnected {
 		// TODO: Move PropPinger here? otherwise it's connected?
 		self.metrics.Increment("updates.routed.outgoing")
-		// resp.Header().Set("Content-Type", "application/json")
 		var cancelSignal <-chan bool
 		if cn, ok := resp.(http.CloseNotifier); ok {
 			cancelSignal = cn.CloseNotify()
@@ -317,13 +315,12 @@ sendUpdate:
 			resp.Write([]byte("false"))
 			return
 		}
-		// resp.Write([]byte("{}"))
-		// return
 	}
 
 	if clientConnected {
 		self.app.Server().RequestFlush(client, chid, int64(version))
 	}
+	resp.Write([]byte("{}"))
 	return
 }
 
