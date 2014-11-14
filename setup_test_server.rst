@@ -30,7 +30,7 @@ PUBLIC_IP=AWS_PUBLIC_IP_HERE
 
 Copy/Paste the following, these instructions will pull the appropriate containers and run them:
 
-..
+.. code-block: text
 
 
     docker pull minimum2scp/es-kibana:latest
