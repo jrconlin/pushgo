@@ -297,7 +297,6 @@ sendUpdate:
 		http.Error(resp, "Could not update channel version", status)
 		return
 	}
-	self.metrics.Increment("updates.appserver.received")
 
 	// Ping the appropriate server
 	// Is this ours or should we punt to a different server?
@@ -319,6 +318,7 @@ sendUpdate:
 	if clientConnected {
 		self.app.Server().RequestFlush(client, chid, int64(version))
 	}
+	self.metrics.Increment("updates.appserver.received")
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
 	return
