@@ -249,24 +249,6 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	// Is this ours or should we punt to a different server?
-	if !self.app.ClientExists(uaid) {
-		// TODO: Move PropPinger here? otherwise it's connected?
-		self.metrics.Increment("updates.routed.outgoing")
-		resp.Header().Set("Content-Type", "application/json")
-		var cancelSignal <-chan bool
-		if cn, ok := resp.(http.CloseNotifier); ok {
-			cancelSignal = cn.CloseNotify()
-		}
-		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
-			resp.WriteHeader(http.StatusNotFound)
-			resp.Write([]byte("false"))
-			return
-		}
-		resp.Write([]byte("{}"))
-		return
-	}
-
 	// At this point we should have a valid endpoint in the URL
 	self.metrics.Increment("updates.appserver.incoming")
 
@@ -315,13 +297,30 @@ sendUpdate:
 		http.Error(resp, "Could not update channel version", status)
 		return
 	}
-	resp.Header().Set("Content-Type", "application/json")
-	resp.Write([]byte("{}"))
-	self.metrics.Increment("updates.appserver.received")
+
 	// Ping the appropriate server
-	if client, ok := self.app.GetClient(uaid); ok {
+	// Is this ours or should we punt to a different server?
+	client, clientConnected := self.app.GetClient(uaid)
+	if !clientConnected {
+		// TODO: Move PropPinger here? otherwise it's connected?
+		self.metrics.Increment("updates.routed.outgoing")
+		var cancelSignal <-chan bool
+		if cn, ok := resp.(http.CloseNotifier); ok {
+			cancelSignal = cn.CloseNotify()
+		}
+		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
+			resp.WriteHeader(http.StatusNotFound)
+			resp.Write([]byte("false"))
+			return
+		}
+	}
+
+	if clientConnected {
 		self.app.Server().RequestFlush(client, chid, int64(version))
 	}
+	self.metrics.Increment("updates.appserver.received")
+	resp.Header().Set("Content-Type", "application/json")
+	resp.Write([]byte("{}"))
 	return
 }
 
