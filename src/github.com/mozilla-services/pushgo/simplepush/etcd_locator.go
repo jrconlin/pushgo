@@ -228,6 +228,7 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, retries int, lastResp ht
 			Message:   fmt.Sprintf("Error connecting to etcd after %d retries", retries),
 		}
 	}
+	l.metrics.Increment("locator.etcd.retry.request")
 	if lastResp.StatusCode >= 500 {
 		retryDelay := time.Duration(int64(l.retryDelay) * (1 << uint(retries-1)))
 		if retryDelay > l.maxDelay {
@@ -240,7 +241,6 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, retries int, lastResp ht
 		case <-time.After(delay):
 		}
 	}
-	l.metrics.Increment("locator.etcd.retry.request")
 	return nil
 }
 
