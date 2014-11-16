@@ -419,5 +419,6 @@ func (l *EtcdLocator) fetchLoop() {
 }
 
 func init() {
+	rand.Seed(time.Now().UnixNano())
 	AvailableLocators["etcd"] = func() HasConfigStruct { return NewEtcdLocator() }
 }
