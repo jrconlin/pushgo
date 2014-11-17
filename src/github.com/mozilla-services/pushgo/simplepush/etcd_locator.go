@@ -410,7 +410,12 @@ func (l *EtcdLocator) fetchLoop() {
 		case t := <-fetchTick.C:
 			contacts, err := l.getServers()
 			l.contactsLock.Lock()
-			l.contacts, l.contactsErr = contacts, err
+			if err != nil {
+				l.contactsErr = err
+			} else {
+				l.contacts = contacts
+				l.contactsErr = nil
+			}
 			l.lastFetch = t
 			l.contactsLock.Unlock()
 		}
