@@ -317,8 +317,9 @@ sendUpdate:
 
 	if clientConnected {
 		self.app.Server().RequestFlush(client, chid, int64(version))
+		self.metrics.Increment("updates.appserver.received")
 	}
-	self.metrics.Increment("updates.appserver.received")
+
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write([]byte("{}"))
 	return
