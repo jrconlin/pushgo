@@ -22,11 +22,6 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-var (
-	// Server is a test Simple Push server.
-	Server = &TestServer{LogLevel: 0}
-)
-
 const (
 	// AllowDupes indicates whether the Simple Push server under test allows
 	// duplicate registrations. TODO: Expose as an Application flag.
@@ -35,10 +30,32 @@ const (
 	// validId is a placeholder device ID used by typeTest.
 	validId = "57954545-c1bc-4fc4-9c1a-cd186d861336"
 
+	// existingId is a device ID for which TestStore.Exists() always
+	// returns true.
+	existingId = "64300cbe-9bc3-4763-9203-d56b3f81a895"
+
+	// missingId is a device ID for which TestStore.Exists() always
+	// returns false.
+	missingId = "f7514cdd-6d01-4322-8e00-69b609763edf"
+
 	// NilId simulates a nil packet ID, as Conn.Send() will close the connection
 	// with an error if Request.Id() == nil. getId() converts NilId to nil.
 	NilId client.PacketType = -1
 )
+
+// Server is a test Simple Push server.
+var Server = &TestServer{
+	LogLevel: 0,
+	NewStore: func() ConfigStore {
+		return &TestStore{
+			ConfigStore: &NoStore{},
+			Ids: map[string]bool{
+				missingId:  false,
+				existingId: true,
+			},
+		}
+	},
+}
 
 func getId(r client.Request) (id interface{}) {
 	if id = r.Id(); id == NilId {
@@ -237,50 +254,12 @@ func isValidEndpoint(endpoint string) bool {
 	return strings.HasPrefix(uri.Path, "/update/")
 }
 
-// Sending channel IDs with an unknown device ID should return a new device ID.
-func TestHeloReset(t *testing.T) {
-	origin, err := Server.Origin()
-	if err != nil {
-		t.Fatalf("Error initializing test server: %#v", err)
-	}
-	deviceId, err := id.Generate()
-	if err != nil {
-		t.Fatalf("Error generating device ID: %#v", err)
-	}
-	conn, err := client.DialOrigin(origin)
-	if err != nil {
-		t.Fatalf("Error dialing origin: %#v", err)
-	}
-	defer conn.Close()
-	defer conn.Purge()
-	request := CustomHelo{
-		MessageType: "hello",
-		DeviceId:    deviceId,
-		ChannelIds:  []interface{}{"1", "2"},
-		replies:     make(chan client.Reply),
-		errors:      make(chan error),
-	}
-	reply, err := conn.WriteRequest(request)
-	if err != nil {
-		t.Fatalf("Error writing handshake request: %#v", err)
-	}
-	helo, ok := reply.(client.ServerHelo)
-	if !ok {
-		t.Fatalf("Type assertion failed for reply: %#v", reply)
-	}
-	if helo.StatusCode != 200 {
-		t.Errorf("Unexpected status code: got %#v; want 200", reply.Status())
-	}
-	if helo.DeviceId == deviceId {
-		t.Errorf("Want new device ID; got %#v", deviceId)
-	}
-}
-
 type typeTest struct {
 	name        string
 	messageType interface{}
 	deviceId    interface{}
 	statusCode  int
+	shouldReset bool
 }
 
 func (t typeTest) Run() error {
@@ -317,8 +296,10 @@ func (t typeTest) Run() error {
 		deviceId, _ := t.deviceId.(string)
 		if len(deviceId) == 0 && !id.Valid(helo.DeviceId) {
 			return fmt.Errorf("On test %v, got invalid device ID: %#v", t.name, helo.DeviceId)
-		} else if deviceId != helo.DeviceId {
+		} else if !t.shouldReset && deviceId != helo.DeviceId {
 			return fmt.Errorf("On test %v, mismatched device ID: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
+		} else if t.shouldReset && deviceId == helo.DeviceId {
+			return fmt.Errorf("On test %v, want new device ID; got %#v", t.name, deviceId)
 		}
 		return nil
 	}
@@ -337,62 +318,66 @@ func (t typeTest) Run() error {
 }
 
 var typeTests = []typeTest{
-	{"invalid device ID", "hello", "invalid_uaid", 503},
+	{"invalid device ID", "hello", "invalid_uaid", 503, true},
 
 	// Leading and trailing whitespace.
-	{"whitespace in device ID", "hello", " fooey barrey ", 503},
-	{"whitespace in message type", " fooey barrey ", validId, 401},
+	{"whitespace in device ID", "hello", " fooey barrey ", 503, true},
+	{"whitespace in message type", " fooey barrey ", validId, 401, true},
 
 	// Special characters.
-	{"special characters in device ID", "hello", `!@#$%^&*()-+`, 503},
-	{"special characters in message type", `!@#$%^&*()-+`, validId, 401},
+	{"special characters in device ID", "hello", `!@#$%^&*()-+`, 503, true},
+	{"special characters in message type", `!@#$%^&*()-+`, validId, 401, true},
 
 	// Integer strings.
-	{`device ID = "0"`, "hello", "0", 503},
-	{`message type = "0"`, "0", validId, 401},
-	{`device ID = "1"`, "hello", "1", 503},
-	{`message type = "1"`, "1", validId, 401},
+	{`device ID = "0"`, "hello", "0", 503, true},
+	{`message type = "0"`, "0", validId, 401, true},
+	{`device ID = "1"`, "hello", "1", 503, true},
+	{`message type = "1"`, "1", validId, 401, true},
 
 	// Integers.
-	{"device ID = 0", "hello", 0, 401},
-	{"message type = 0", 0, validId, 401},
-	{"device ID = 1", "hello", 1, 401},
-	{"message type = 1", 1, validId, 401},
+	{"device ID = 0", "hello", 0, 401, true},
+	{"message type = 0", 0, validId, 401, true},
+	{"device ID = 1", "hello", 1, 401, true},
+	{"message type = 1", 1, validId, 401, true},
 
 	// Negative integers.
-	{"negative integer string as device ID", "hello", "-66000", 503},
-	{"negative integer string as message type", "-66000", validId, 401},
-	{"negative integer as device ID", "hello", -66000, 401},
-	{"negative integer as message type", -66000, validId, 401},
+	{"negative integer string as device ID", "hello", "-66000", 503, true},
+	{"negative integer string as message type", "-66000", validId, 401, true},
+	{"negative integer as device ID", "hello", -66000, 401, true},
+	{"negative integer as message type", -66000, validId, 401, true},
 
 	// "True", "true", "False", and "false".
-	{`device ID = "True"`, "hello", "True", 503},
-	{`message type = "True"`, "True", validId, 401},
-	{`device ID = "true"`, "hello", "true", 503},
-	{`message type = "true"`, "true", validId, 401},
-	{`device ID = "False"`, "hello", "False", 503},
-	{`message type = "False"`, "False", validId, 401},
-	{`device ID = "false"`, "hello", "false", 503},
-	{`message type = "false"`, "false", validId, 401},
+	{`device ID = "True"`, "hello", "True", 503, true},
+	{`message type = "True"`, "True", validId, 401, true},
+	{`device ID = "true"`, "hello", "true", 503, true},
+	{`message type = "true"`, "true", validId, 401, true},
+	{`device ID = "False"`, "hello", "False", 503, true},
+	{`message type = "False"`, "False", validId, 401, true},
+	{`device ID = "false"`, "hello", "false", 503, true},
+	{`message type = "false"`, "false", validId, 401, true},
 
 	// `true` and `false`.
-	{"device ID = true", "hello", true, 401},
-	{"message type = true", true, validId, 401},
-	{"device ID = false", "hello", false, 401},
-	{"message type = false", false, validId, 401},
+	{"device ID = true", "hello", true, 401, true},
+	{"message type = true", true, validId, 401, true},
+	{"device ID = false", "hello", false, 401, true},
+	{"message type = false", false, validId, 401, true},
 
 	// "None", "null", "nil", and `nil`.
-	{`device ID = "None"`, "hello", "None", 503},
-	{`message type = "None"`, "None", validId, 401},
-	{`device ID = "null"`, "hello", "null", 503},
-	{`message type = "null"`, "null", validId, 401},
-	{`device ID = "nil"`, "hello", "nil", 503},
-	{`message type = "nil"`, "nil", validId, 401},
-	{"message type = nil", NilId, validId, 401},
+	{`device ID = "None"`, "hello", "None", 503, true},
+	{`message type = "None"`, "None", validId, 401, true},
+	{`device ID = "null"`, "hello", "null", 503, true},
+	{`message type = "null"`, "null", validId, 401, true},
+	{`device ID = "nil"`, "hello", "nil", 503, true},
+	{`message type = "nil"`, "nil", validId, 401, true},
+	{"message type = nil", NilId, validId, 401, true},
 
 	// Quoted strings.
-	{"quoted string as device ID", "hello", `"foo bar"`, 503},
-	{"quoted string as message type", `"foo bar"`, validId, 401},
+	{"quoted string as device ID", "hello", `"foo bar"`, 503, true},
+	{"quoted string as message type", `"foo bar"`, validId, 401, true},
+
+	{"existing device ID with channels", "hello", existingId, 200, false},
+	// Sending channel IDs with an unknown device ID should return a new device ID.
+	{"unknown device ID with channels", "hello", missingId, 200, true},
 }
 
 func TestMessageTypes(t *testing.T) {
@@ -400,10 +385,10 @@ func TestMessageTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	if err = (typeTest{"long device ID", "hello", longId, 503}).Run(); err != nil {
+	if err = (typeTest{"long device ID", "hello", longId, 503, true}).Run(); err != nil {
 		t.Error(err)
 	}
-	if err = (typeTest{"long message type", longId, validId, 401}).Run(); err != nil {
+	if err = (typeTest{"long message type", longId, validId, 401, true}).Run(); err != nil {
 		t.Error(err)
 	}
 	for _, test := range typeTests {
