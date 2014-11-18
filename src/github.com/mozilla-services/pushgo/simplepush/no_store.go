@@ -17,6 +17,7 @@ type NoStoreConfig struct {
 type NoStore struct {
 	logger      *SimpleLogger
 	maxChannels int
+	UAIDExists  bool
 }
 
 func (*NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
@@ -46,10 +47,13 @@ func (n *NoStore) Init(app *Application, config interface{}) error {
 	return nil
 }
 
-func (n *NoStore) MaxChannels() int                                     { return n.maxChannels }
-func (*NoStore) Close() error                                           { return nil }
-func (*NoStore) Status() (bool, error)                                  { return true, nil }
-func (*NoStore) Exists(string) bool                                     { return false }
+func (n *NoStore) MaxChannels() int    { return n.maxChannels }
+func (*NoStore) Close() error          { return nil }
+func (*NoStore) Status() (bool, error) { return true, nil }
+
+// return true in this case so that registration doesn't cause a new
+// UAID to be issued
+func (r *NoStore) Exists(string) bool                                   { return r.UAIDExists }
 func (*NoStore) Register(string, string, int64) error                   { return nil }
 func (*NoStore) Update(string, int64) error                             { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }

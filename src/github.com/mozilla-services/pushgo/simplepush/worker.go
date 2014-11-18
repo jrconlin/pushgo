@@ -366,7 +366,7 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 		sock.Store.DropAll(request.DeviceID)
 		goto registerDevice
 	}
-	if forceReset = !sock.Store.Exists(sock.Uaid) && len(request.ChannelIDs) > 0; forceReset {
+	if forceReset = !sock.Store.Exists(request.DeviceID) && len(request.ChannelIDs) > 0; forceReset {
 		if logWarning {
 			self.logger.Warn("worker", "Channel IDs specified in handshake for nonexistent UAID",
 				LogFields{"rid": self.id, "uaid": request.DeviceID})

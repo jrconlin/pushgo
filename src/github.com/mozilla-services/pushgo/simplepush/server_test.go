@@ -20,6 +20,7 @@ type TestServer struct {
 	app          *Application
 	lastErr      error
 	isStopping   bool
+	UAIDExists   bool
 }
 
 func (t *TestServer) fatal(err error) {
@@ -78,6 +79,7 @@ func (t *TestServer) load() (*Application, error) {
 		},
 		PluginStore: func(app *Application) (HasConfigStruct, error) {
 			store := new(NoStore)
+			store.UAIDExists = t.UAIDExists
 			storeConf := store.ConfigStruct().(*NoStoreConfig)
 			if err := store.Init(app, storeConf); err != nil {
 				return nil, fmt.Errorf("Error initializing store: %#v", err)

@@ -24,7 +24,11 @@ import (
 
 var (
 	// Server is a test Simple Push server.
-	Server = &TestServer{LogLevel: 0}
+	Server = &TestServer{LogLevel: 0,
+		// Old style, report that an unregistered UAID doesn't exist
+		// For Loop, unregistered UAIDs are always reported as existing,
+		// preventing a new UAID from being issued.
+		UAIDExists: false}
 )
 
 const (

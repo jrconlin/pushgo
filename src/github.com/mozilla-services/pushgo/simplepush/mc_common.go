@@ -5,7 +5,6 @@
 package simplepush
 
 import (
-	"bytes"
 	"encoding/base64"
 )
 
@@ -47,7 +46,7 @@ type ChannelRecord struct {
 }
 
 // ChannelIDs is a list of decoded channel IDs.
-type ChannelIDs [][]byte
+type ChannelIDs []string
 
 // Len returns the length of the channel ID slice. Implements
 // sort.Interface.Len().
@@ -64,14 +63,14 @@ func (l ChannelIDs) Swap(i, j int) {
 // Less indicates whether one channel ID slice lexicographically precedes the
 // other. Implements sort.Interface.Less().
 func (l ChannelIDs) Less(i, j int) bool {
-	return bytes.Compare(l[i], l[j]) < 0
+	return l[i] < l[j]
 }
 
 // IndexOf returns the location of a channel ID slice in the slice of channel
 // IDs, or -1 if the ID isn't present in the containing slice.
-func (l ChannelIDs) IndexOf(val []byte) int {
+func (l ChannelIDs) IndexOf(val string) int {
 	for index, v := range l {
-		if bytes.Equal(v, val) {
+		if v == val {
 			return index
 		}
 	}
@@ -80,7 +79,7 @@ func (l ChannelIDs) IndexOf(val []byte) int {
 
 // Returns a new slice with the string at position pos removed or
 // an equivalent slice if the pos is not in the bounds of the slice
-func remove(list [][]byte, pos int) (res [][]byte) {
+func remove(list []string, pos int) (res []string) {
 	if pos < 0 || pos == len(list) {
 		return list
 	}
