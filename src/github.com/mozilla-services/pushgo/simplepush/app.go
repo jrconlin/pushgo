@@ -33,6 +33,7 @@ type ApplicationConfig struct {
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
+	AlwaysRoute        bool   `toml:"always_route" env:"always_route"`
 }
 
 type Application struct {
@@ -54,6 +55,7 @@ type Application struct {
 	balancer           Balancer
 	handlers           *Handler
 	propping           PropPinger
+	AlwaysRoute        bool
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -64,6 +66,7 @@ func (a *Application) ConfigStruct() interface{} {
 		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
+		AlwaysRoute:        false,
 	}
 }
 
@@ -107,6 +110,7 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	a.clientMux = new(sync.RWMutex)
 	count := int32(0)
 	a.clientCount = &count
+	a.AlwaysRoute = conf.AlwaysRoute
 	return
 }
 

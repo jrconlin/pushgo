@@ -425,14 +425,16 @@ sendUpdate:
 	// Ping the appropriate server
 	// Is this ours or should we punt to a different server?
 	client, clientConnected := h.app.GetClient(uaid)
-	if !clientConnected {
+	if h.app.AlwaysRoute || !clientConnected {
 		// TODO: Move PropPinger here? otherwise it's connected?
 		h.metrics.Increment("updates.routed.outgoing")
 		var cancelSignal <-chan bool
 		if cn, ok := resp.(http.CloseNotifier); ok {
 			cancelSignal = cn.CloseNotify()
 		}
-		if err = h.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
+		err = h.router.Route(cancelSignal, uaid, chid, version,
+			time.Now().UTC(), requestID, data)
+		if err != nil && !clientConnected {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 			return
