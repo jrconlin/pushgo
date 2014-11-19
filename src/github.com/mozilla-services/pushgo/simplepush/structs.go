@@ -49,5 +49,24 @@ type PushWS struct {
 	Born    time.Time
 }
 
+func (ws *PushWS) Origin() string {
+	// protect against null pointers.
+	if ws == nil {
+		return "Unknown"
+	}
+	if ws.Socket == nil {
+		return "No Socket"
+	}
+	conf := ws.Socket.Config()
+	if conf == nil {
+		return "No Socket Config"
+	}
+	origin := conf.Origin
+	if origin == nil {
+		return "No Socket Origin"
+	}
+	return origin.String()
+}
+
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab
