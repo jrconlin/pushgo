@@ -116,7 +116,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 // CanStore indicates whether the specified number of channel registrations
 // are allowed per client. Implements Store.CanStore().
 func (s *GomemcStore) CanStore(channels int) bool {
-	return channels < s.maxChannels
+	return channels <= s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
