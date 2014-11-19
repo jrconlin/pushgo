@@ -39,6 +39,7 @@ type StatusReport struct {
 	Pinger           PluginStatus `json:"pinger"`
 	Locator          PluginStatus `json:"locator"`
 	Goroutines       int          `json:"goroutines"`
+	Version          string       `json:"version"`
 }
 
 type PluginStatus struct {
@@ -83,8 +84,8 @@ func (self *Handler) MetricsHandler(resp http.ResponseWriter, req *http.Request)
 // VIP response
 func (self *Handler) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
-	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d}`,
-		self.app.ClientCount()))
+	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d,"version":"%s"}`,
+		self.app.ClientCount(), VERSION))
 
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write(reply)
@@ -96,6 +97,7 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	status := StatusReport{
 		MaxClientConns:   self.app.Server().MaxClientConns(),
 		MaxEndpointConns: self.app.Server().MaxEndpointConns(),
+		Version:          VERSION,
 	}
 
 	status.Store.Healthy, status.Store.Error = self.store.Status()

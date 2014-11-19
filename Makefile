@@ -8,6 +8,11 @@ GOBIN = $(BIN)
 
 PLATFORM=$(shell uname)
 
+VERSION=$(shell git describe --tags --always HEAD 2>/dev/null)
+ifneq ($(strip $(VERSION)),)
+	LDFLAGS := -X $(PACKAGE)/simplepush.VERSION $(VERSION)
+endif
+
 # Setup commands and env vars if there is no system go linked into bin/go
 PATH := $(HERE)/bin:$(DEPS)/bin:$(PATH)
 
@@ -46,13 +51,13 @@ memcached: libmemcached-1.0.18
 $(TARGET):
 	rm -f $(TARGET)
 	@echo "Building simplepush"
-	GOPATH=$(GOPATH) go build -tags libmemcached -o $(TARGET) $(PACKAGE)
+	GOPATH=$(GOPATH) go build -ldflags "$(LDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
 test-memcached:
 	GOPATH=$(GOPATH) go test -tags gomemc_server_test $(addprefix $(PACKAGE)/,id simplepush)
 
 test:
-	GOPATH=$(GOPATH) go test $(addprefix $(PACKAGE)/,id simplepush)
+	GOPATH=$(GOPATH) go test -ldflags "$(LDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
 
 vet:
 	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id simplepush)
