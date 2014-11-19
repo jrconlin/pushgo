@@ -21,7 +21,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-const VERSION = "1.4"
+// The Simple Push server version, set by the linker.
+var VERSION string
 
 var (
 	ErrMissingOrigin = errors.New("Missing WebSocket origin")
