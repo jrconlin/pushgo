@@ -10,22 +10,20 @@ import (
 	"sync"
 )
 
+const (
+	// maxChannels is the maximum number of channels allowed in the opening
+	// handshake. Clients that specify more channels will receive a new device
+	// ID.
+	maxChannels = 500
+)
+
+func init() {
+	testExistsHooks = make(map[string]bool)
+}
+
 type ConfigStore interface {
 	HasConfigStruct
 	Store
-}
-
-type TestStore struct {
-	ConfigStore
-	Ids map[string]bool
-}
-
-func (s *TestStore) Exists(deviceId string) (ok bool) {
-	var hasId bool
-	if ok, hasId = s.Ids[deviceId]; hasId {
-		return
-	}
-	return s.ConfigStore.Exists(deviceId)
 }
 
 type TestServer struct {
@@ -35,7 +33,7 @@ type TestServer struct {
 	RouterAddr   string
 	LogLevel     int32
 	Contacts     []string
-	NewStore     func() ConfigStore
+	NewStore     func() (store ConfigStore, configStruct interface{}, err error)
 	app          *Application
 	lastErr      error
 	isStopping   bool
@@ -95,15 +93,21 @@ func (t *TestServer) load() (*Application, error) {
 			}
 			return metrics, nil
 		},
-		PluginStore: func(app *Application) (HasConfigStruct, error) {
-			var store ConfigStore
+		PluginStore: func(app *Application) (plugin HasConfigStruct, err error) {
+			var (
+				store        ConfigStore
+				configStruct interface{}
+			)
 			if t.NewStore != nil {
-				store = t.NewStore()
+				store, configStruct, err = t.NewStore()
 			} else {
 				store = new(NoStore)
+				configStruct = store.ConfigStruct()
 			}
-			storeConf := store.ConfigStruct()
-			if err := store.Init(app, storeConf); err != nil {
+			if err != nil {
+				return nil, fmt.Errorf("Error creating store: %#v", err)
+			}
+			if err = store.Init(app, configStruct); err != nil {
 				return nil, fmt.Errorf("Error initializing store: %#v", err)
 			}
 			return store, nil

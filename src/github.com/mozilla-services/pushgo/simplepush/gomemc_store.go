@@ -116,7 +116,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 // CanStore indicates whether the specified number of channel registrations
 // are allowed per client. Implements Store.CanStore().
 func (s *GomemcStore) CanStore(channels int) bool {
-	return channels < s.maxChannels
+	return channels <= s.maxChannels
 }
 
 // Close closes the connection pool and unblocks all pending operations with
@@ -186,6 +186,9 @@ func (s *GomemcStore) Status() (success bool, err error) {
 // Exists returns a Boolean indicating whether a device has previously
 // registered with the Simple Push server. Implements Store.Exists().
 func (s *GomemcStore) Exists(uaid string) bool {
+	if ok, hasID := hasExistsHook(uaid); hasID {
+		return ok
+	}
 	var err error
 	if !id.Valid(uaid) {
 		return false

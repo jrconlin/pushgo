@@ -70,8 +70,8 @@ func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorTe
 
 type caseTest struct {
 	CaseTestType
-	statusCode int
-	forceReset bool
+	statusCode  int
+	shouldReset bool
 }
 
 func (t caseTest) TestPing() error {
@@ -136,6 +136,8 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.CaseTestType, err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	channelId, err := id.Generate()
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
@@ -163,7 +165,7 @@ func (t caseTest) TestHelo() error {
 		if helo.StatusCode != t.statusCode {
 			return fmt.Errorf("On test %v, unexpected reply status: got %#v; want %#v", t.CaseTestType, helo.StatusCode, t.statusCode)
 		}
-		if t.forceReset {
+		if t.shouldReset {
 			if helo.DeviceId == deviceId {
 				return fmt.Errorf("On test %v, want new device ID; got %#v", t.CaseTestType, deviceId)
 			}
@@ -353,9 +355,9 @@ func TestPingCase(t *testing.T) {
 
 var heloTests = []caseTest{
 	caseTest{FieldTypeSpace, 401, false},
-	caseTest{FieldIdCap, 200, true},
-	caseTest{ValueTypeUpper, 200, true},
-	caseTest{ValueTypeCap, 200, true},
+	caseTest{FieldIdCap, 200, false},
+	caseTest{ValueTypeUpper, 200, false},
+	caseTest{ValueTypeCap, 200, false},
 	caseTest{ValueTypeEmpty, 401, false},
 }
 

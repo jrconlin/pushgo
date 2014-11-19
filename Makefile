@@ -48,6 +48,9 @@ $(TARGET):
 	@echo "Building simplepush"
 	GOPATH=$(GOPATH) go build -tags libmemcached -o $(TARGET) $(PACKAGE)
 
+test-memcached:
+	GOPATH=$(GOPATH) go test -tags gomemc_server_test $(addprefix $(PACKAGE)/,id simplepush)
+
 test:
 	GOPATH=$(GOPATH) go test $(addprefix $(PACKAGE)/,id simplepush)
 
