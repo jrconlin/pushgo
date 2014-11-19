@@ -1,4 +1,4 @@
-Simple Push Server in Go v1.0.0
+Simple Push Server in Go v1.4.0
 ===
 
 This server was created to support the [Mozilla Simple Push
@@ -10,41 +10,34 @@ approaches showed better overall performance, many showed worse. Your
 milage may vary.
 
 Please note: PushGo is not a reference implementation of the SimplePush
-protocol. It was created in order to support large numbers (1,000,000+ 
+protocol. It was created in order to support large numbers (1,000,000+
 simultaneously connected users) in a cost effective manner. As such, some
 features of the protocol are not present, (e.g. message retry, client state
 recording, closed channel responses for third party servers, etc.)
 
 ## System requirements.
 
-libmemcached 1.2 *note* remove older, system installed versions of
-libmemcached, or you're going to have a bad time.
+If you require offline storage (e.g. for mobile device usage), we
+currently recommend memcache storage.
 
-To build memcached from source:
+You will need to have Go 1.3 or higher installed on your system, and the
+GOROOT and PATH should be set appropriately for 'go' to be found.
 
-1. Install following: bzr, automake, flex, bison, libtool, cloog-ppl
-    * bison must be >= 2.5. You can pull the latest compy from
-      http://ftp.gnu.org/gnu/bison/
-2. $ wget
-https://launchpad.net/libmemcached/1.0/1.0.17/+download/libmemcached-1.0.17.tar.gz
-3. $ cd libmemcached-1.0.17
-    * $ configure --prefix=/usr
-    * $ make
-    * $ sudo make install
-
-## Installation
-To install this server:
+## Compiling
+To compile this server:
 
 1. extract this directory into target directory
-2. Run install.bash
-3. You'll need the following servers running:
-    * memcached
-    * Hekad (optional)
-4. Modify the config.ini
+2. Run: make
+3. Run: make simplepush
+4. Copy config.sample.toml to config.toml, and edit appropriately
 
-If you're not planning on doing development work (see previous notes
-about how this is beta), you may want to build the executable with
-''' go build simplepush.go '''
+Step 3 should be re-run whenever code has been changed and the server
+should be recompiled.
+
+If you would like to use an existing go on your system:
+1. Create a bin directory in the target directory
+2. Symlink your go binary into the bin directory you made
+3. Run the make commands starting at step 2 from above
 
 This will build "simplepush" as an executable.
 
@@ -60,6 +53,20 @@ proprietary function (which, unsurprisingly, works remarkably poorly
 with non-local networks). There is currently no "dashboard" for
 element management.
 
+This server currently uses one of two methods to connect to memcache.
+memcache_gomc uses the store_emcee.go file, and ties to libmemcache.
+This library provides a great deal of control over how the server
+communicates and uses memcache, however it does require compiling
+a local version of libmemcache, which can add difficulty. The
+alternate method "memcache_memcachego", uses store_gomemc.go, and uses
+a golang based memcache client. While fully functional, we've not
+tested this under full load.
+
+If you wish, you can prevent either of these libraries from being
+compiled into your executable by changing the extension for either of
+these files from ".go" to ".go.skip". This may help you get a demo
+server running quickly.
+
 ## Use
 That's neat and all, but what does this do?
 
@@ -74,8 +81,9 @@ explaining things.
 
 ## Testing
 
-To test this, or any other SimplePush server, please use [the stand
-alone test suite](https://github.com/jrconlin/simplepush_test).
+`make test` runs the accompanying smoke tests. You can also use the
+[stand alone test suite](https://github.com/mozilla-services/simplepush_test)
+to test this or any other SimplePush server.
 
 ## Docker
 
@@ -85,8 +93,8 @@ Install the container:
 
 * docker pull bbangert/pushgo:dev
 
-It's recommended that you create a config.ini as described above, and
+It's recommended that you create a config.toml as described above, and
 then volume mount it into the container. If you had your config as
-``config/pushgo.ini`` then you could run:
+``config/pushgo.toml`` then you could run:
 
-* docker run --rm -v `pwd`/config:/opt/config bbangert/pushgo:dev -config="/opt/config/push.ini"
+* docker run --rm -v `pwd`/config:/opt/config bbangert/pushgo:dev -config="/opt/config/pushgo.toml"

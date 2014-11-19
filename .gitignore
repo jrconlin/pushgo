@@ -1,2 +1,3 @@
 .hg
-/pkg/
+.godeps/
+bin/
