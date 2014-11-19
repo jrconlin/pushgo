@@ -12,8 +12,11 @@ import (
 
 var (
 	AvailableStores = make(AvailableExtensions)
-	testExistsLock  sync.RWMutex
+
+	// testExistsHooks contains device IDs for which Store.Exists() always
+	// returns the associated value.
 	testExistsHooks map[string]bool = nil
+	testExistsLock  sync.RWMutex
 )
 
 func hasExistsHook(id string) (ok bool, hasID bool) {

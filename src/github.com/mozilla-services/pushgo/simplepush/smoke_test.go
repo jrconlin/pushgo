@@ -13,13 +13,6 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-const (
-	// maxChannels is the maximum number of channels allowed in the opening
-	// handshake. Clients that specify more channels will receive a new device
-	// ID. Can be obtained via server.Application.Store().MaxChannels.
-	maxChannels = 500
-)
-
 var channelIds = id.MustGenerate(maxChannels + 1)
 
 func TestPush(t *testing.T) {

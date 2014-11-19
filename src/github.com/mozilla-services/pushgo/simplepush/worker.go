@@ -87,8 +87,6 @@ type PingReply struct {
 	Status int    `json:"status"`
 }
 
-const CHID_DEFAULT_MAX_NUM = 200
-
 func NewWorker(app *Application, id string) *Worker {
 	return &Worker{
 		app:          app,
