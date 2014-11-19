@@ -513,8 +513,8 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
 	}
-	if actualId == deviceId {
-		t.Errorf("Want new device ID; got %#v", deviceId)
+	if actualId != deviceId {
+		t.Errorf("Mismatched device ID: got %#v; want %#v", actualId, deviceId)
 	}
 	if !AllowDupes {
 		return
@@ -603,8 +603,8 @@ func (t idTest) TestHelo() error {
 		// The Simple Push server requires the channelIDs field to be present in
 		// the handshake, but does not validate its contents, since any queued
 		// messages will be immediately flushed to the client.
-		if helo.DeviceId == deviceId {
-			return fmt.Errorf("On handshake test %v, want new device ID; got %#v", t.name, deviceId)
+		if helo.DeviceId != deviceId {
+			return fmt.Errorf("On handshake test %v, mismatched device ID: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
 		}
 		return nil
 	}
