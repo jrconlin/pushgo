@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
 	capn "github.com/glycerine/go-capnproto"
 	"github.com/gorilla/mux"
+	"golang.org/x/net/websocket"
 )
 
 type HandlerConfig struct{}

@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
+	"golang.org/x/net/websocket"
 )
 
 // The Simple Push server version, set by the linker.
