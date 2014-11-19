@@ -287,7 +287,6 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-
 	deviceID, _, err := self.handshake(sock, request)
 	if err != nil {
 		return err

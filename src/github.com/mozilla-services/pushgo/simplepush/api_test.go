@@ -48,7 +48,11 @@ var Server = &TestServer{
 	LogLevel: 0,
 	NewStore: func() ConfigStore {
 		return &TestStore{
-			ConfigStore: &NoStore{},
+			// UAIDExists will return "false" for registration checks for UAID
+			// This is the default behavior for most storage engines.
+			// Note that Loop (which also uses NoStore) will return "true"
+			// for this, to prevent the UAID from being reassigned.
+			ConfigStore: &NoStore{UAIDExists: false},
 			Ids: map[string]bool{
 				missingId:  false,
 				existingId: true,
