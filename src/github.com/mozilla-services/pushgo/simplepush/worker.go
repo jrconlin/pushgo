@@ -655,7 +655,7 @@ func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err err
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
 			self.logger.Warn("dash", "Client sending too many pings",
-				LogFields{"rid": self.id, "source": sock.Socket.Config().Origin.String()})
+				LogFields{"rid": self.id, "source": sock.Origin()})
 		}
 		self.stopped = true
 		self.metrics.Increment("updates.client.too_many_pings")
