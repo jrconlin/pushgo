@@ -136,6 +136,8 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating device ID: %#v", t.CaseTestType, err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	channelId, err := id.Generate()
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)

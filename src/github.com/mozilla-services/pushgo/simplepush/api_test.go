@@ -500,6 +500,8 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
@@ -574,6 +576,8 @@ func (t idTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On handshake test %v, error generating device ID: %#v", t.name, err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	origin, err := Server.Origin()
 	if err != nil {
 		return fmt.Errorf("On handshake test %v, error initializing test server: %#v", t.name, err)

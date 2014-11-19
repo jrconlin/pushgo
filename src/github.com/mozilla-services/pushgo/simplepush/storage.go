@@ -6,10 +6,42 @@ package simplepush
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
-var AvailableStores = make(AvailableExtensions)
+var (
+	AvailableStores = make(AvailableExtensions)
+	testExistsLock  sync.RWMutex
+	testExistsHooks map[string]bool = nil
+)
+
+func hasExistsHook(id string) (ok bool, hasID bool) {
+	if testExistsHooks != nil {
+		testExistsLock.RLock()
+		ok, hasID = testExistsHooks[id]
+		testExistsLock.RUnlock()
+	}
+	return
+}
+
+func addExistsHook(id string, ok bool) {
+	if testExistsHooks == nil {
+		panic("addExistsHook: testExistsHooks not initialized")
+	}
+	testExistsLock.Lock()
+	testExistsHooks[id] = ok
+	testExistsLock.Unlock()
+}
+
+func removeExistsHook(id string) {
+	if testExistsHooks == nil {
+		panic("removeExistsHook: testExistsHooks not initialized")
+	}
+	testExistsLock.Lock()
+	delete(testExistsHooks, id)
+	testExistsLock.Unlock()
+}
 
 // StorageError represents an adapter storage error.
 type StorageError string

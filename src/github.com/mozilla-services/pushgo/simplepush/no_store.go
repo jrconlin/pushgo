@@ -53,7 +53,13 @@ func (*NoStore) Status() (bool, error)      { return true, nil }
 
 // return true in this case so that registration doesn't cause a new
 // UAID to be issued
-func (r *NoStore) Exists(string) bool                                   { return r.UAIDExists }
+func (n *NoStore) Exists(uaid string) bool {
+	if ok, hasID := hasExistsHook(uaid); hasID {
+		return ok
+	}
+	return n.UAIDExists
+}
+
 func (*NoStore) Register(string, string, int64) error                   { return nil }
 func (*NoStore) Update(string, int64) error                             { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }
