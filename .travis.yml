@@ -13,6 +13,7 @@ install:
 script:
 - make simplepush
 - make test
+- PUSHGO_TEST_STORAGE_MC_HOSTS=localhost:11211 make test-memcached
 before_deploy:
 - mkdir -p build/server
 - gzip simplepush
