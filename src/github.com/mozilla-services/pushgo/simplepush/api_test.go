@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	ws "code.google.com/p/go.net/websocket"
+	ws "golang.org/x/net/websocket"
 
 	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"

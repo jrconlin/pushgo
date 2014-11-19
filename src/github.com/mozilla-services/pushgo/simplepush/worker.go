@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
+	"golang.org/x/net/websocket"
 
 	"github.com/mozilla-services/pushgo/id"
 )
