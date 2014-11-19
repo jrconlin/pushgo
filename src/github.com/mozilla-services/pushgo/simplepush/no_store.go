@@ -10,46 +10,46 @@ import (
 	"time"
 )
 
-type NoStoreConfig struct {
-	MaxChannels int `toml:"max_channels" env:"max_channels"`
-}
-
 type NoStore struct {
-	logger      *SimpleLogger
-	maxChannels int
-	UAIDExists  bool
+	logger     *SimpleLogger
+	UAIDExists bool
 }
 
-func (*NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
+func (n *NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
+		if n.logger.ShouldLog(WARNING) {
+			n.logger.Warn("nostore", "Invalid Key, returning blank IDs",
+				LogFields{"key": key})
+		}
 		return "", "", false
 	}
 	return items[0], items[1], true
 }
 
-func (*NoStore) IDsToKey(suaid, schid string) (string, bool) {
+func (n *NoStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
+		if n.logger.ShouldLog(WARNING) {
+			n.logger.Warn("nostore", "Invalid IDs, returning blank Key",
+				LogFields{"uaid": suaid, "chid": schid})
+		}
 		return "", false
 	}
 	return fmt.Sprintf("%s.%s", suaid, schid), true
 }
 
 func (*NoStore) ConfigStruct() interface{} {
-	return &NoStoreConfig{
-		MaxChannels: 200,
-	}
+	return &NoStore{UAIDExists: true}
 }
 
 func (n *NoStore) Init(app *Application, config interface{}) error {
 	n.logger = app.Logger()
-	n.maxChannels = config.(*NoStoreConfig).MaxChannels
 	return nil
 }
 
-func (n *NoStore) MaxChannels() int    { return n.maxChannels }
-func (*NoStore) Close() error          { return nil }
-func (*NoStore) Status() (bool, error) { return true, nil }
+func (*NoStore) CanStore(channels int) bool { return true }
+func (*NoStore) Close() error               { return nil }
+func (*NoStore) Status() (bool, error)      { return true, nil }
 
 // return true in this case so that registration doesn't cause a new
 // UAID to be issued
@@ -65,5 +65,7 @@ func (*NoStore) PutPing(string, []byte) error                           { return
 func (*NoStore) DropPing(string) error                                  { return nil }
 
 func init() {
-	AvailableStores["none"] = func() HasConfigStruct { return new(NoStore) }
+	AvailableStores["none"] = func() HasConfigStruct {
+		return &NoStore{UAIDExists: true}
+	}
 }
