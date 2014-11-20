@@ -97,6 +97,7 @@ filter = 2
 #[logging]
 #type = "net"
 #format = "protobuf"
+#name = "myenv"
 # proto may be set to any protocol accepted by net.Dial or tls.Dial.
 #proto = "tcp"
 #addr = "heka_tcp_input:1234"
