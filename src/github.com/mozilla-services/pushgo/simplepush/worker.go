@@ -7,6 +7,7 @@ package simplepush
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"runtime"
 	"strconv"
 	"strings"
@@ -124,7 +125,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		}
 		if err = websocket.Message.Receive(socket, &raw); err != nil {
 			self.stopped = true
-			if self.logger.ShouldLog(ERROR) {
+			if err != io.EOF && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Websocket Error",
 					LogFields{"rid": self.id, "error": ErrStr(err)})
 			}
@@ -215,10 +216,6 @@ func (self *Worker) sniffer(sock *PushWS) {
 
 // standardize the error reporting back to the client.
 func (self *Worker) handleError(sock *PushWS, message []byte, err error) (ret error) {
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("worker", "Sending error",
-			LogFields{"rid": self.id, "error": ErrStr(err)})
-	}
 	reply := make(map[string]interface{})
 	if ret = json.Unmarshal(message, &reply); ret != nil {
 		return

@@ -83,7 +83,7 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 	} else {
 		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Panic("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -92,14 +92,16 @@ func (s *GomemcStore) Init(app *Application, config interface{}) (err error) {
 
 	serverList := new(mc.ServerList)
 	if err = serverList.SetServers(s.Hosts...); err != nil {
-		s.logger.Alert("gomemc", "Failed to set server host list", LogFields{"error": err.Error()})
+		s.logger.Panic("gomemc", "Failed to set server host list",
+			LogFields{"error": err.Error()})
 		return err
 	}
 
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Alert("gomemc", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Panic("gomemc", "Db.HandleTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 
@@ -168,15 +170,25 @@ func (s *GomemcStore) Status() (success bool, err error) {
 			Expiration: 6,
 		})
 	if err != nil {
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Error storing health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	raw, err := s.client.Get(key)
 	if err != nil {
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Error fetching health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	if !bytes.Equal(raw.Value, expected) {
-		s.logger.Error("gomemc", "Unexpected health check result",
-			LogFields{"expected": string(expected), "actual": string(raw.Value)})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Unexpected health check result",
+				LogFields{"expected": string(expected), "actual": string(raw.Value)})
+		}
 		return false, ErrMemcacheStatus
 	}
 	s.client.Delete(key)
@@ -194,8 +206,8 @@ func (s *GomemcStore) Exists(uaid string) bool {
 		return false
 	}
 	if _, err = s.client.Get(uaid); err != nil && err != mc.ErrCacheMiss {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Exists encountered unknown error",
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Exists encountered unknown error",
 				LogFields{"uaid": uaid, "error": err.Error()})
 		}
 	}
@@ -258,8 +270,8 @@ func (s *GomemcStore) storeUpdate(uaid, chid string, version int64) error {
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && err != mc.ErrCacheMiss {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Update error", LogFields{
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Update error", LogFields{
 				"pk":    key,
 				"error": err.Error(),
 			})
@@ -332,8 +344,8 @@ func (s *GomemcStore) storeUnregister(uaid, chid string) error {
 	}
 	channel, err := s.fetchRec(key)
 	if err != nil {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Could not delete Channel",
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Could not delete Channel",
 				LogFields{
 					"pk":    key,
 					"error": err.Error(),
@@ -343,8 +355,8 @@ func (s *GomemcStore) storeUnregister(uaid, chid string) error {
 	}
 	channel.State = StateDeleted
 	if err = s.storeRec(key, channel); err != nil {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Could not store deleted Channel",
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("gomemc", "Could not store deleted Channel",
 				LogFields{
 					"pk":    key,
 					"error": err.Error(),

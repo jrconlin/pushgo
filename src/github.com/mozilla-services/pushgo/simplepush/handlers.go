@@ -117,8 +117,10 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	resp.Header().Set("Content-Type", "application/json")
 	reply, err := json.Marshal(status)
 	if err != nil {
-		self.logger.Error("handler", "Could not generate status report",
-			LogFields{"error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("handler", "Could not generate status report",
+				LogFields{"error": err.Error()})
+		}
 		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
