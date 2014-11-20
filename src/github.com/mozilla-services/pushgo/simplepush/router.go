@@ -111,20 +111,20 @@ func (r *Router) Init(app *Application, config interface{}) (err error) {
 	r.metrics = app.Metrics()
 
 	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
-		r.logger.Alert("router", "Could not parse ctimeout",
+		r.logger.Panic("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
 		return err
 	}
 	if r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout); err != nil {
-		r.logger.Alert("router", "Could not parse rwtimeout",
+		r.logger.Panic("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
 		return err
 	}
 
 	if r.listener, err = conf.Listener.Listen(); err != nil {
-		r.logger.Alert("router", "Could not attach listener",
+		r.logger.Panic("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -219,8 +219,8 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 	routable.SetTime(sentAt.UnixNano())
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("router", "Could not query discovery service for contacts",
+		if r.logger.ShouldLog(CRITICAL) {
+			r.logger.Critical("router", "Could not query discovery service for contacts",
 				LogFields{"rid": logID, "error": err.Error()})
 		}
 		r.metrics.Increment("router.broadcast.error")
