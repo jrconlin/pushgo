@@ -240,6 +240,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.logger.Warn("update", "Could not resolve primary key",
 				LogFields{"rid": requestID, "pk": pk})
 		}
+		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -249,6 +250,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.logger.Warn("update", "Primary key missing channel ID",
 				LogFields{"rid": requestID, "uaid": uaid})
 		}
+		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
