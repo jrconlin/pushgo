@@ -123,8 +123,10 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	resp.Header().Set("Content-Type", "application/json")
 	reply, err := json.Marshal(status)
 	if err != nil {
-		self.logger.Error("handler", "Could not generate status report",
-			LogFields{"error": err.Error()})
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("handler", "Could not generate status report",
+				LogFields{"error": err.Error()})
+		}
 		resp.WriteHeader(http.StatusServiceUnavailable)
 		resp.Write([]byte("{}"))
 		return
@@ -249,6 +251,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.logger.Warn("update", "Could not resolve primary key",
 				LogFields{"rid": requestID, "pk": pk})
 		}
+		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -258,6 +261,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			self.logger.Warn("update", "Primary key missing channel ID",
 				LogFields{"rid": requestID, "uaid": uaid})
 		}
+		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		self.metrics.Increment("updates.appserver.invalid")
 		return
 	}

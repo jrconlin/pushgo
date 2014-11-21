@@ -157,9 +157,10 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	if len(conf.ElastiCacheConfigEndpoint) == 0 {
 		s.Hosts = conf.Driver.Hosts
 	} else {
-		endpoints, err := GetElastiCacheEndpointsTimeout(conf.ElastiCacheConfigEndpoint, 2*time.Second)
+		endpoints, err := GetElastiCacheEndpointsTimeout(
+			conf.ElastiCacheConfigEndpoint, 2*time.Second)
 		if err != nil {
-			s.logger.Alert("storage", "Failed to retrieve ElastiCache nodes",
+			s.logger.Panic("storage", "Failed to retrieve ElastiCache nodes",
 				LogFields{"error": err.Error()})
 			return err
 		}
@@ -170,18 +171,21 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	s.PingPrefix = conf.Db.PingPrefix
 
 	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
-		s.logger.Alert("emcee", "Db.HandleTimeout must be a valid duration", LogFields{"error": err.Error()})
+		s.logger.Panic("emcee", "Db.HandleTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 
 	// The send and receive timeouts are expressed in microseconds.
 	var recvTimeout, sendTimeout time.Duration
 	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
-		s.logger.Alert("emcee", "Driver.RecvTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Panic("emcee", "Driver.RecvTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
-		s.logger.Alert("emcee", "Driver.SendTimeout must be a microsecond duration", LogFields{"error": err.Error()})
+		s.logger.Panic("emcee", "Driver.SendTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
@@ -190,7 +194,8 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// `poll(2)` accepts a millisecond timeout.
 	var pollTimeout time.Duration
 	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
-		s.logger.Alert("emcee", "Driver.PollTimeout must be a millisecond duration", LogFields{"error": err.Error()})
+		s.logger.Panic("emcee", "Driver.PollTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
@@ -198,7 +203,8 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	// The memcached retry timeout is expressed in seconds.
 	var retryTimeout time.Duration
 	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
-		s.logger.Alert("emcee", "Driver.RetryTimeout must be a second duration", LogFields{"error": err.Error()})
+		s.logger.Panic("emcee", "Driver.RetryTimeout must be a valid duration",
+			LogFields{"error": err.Error()})
 		return err
 	}
 	s.retryTimeout = uint64(retryTimeout / time.Second)
@@ -270,15 +276,25 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	}
 	defer s.releaseWithout(client, &err)
 	if err = client.Set(key, expected, 6*time.Second); err != nil {
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Error storing health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	var actual string
 	if err = client.Get(key, &actual); err != nil {
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Error fetching health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	if expected != actual {
-		s.logger.Error("emcee", "Unexpected health check result",
-			LogFields{"expected": expected, "actual": actual})
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Unexpected health check result", LogFields{
+				"key": key, "expected": expected, "actual": actual})
+		}
 		return false, ErrMemcacheStatus
 	}
 	client.Delete(key, 0)
@@ -296,8 +312,8 @@ func (s *EmceeStore) Exists(uaid string) bool {
 		return false
 	}
 	if _, err = s.fetchAppIDArray(uaid); err != nil && !isMissing(err) {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("emcee", "Exists encountered unknown error",
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Exists encountered unknown error",
 				LogFields{"error": err.Error()})
 		}
 	}
@@ -361,8 +377,8 @@ func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("emcee", "Update error", LogFields{
+		if s.logger.ShouldLog(ERROR) {
+			s.logger.Error("emcee", "Update error", LogFields{
 				"pk":    key,
 				"error": err.Error(),
 			})
@@ -371,7 +387,11 @@ func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
 	}
 	if cRec != nil {
 		if s.logger.ShouldLog(DEBUG) {
-			s.logger.Debug("emcee", "Replacing record", LogFields{"pk": key, "uaid": string(uaid), "chid": string(chid), "version": fmt.Sprintf("%d", version)})
+			s.logger.Debug("emcee", "Replacing record", LogFields{
+				"pk":      key,
+				"uaid":    uaid,
+				"chid":    chid,
+				"version": fmt.Sprintf("%d", version)})
 		}
 		if cRec.State != StateDeleted {
 			newRecord := &ChannelRecord{

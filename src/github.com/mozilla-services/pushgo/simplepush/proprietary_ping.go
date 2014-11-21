@@ -199,13 +199,13 @@ func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.dryRun = conf.DryRun
 
 	if r.apiKey = conf.APIKey; len(r.apiKey) == 0 {
-		r.logger.Alert("gcmping", "Missing GCM API key", nil)
+		r.logger.Panic("gcmping", "Missing GCM API key", nil)
 		return ConfigurationErr
 	}
 
 	ttl, err := time.ParseDuration(conf.TTL)
 	if err != nil {
-		r.logger.Alert("gcmping", "Could not parse TTL",
+		r.logger.Panic("gcmping", "Could not parse TTL",
 			LogFields{"error": err.Error(), "ttl": conf.TTL})
 		return err
 	}
@@ -228,9 +228,11 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 		return err
 	}
 	if len(ping.RegID) == 0 {
-		r.logger.Error("gcmping",
-			"No user registration ID present. Cannot send message",
-			nil)
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("gcmping",
+				"No user registration ID present. Cannot send message",
+				nil)
+		}
 		return ConfigurationErr
 	}
 	request := &GCMRequest{
@@ -250,8 +252,8 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 		return err
 	}
 	if err = r.store.PutPing(uaid, requestData); err != nil {
-		if r.logger.ShouldLog(WARNING) {
-			r.logger.Warn("gcmping", "Could not store connect",
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("gcmping", "Could not store connect",
 				LogFields{"error": err.Error()})
 		}
 		return err

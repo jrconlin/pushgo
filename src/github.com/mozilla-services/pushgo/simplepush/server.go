@@ -113,13 +113,13 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.hostname = app.Hostname()
 
 	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
-		self.logger.Alert("server", "Could not parse push endpoint template",
+		self.logger.Panic("server", "Could not parse push endpoint template",
 			LogFields{"error": err.Error()})
 		return err
 	}
 
 	if self.clientLn, err = conf.Client.Listen(); err != nil {
-		self.logger.Alert("server", "Could not attach WebSocket listener",
+		self.logger.Panic("server", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -134,7 +134,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.maxClientConns = conf.Client.MaxConns
 
 	if self.endpointLn, err = conf.Endpoint.Listen(); err != nil {
-		self.logger.Alert("server", "Could not attach update listener",
+		self.logger.Panic("server", "Could not attach update listener",
 			LogFields{"error": err.Error()})
 		return err
 	}

@@ -62,6 +62,7 @@ func (t *TestServer) load() (*Application, error) {
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
 			appConf := app.ConfigStruct().(*ApplicationConfig)
+			appConf.TokenKey = "" // Disable endpoint encryption.
 			if err := app.Init(app, appConf); err != nil {
 				return nil, fmt.Errorf("Error initializing application: %#v", err)
 			}
