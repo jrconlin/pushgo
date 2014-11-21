@@ -50,7 +50,7 @@ type Application struct {
 	pushLongPongs      bool
 	tokenKey           []byte
 	log                *SimpleLogger
-	metrics            *Metrics
+	metrics            Statistician
 	clients            map[string]*Client
 	clientMux          *sync.RWMutex
 	clientCount        *int32
@@ -235,7 +235,7 @@ func (a *Application) Store() Store {
 	return a.store
 }
 
-func (a *Application) Metrics() *Metrics {
+func (a *Application) Metrics() Statistician {
 	return a.metrics
 }
 

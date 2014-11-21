@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/mozilla-services/heka/client"
@@ -494,6 +495,35 @@ func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	defer h.logResponse(writer, req, requestID, receivedAt)
 
 	h.Handler.ServeHTTP(writer, req)
+}
+
+// TestLogger is used by the go test functions.
+
+type TestLogger struct {
+	filter LogLevel
+	t      *testing.T
+}
+
+func (r *TestLogger) Init(app *Application, config interface{}) (err error) {
+	return nil
+}
+
+func (r *TestLogger) ShouldLog(level LogLevel) bool {
+	return level <= r.filter
+}
+func (r *TestLogger) SetFilter(level LogLevel) {
+	r.filter = level
+}
+
+func (r *TestLogger) ConfigStruct() interface{} {
+	return struct{}{}
+}
+
+func (r *TestLogger) Close() error { return nil }
+
+func (r *TestLogger) Log(level LogLevel, mType, payload string, fields LogFields) (err error) {
+	r.t.Logf("[% 8s] %s:%s %+v", levelNames[level], mType, payload, fields)
+	return nil
 }
 
 // LogWriter implements the io.Writer interface for log messages. Defined for

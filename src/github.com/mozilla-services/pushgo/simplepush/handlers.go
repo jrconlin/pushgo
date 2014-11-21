@@ -18,16 +18,19 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-type HandlerConfig struct{}
+type HandlerConfig struct {
+	MaxDataLen int `json:"max_data_len" env:"max_data_len"`
+}
 
 type Handler struct {
-	app      *Application
-	logger   *SimpleLogger
-	store    Store
-	router   *Router
-	metrics  *Metrics
-	tokenKey []byte
-	propping PropPinger
+	app        *Application
+	logger     *SimpleLogger
+	store      Store
+	router     *Router
+	metrics    Statistician
+	tokenKey   []byte
+	propping   PropPinger
+	maxDataLen int
 }
 
 type StatusReport struct {
@@ -48,7 +51,9 @@ type PluginStatus struct {
 }
 
 func (self *Handler) ConfigStruct() interface{} {
-	return &HandlerConfig{}
+	return &HandlerConfig{
+		MaxDataLen: 200,
+	}
 }
 
 func (self *Handler) Init(app *Application, config interface{}) error {
@@ -59,6 +64,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.router = app.Router()
 	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
+	self.maxDataLen = config.(*HandlerConfig).MaxDataLen
 	return nil
 }
 
@@ -183,6 +189,11 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	} else {
 		version = time.Now().UTC().Unix()
+	}
+
+	data := req.FormValue("data")
+	if len(data) > self.maxDataLen {
+		data = data[:self.maxDataLen]
 	}
 
 	var pk string
@@ -310,7 +321,7 @@ sendUpdate:
 		if cn, ok := resp.(http.CloseNotifier); ok {
 			cancelSignal = cn.CloseNotify()
 		}
-		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
+		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 			return
@@ -318,7 +329,7 @@ sendUpdate:
 	}
 
 	if clientConnected {
-		self.app.Server().RequestFlush(client, chid, int64(version))
+		self.app.Server().RequestFlush(client, chid, int64(version), data)
 		self.metrics.Increment("updates.appserver.received")
 	}
 
@@ -402,7 +413,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	self.metrics.Increment("updates.routed.incoming")
 	timeNano = r.Time()
 	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
-	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt); err != nil {
+	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt, r.Data()); err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})

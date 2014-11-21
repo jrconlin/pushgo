@@ -20,7 +20,12 @@ import (
 //    -- Workers
 //      these write back to the websocket.
 
-type Worker struct {
+type Worker interface {
+	Run(*PushWS)
+	Flush(*PushWS, int64, string, int64, string) error
+}
+
+type WorkerWS struct {
 	app          *Application
 	logger       *SimpleLogger
 	id           string
@@ -28,7 +33,7 @@ type Worker struct {
 	stopped      bool
 	lastPing     time.Time
 	pingInt      time.Duration
-	metrics      *Metrics
+	metrics      Statistician
 	helloTimeout time.Duration
 }
 
@@ -87,8 +92,8 @@ type PingReply struct {
 	Status int    `json:"status"`
 }
 
-func NewWorker(app *Application, id string) *Worker {
-	return &Worker{
+func NewWorker(app *Application, id string) *WorkerWS {
+	return &WorkerWS{
 		app:          app,
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
@@ -100,15 +105,14 @@ func NewWorker(app *Application, id string) *Worker {
 	}
 }
 
-func (self *Worker) sniffer(sock *PushWS) {
+func (self *WorkerWS) sniffer(sock *PushWS) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	logWarning := self.logger.ShouldLog(WARNING)
 	var (
-		socket = sock.Socket
-		raw    []byte
+		raw []byte
 		//eofCount    int    = 0
 		err error
 	)
@@ -122,7 +126,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		if self.stopped {
 			return
 		}
-		if err = websocket.Message.Receive(socket, &raw); err != nil {
+		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
 			self.stopped = true
 			if self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Websocket Error",
@@ -214,7 +218,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 }
 
 // standardize the error reporting back to the client.
-func (self *Worker) handleError(sock *PushWS, message []byte, err error) (ret error) {
+func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret error) {
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("worker", "Sending error",
 			LogFields{"rid": self.id, "error": ErrStr(err)})
@@ -228,7 +232,7 @@ func (self *Worker) handleError(sock *PushWS, message []byte, err error) (ret er
 }
 
 // General workhorse loop for the websocket handler.
-func (self *Worker) Run(sock *PushWS) {
+func (self *WorkerWS) Run(sock *PushWS) {
 	time.AfterFunc(self.helloTimeout,
 		func() {
 			if sock.Uaid == "" {
@@ -266,7 +270,7 @@ func (self *Worker) Run(sock *PushWS) {
 
 // Associate the UAID for this socket connection (and flush any data that
 // may be pending for the connection)
-func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	logWarning := self.logger.ShouldLog(WARNING)
 	// register the UAID
 	defer func() {
@@ -332,12 +336,12 @@ func (self *Worker) Hello(sock *PushWS, header *RequestHeader, message []byte) (
 	self.state = WorkerActive
 	if err == nil {
 		// Get the lastAccessed time from wherever
-		return self.Flush(sock, 0, "", 0)
+		return self.Flush(sock, 0, "", 0, "")
 	}
 	return err
 }
 
-func (self *Worker) handshake(sock *PushWS, request *HelloRequest) (
+func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	deviceID string, canRedirect bool, err error) {
 
 	logWarning := self.logger.ShouldLog(WARNING)
@@ -421,7 +425,7 @@ forceReset:
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
@@ -459,7 +463,7 @@ func (self *Worker) Ack(sock *PushWS, header *RequestHeader, message []byte) (er
 			LogFields{"rid": self.id, "cmd": "ack"})
 	}
 	// Get the lastAccessed time from wherever.
-	return self.Flush(sock, 0, "", 0)
+	return self.Flush(sock, 0, "", 0, "")
 logError:
 	if self.logger.ShouldLog(WARNING) {
 		self.logger.Warn("worker", "sending response",
@@ -469,7 +473,7 @@ logError:
 }
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
-func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
@@ -528,7 +532,7 @@ func (self *Worker) Register(sock *PushWS, header *RequestHeader, message []byte
 }
 
 // Unregister a ChannelID.
-func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []byte) (err error) {
 	logWarning := self.logger.ShouldLog(WARNING)
 	defer func() {
 		if r := recover(); r != nil {
@@ -575,7 +579,7 @@ func (self *Worker) Unregister(sock *PushWS, header *RequestHeader, message []by
 }
 
 // Dump any records associated with the UAID.
-func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, version int64) (err error) {
+func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, version int64, data string) (err error) {
 	// flush pending data back to Client
 	timer := time.Now()
 	logWarning := self.logger.ShouldLog(WARNING)
@@ -622,7 +626,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	} else {
 		// hand craft a notification update to the client.
 		// TODO: allow bulk updates.
-		updates = []Update{Update{channel, uint64(version)}}
+		updates = []Update{Update{channel, uint64(version), data}}
 		reply = &FlushReply{messageType, updates, nil}
 	}
 	if reply == nil {
@@ -650,7 +654,7 @@ func (self *Worker) Flush(sock *PushWS, lastAccessed int64, channel string, vers
 	return nil
 }
 
-func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err error) {
+func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err error) {
 	now := time.Now()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
@@ -672,7 +676,7 @@ func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err err
 }
 
 // TESTING func, purge associated records for this UAID
-func (self *Worker) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error) {
+func (self *WorkerWS) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error) {
 	/*
 	   // If needed...
 	   sock.Scmd <- PushCommand{Command: PURGE,
@@ -708,6 +712,34 @@ func isPingBody(raw []byte) (bool, error) {
 	}
 	// Quick sanity check for unbalanced or multiple consecutive braces.
 	return false, ErrBadPayload
+}
+
+//== Fake Worker
+
+type NoWorker struct {
+	Inbuffer  []byte
+	Outbuffer []byte
+	Logger    *SimpleLogger
+	Socket    *PushWS
+}
+
+func (r *NoWorker) Run(s *PushWS) {
+	r.Socket = s
+	r.Logger.Debug("noworker", "Run", nil)
+}
+
+func (r *NoWorker) Flush(_ *PushWS, lastAccessed int64, channel string, version int64, data string) error {
+	r.Logger.Debug("noworker", "Got Flush", LogFields{
+		"channel": channel,
+		"data":    data,
+	})
+	r.Outbuffer, _ = json.Marshal(&struct {
+		La int64  `json:"lastaccessed"`
+		Ch string `json:"channel"`
+		Ve int64  `json:"version"`
+		Da string `json:"data"`
+	}{lastAccessed, channel, version, data})
+	return nil
 }
 
 // o4fs

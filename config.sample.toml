@@ -190,4 +190,9 @@ type = "static"
 [metrics]
 #prefix = "myhostname.simplepush"
 #statsd_name = "undef"
+#
 #statsd_server = "heka_statsdinput_host:1234"
+
+[handlers]
+# Maximum allowed data segment (in bytes)
+#max_data_len = 1024

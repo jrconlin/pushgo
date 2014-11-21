@@ -29,6 +29,18 @@ type MetricsConfig struct {
 	StatsdName     string `toml:"statsd_name" env:"statsd_name"`
 }
 
+type Statistician interface {
+	Init(*Application, interface{}) error
+	Prefix(string)
+	Snapshot() map[string]interface{}
+	IncrementBy(string, int64)
+	Increment(string)
+	Decrement(string)
+	Timer(string, time.Duration)
+	Gauge(string, int64)
+	GaugeDelta(string, int64)
+}
+
 type Metrics struct {
 	sync.RWMutex
 	counter        map[string]int64 // counters
@@ -177,13 +189,6 @@ func (m *Metrics) Gauge(metric string, value int64) {
 		m.Unlock()
 	}
 
-	/*
-		    *if m.logger.ShouldLog(DEBUG) {
-			*	m.logger.Debug("metrics", "gauge."+metric,
-			*		LogFields{"value": strconv.FormatInt(value, 10),
-			*			"type": "gauge"})
-			*}
-	*/
 	if statsd := m.statsd; statsd != nil {
 		if value >= 0 {
 			statsd.Gauge(metric, value, 1.0)
@@ -205,13 +210,51 @@ func (m *Metrics) GaugeDelta(metric string, delta int64) {
 		m.Unlock()
 	}
 
-	if m.logger.ShouldLog(DEBUG) {
-		m.logger.Debug("metrics", "gauge."+metric,
-			LogFields{"delta": strconv.FormatInt(delta, 10),
-				"type": "gauge"})
-	}
-
 	if m.statsd != nil {
 		m.statsd.GaugeDelta(metric, delta, 1.0)
+	}
+}
+
+// == provide just enough metrics for testing.
+type TestMetrics struct {
+	sync.RWMutex
+	Counters map[string]int64
+	Gauges   map[string]int64
+}
+
+func (r *TestMetrics) Init(app *Application, config interface{}) (err error) {
+	r.Counters = make(map[string]int64)
+	r.Gauges = make(map[string]int64)
+	return
+}
+
+func (r *TestMetrics) Prefix(string) {}
+func (r *TestMetrics) Snapshot() map[string]interface{} {
+	return make(map[string]interface{})
+}
+func (r *TestMetrics) IncrementBy(metric string, count int64) {
+	r.Lock()
+	defer r.Unlock()
+	r.Counters[metric] = r.Counters[metric] + count
+}
+func (r *TestMetrics) Increment(metric string) {
+	r.IncrementBy(metric, 1)
+}
+func (r *TestMetrics) Decrement(metric string) {
+	r.IncrementBy(metric, -1)
+}
+func (r *TestMetrics) Timer(metric string, duration time.Duration) {}
+func (r *TestMetrics) Gauge(metric string, val int64) {
+	r.Lock()
+	defer r.Unlock()
+	r.Gauges[metric] = val
+}
+func (r *TestMetrics) GaugeDelta(metric string, delta int64) {
+	r.Lock()
+	defer r.Unlock()
+	if m, ok := r.Gauges[metric]; ok {
+		r.Gauges[metric] = m + delta
+	} else {
+		r.Gauges[metric] = delta
 	}
 }
