@@ -163,7 +163,7 @@ func (nl *NetworkLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		Proto:      "tcp",
 		EnvVersion: "2",
-		Name:       "log",
+		Name:       "pushgo",
 		Filter:     0,
 	}
 }
@@ -246,7 +246,7 @@ func (fl *FileLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
-		Name:       "log",
+		Name:       "pushgo",
 	}
 }
 
@@ -314,7 +314,7 @@ func (ml *StdOutLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
-		Name:       "log",
+		Name:       "pushgo",
 	}
 }
 

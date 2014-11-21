@@ -91,6 +91,8 @@ format = "protobuf"
 env_version = "2"
 # Ignore messages above this syslog severity level (0=Emergency...7=Debug)
 filter = 2
+# The LogName to use for this product.
+#name = "pushgo"
 
 # Remote logging: sends log messages to a remote Heka instance over TCP, UDP,
 # or a Unix domain socket.
