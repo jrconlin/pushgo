@@ -49,6 +49,17 @@ type PushWS struct {
 	Born    time.Time
 }
 
+func (ws *PushWS) Close() error {
+	if ws == nil {
+		return nil
+	}
+	socket := ws.Socket
+	if socket == nil {
+		return nil
+	}
+	return socket.Close()
+}
+
 func (ws *PushWS) Origin() string {
 	// protect against null pointers.
 	if ws == nil {
