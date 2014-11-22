@@ -119,7 +119,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 
 	// Setup the base application first
 	app := new(Application)
-	if obj, err = l.loadPlugin(PluginApp, app); err != nil {
+	if _, err = l.loadPlugin(PluginApp, app); err != nil {
 		return nil, err
 	}
 
@@ -282,7 +282,7 @@ func LoadExtensibleSection(app *Application, sectionName string,
 
 	conf, ok := configFile[sectionName]
 	if !ok {
-		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
+		return nil, fmt.Errorf("Missing section '%s'", sectionName)
 	}
 
 	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
@@ -310,13 +310,19 @@ func LoadExtensibleSection(app *Application, sectionName string,
 
 // Handles reading a TOML based configuration file, and loading an
 // initialized Application, ready to Run
-func LoadApplicationFromFileName(filename string, logging int) (app *Application, err error) {
-	var configFile ConfigFile
+func LoadApplicationFromFileName(filename string, logging int) (
+	app *Application, err error) {
 
+	var configFile ConfigFile
 	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
 		return nil, fmt.Errorf("Error decoding config file: %s", err)
 	}
 	env := envconf.Load()
+	return LoadApplication(configFile, env, logging)
+}
+
+func LoadApplication(configFile ConfigFile, env envconf.Environment,
+	logging int) (app *Application, err error) {
 
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
