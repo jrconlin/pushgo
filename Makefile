@@ -53,11 +53,17 @@ $(TARGET):
 	@echo "Building simplepush"
 	GOPATH=$(GOPATH) go build -ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
-test-memcached:
-	GOPATH=$(GOPATH) go test -tags gomemc_server_test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+test-gomc:
+	GOPATH=$(GOPATH) go test \
+		-tags "memcached_server_test libmemcached" -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+
+test-gomemcache:
+	GOPATH=$(GOPATH) go test \
+		-tags memcached_server_test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
 
 test:
-	GOPATH=$(GOPATH) go test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+	GOPATH=$(GOPATH) go test \
+		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
 
 vet:
 	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id simplepush)
