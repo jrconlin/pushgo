@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	ws "golang.org/x/net/websocket"
+
 	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"
 )
@@ -24,7 +26,7 @@ func TestPush(t *testing.T) {
 	}
 	// Send 50 messages on 3 channels.
 	if err := client.DoTest(origin, 3, 50); err != nil {
-		t.Fatalf("Smoke test failed: %#v", err)
+		t.Fatalf("Smoke test failed: %s", err)
 	}
 }
 
@@ -43,7 +45,10 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 		}
 	}()
 	go func() {
-		var err error
+		var (
+			pendingAccepts []client.Update
+			err error
+		)
 		timeout := time.After(15 * time.Second)
 		for ok := true; ok; {
 			var packet client.Packet
@@ -62,6 +67,7 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 				if len(updates) == 0 {
 					continue
 				}
+				pendingAccepts = append(pendingAccepts, updates...)
 				var (
 					update    client.Update
 					hasUpdate bool
@@ -82,6 +88,9 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 				}
 			}
 		}
+		if acceptErr := conn.AcceptBatch(pendingAccepts); acceptErr != nil {
+			err = fmt.Errorf("Error acknowledging updates: %s", acceptErr)
+		}
 		select {
 		case <-stopChan:
 		case errChan <- err:
@@ -95,29 +104,54 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 	return nil
 }
 
-func sendUpdate(origin string, deviceId *string, canReset bool, channelId string) (err error) {
-	originalId := *deviceId
-	var channelIds = []string{}
-	if !canReset {
-		channelIds = append(channelIds, channelId)
-	}
-	conn, err := client.DialId(origin, deviceId, channelIds...)
+func reconnect(origin, deviceId, channelId, endpoint string) (err error) {
+	socket, err := ws.Dial(origin, "", origin)
 	if err != nil {
 		return fmt.Errorf("Error dialing origin: %s", err)
 	}
+	connId, err := id.Generate()
+	if err != nil {
+		return fmt.Errorf("Error generating connection ID: %#v", err)
+	}
+	conn := client.NewConn(socket, connId, true)
 	defer conn.Close()
 	defer conn.Purge()
-	if *deviceId != originalId {
-		return fmt.Errorf("Mismatched device IDs: got %q; want %q", *deviceId, originalId)
-	}
-	endpoint, err := conn.Register(channelId)
+	actualId, err := conn.WriteHelo(deviceId, channelId)
 	if err != nil {
-		return fmt.Errorf("Error subscribing to channel %q: %s", channelId, err)
+		return fmt.Errorf("Error writing handshake request: %s", err)
 	}
-	if err = roundTrip(conn, *deviceId, channelId, endpoint, 1); err != nil {
-		return err
+	if actualId != deviceId {
+		return fmt.Errorf("Mismatched device IDs: got %q; want %q",
+			actualId, deviceId)
+	}
+	if err = roundTrip(conn, deviceId, channelId, endpoint, 2); err != nil {
+		return fmt.Errorf("Error sending notification after reconnect: %s", err)
 	}
 	return nil
+}
+
+func connect(origin string) (deviceId, channelId, endpoint string, err error) {
+	if channelId, err = id.Generate(); err != nil {
+		err = fmt.Errorf("Error generating channel ID: %s", err)
+		return
+	}
+	conn, deviceId, err := client.Dial(origin)
+	if err != nil {
+		err = fmt.Errorf("Error dialing origin: %s", err)
+		return
+	}
+	defer conn.Close()
+	defer conn.Purge()
+	if endpoint, err = conn.Register(channelId); err != nil {
+		err = fmt.Errorf("Error subscribing to channel %q: %s",
+			channelId, err)
+		return
+	}
+	if err = roundTrip(conn, deviceId, channelId, endpoint, 1); err != nil {
+		err = fmt.Errorf("Error sending initial notification: %s", err)
+		return
+	}
+	return
 }
 
 func TestPushReconnect(t *testing.T) {
@@ -125,16 +159,9 @@ func TestPushReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %s", err)
 	}
-	deviceId, err := id.Generate()
+	deviceId, channelId, endpoint, err := connect(origin)
 	if err != nil {
-		t.Fatalf("Error generating device ID: %s", err)
-	}
-	channelId, err := id.Generate()
-	if err != nil {
-		t.Fatalf("Error generating channel ID: %s", err)
-	}
-	if err = sendUpdate(origin, &deviceId, true, channelId); err != nil {
-		t.Fatalf("Error sending initial notification: %s", err)
+		t.Fatal(err)
 	}
 	addExistsHook(deviceId, true)
 	defer removeExistsHook(deviceId)
@@ -142,8 +169,8 @@ func TestPushReconnect(t *testing.T) {
 	// from the map.
 	setReplaceEnabled(true)
 	defer setReplaceEnabled(false)
-	if err = sendUpdate(origin, &deviceId, false, channelId); err != nil {
-		t.Fatalf("Error sending notification after reconnect: %s", err)
+	if err = reconnect(origin, deviceId, channelId, endpoint); err != nil {
+		t.Fatal(err)
 	}
 }
 
