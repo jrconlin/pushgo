@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,8 @@ var (
 
 type Conn struct {
 	Socket        *ws.Conn      // The underlying WebSocket connection.
+	Id            string        // The unique connection ID.
+	ErrorLog      *log.Logger   // An optional logger for connection errors.
 	PingInterval  time.Duration // The amount of time the connection may remain idle before sending a ping.
 	PingDeadlime  time.Duration // The amount of time to wait for a pong before closing the connection.
 	DecodeDefault bool          // Use the default message decoders if a custom decoder is not registered.
@@ -109,12 +112,17 @@ func DialOrigin(origin string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewConn(socket, false), nil
+	id, err := id.Generate()
+	if err != nil {
+		return nil, err
+	}
+	return NewConn(socket, id, false), nil
 }
 
-func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
+func NewConn(socket *ws.Conn, id string, spoolAll bool) *Conn {
 	conn := &Conn{
 		Socket:        socket,
+		Id:            id,
 		PingInterval:  30 * time.Minute,
 		PingDeadlime:  10 * time.Second,
 		DecodeDefault: true,
@@ -217,6 +225,7 @@ func (c *Conn) Receive() {
 	for ok := true; ok; {
 		packet, err := c.readPacket()
 		if err != nil {
+			c.logf("Error reading packet: %s", err)
 			c.fatal(err)
 			break
 		}
@@ -520,6 +529,7 @@ func (c *Conn) AcceptUpdate(update Update) (err error) {
 func (c *Conn) readPacket() (packet Packet, err error) {
 	var data []byte
 	if err = ws.Message.Receive(c.Socket, &data); err != nil {
+		c.logf("Socket read error: %s", err)
 		return nil, err
 	}
 	var (
@@ -574,6 +584,12 @@ Decode:
 		return nil, &ServerError{messageType, c.Origin(), errorText, statusCode}
 	}
 	return nil, nil
+}
+
+func (c *Conn) logf(format string, v ...interface{}) {
+	if log := c.ErrorLog; log != nil {
+		log.Printf(fmt.Sprintf("%s: %s", c.Id, format), v)
+	}
 }
 
 func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {
