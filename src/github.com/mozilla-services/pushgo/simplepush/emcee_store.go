@@ -753,7 +753,8 @@ func (s *EmceeStore) storeAppIDArray(uaid string, chids ChannelIDs) error {
 	return client.Set(uaid, chids, 0)
 }
 
-// Retrieves a channel record from memcached.
+// Retrieves a channel record from memcached. Returns an empty record if the
+// channel does not exist.
 func (s *EmceeStore) fetchRec(pk string) (*ChannelRecord, error) {
 	if len(pk) == 0 {
 		return nil, ErrNoKey
