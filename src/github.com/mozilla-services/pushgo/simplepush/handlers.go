@@ -19,7 +19,7 @@ import (
 )
 
 type HandlerConfig struct {
-	MaxDataLen int `json:"max_data_len" env:"max_data_len"`
+	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
 }
 
 type Handler struct {

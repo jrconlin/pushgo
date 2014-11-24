@@ -16,7 +16,7 @@ TARGET = simplepush
 
 VERSION=$(shell git describe --tags --always HEAD 2>/dev/null)
 ifneq ($(strip $(VERSION)),)
-	GOLDFLAGS := -X $(PACKAGE)/$(TARGET).VERSION $(VERSION) $(GOLDFLAGS)
+	GOLDFLAGS := -X $(PACKAGE)/simplepush.VERSION $(VERSION) $(GOLDFLAGS)
 endif
 
 .PHONY: all build clean test $(TARGET) memcached
@@ -50,17 +50,17 @@ memcached: libmemcached-1.0.18
 
 $(TARGET):
 	rm -f $(TARGET)
-	@echo "Building $(TARGET)"
+	@echo "Building simplepush"
 	GOPATH=$(GOPATH) go build -ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
 test-memcached:
-	GOPATH=$(GOPATH) go test -tags gomemc_server_test $(addprefix $(PACKAGE)/,id $(TARGET))
+	GOPATH=$(GOPATH) go test -tags gomemc_server_test $(addprefix $(PACKAGE)/,id simplepush)
 
 test:
-	GOPATH=$(GOPATH) go test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id $(TARGET))
+	GOPATH=$(GOPATH) go test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
 
 vet:
-	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id $(TARGET))
+	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id simplepush)
 
 clean:
 	rm -rf bin $(DEPS)
