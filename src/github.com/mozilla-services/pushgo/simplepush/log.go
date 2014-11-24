@@ -523,5 +523,5 @@ func init() {
 	AvailableLoggers["stdout"] = func() HasConfigStruct { return new(StdOutLogger) }
 	AvailableLoggers["net"] = func() HasConfigStruct { return new(NetworkLogger) }
 	AvailableLoggers["file"] = func() HasConfigStruct { return new(FileLogger) }
-	AvailableLoggers["default"] = AvailableLoggers["text"]
+	AvailableLoggers.SetDefault("stdout")
 }

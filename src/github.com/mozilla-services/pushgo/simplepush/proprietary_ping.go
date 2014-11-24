@@ -32,7 +32,7 @@ func init() {
 	AvailablePings["noop"] = func() HasConfigStruct { return new(NoopPing) }
 	AvailablePings["udp"] = func() HasConfigStruct { return new(UDPPing) }
 	AvailablePings["gcm"] = func() HasConfigStruct { return new(GCMPing) }
-	AvailablePings["default"] = AvailablePings["noop"]
+	AvailablePings.SetDefault("noop")
 }
 
 // NoOp ping

@@ -32,4 +32,5 @@ func (l *StaticLocator) Status() (bool, error)             { return true, nil }
 
 func init() {
 	AvailableLocators["static"] = func() HasConfigStruct { return new(StaticLocator) }
+	AvailableLocators.SetDefault("static")
 }

@@ -87,4 +87,5 @@ func init() {
 	AvailableStores["none"] = func() HasConfigStruct {
 		return &NoStore{UAIDExists: true}
 	}
+	AvailableStores.SetDefault("none")
 }

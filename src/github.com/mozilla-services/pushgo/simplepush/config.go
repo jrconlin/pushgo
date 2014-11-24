@@ -18,6 +18,31 @@ import (
 // Extensible sections
 type AvailableExtensions map[string]func() HasConfigStruct
 
+// Get returns an extension with the given name, or the default
+// extension if one has not been registered.
+func (e AvailableExtensions) Get(name string) (
+	ext func() HasConfigStruct, ok bool) {
+
+	if ext, ok = e[name]; !ok {
+		ext, ok = e["default"]
+	}
+	return
+}
+
+// SetDefault sets the extension with the given name as the default. If a
+// default has already been set or the extension has not been registered,
+// SetDefault panics.
+func (e AvailableExtensions) SetDefault(name string) {
+	ext, ok := e[name]
+	if !ok {
+		panic(fmt.Sprintf("AvailableExtensions: '%s' not registered", name))
+	}
+	if _, ok = e["default"]; ok {
+		panic("AvailableExtensions: Default already set")
+	}
+	e["default"] = ext
+}
+
 type ExtensibleGlobals struct {
 	Typ string `toml:"type" env:"type"`
 }
@@ -94,7 +119,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 
 	// Setup the base application first
 	app := new(Application)
-	if obj, err = l.loadPlugin(PluginApp, app); err != nil {
+	if _, err = l.loadPlugin(PluginApp, app); err != nil {
 		return nil, err
 	}
 
@@ -257,7 +282,7 @@ func LoadExtensibleSection(app *Application, sectionName string,
 
 	conf, ok := configFile[sectionName]
 	if !ok {
-		return nil, fmt.Errorf("Error loading config file, section: %s", sectionName)
+		return nil, fmt.Errorf("Missing section '%s'", sectionName)
 	}
 
 	if err = toml.PrimitiveDecode(conf, confSection); err != nil {
@@ -266,13 +291,11 @@ func LoadExtensibleSection(app *Application, sectionName string,
 	if err = env.Decode(toEnvName(sectionName), EnvSep, confSection); err != nil {
 		return nil, err
 	}
-	ext, ok := extensions[confSection.Typ]
+	ext, ok := extensions.Get(confSection.Typ)
 	if !ok {
-		if ext, ok = extensions["default"]; !ok {
-			return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
-				confSection.Typ, sectionName)
-		}
 		//TODO: Add log info to indicate using "default"
+		return nil, fmt.Errorf("No type '%s' available to load for section '%s'",
+			confSection.Typ, sectionName)
 	}
 
 	obj = ext()
@@ -287,13 +310,19 @@ func LoadExtensibleSection(app *Application, sectionName string,
 
 // Handles reading a TOML based configuration file, and loading an
 // initialized Application, ready to Run
-func LoadApplicationFromFileName(filename string, logging int) (app *Application, err error) {
-	var configFile ConfigFile
+func LoadApplicationFromFileName(filename string, logging int) (
+	app *Application, err error) {
 
+	var configFile ConfigFile
 	if _, err = toml.DecodeFile(filename, &configFile); err != nil {
 		return nil, fmt.Errorf("Error decoding config file: %s", err)
 	}
 	env := envconf.Load()
+	return LoadApplication(configFile, env, logging)
+}
+
+func LoadApplication(configFile ConfigFile, env envconf.Environment,
+	logging int) (app *Application, err error) {
 
 	loaders := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
