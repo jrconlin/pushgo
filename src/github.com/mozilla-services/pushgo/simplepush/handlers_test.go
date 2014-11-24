@@ -72,14 +72,14 @@ func Test_UpdateHandler(t *testing.T) {
 	data := "This is a test of the emergency broadcasting system."
 
 	handler, app := newTestHandler(t)
-	noPush := PushWS{
+	noPush := &PushWS{
 		Uaid:     uaid,
 		deviceID: []byte(chid),
 		Socket:   nil,
 		Born:     time.Now(),
 	}
 
-	worker := &NoWorker{Socket: &noPush,
+	worker := &NoWorker{Socket: noPush,
 		Logger: app.Logger(),
 	}
 

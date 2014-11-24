@@ -439,7 +439,7 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 			self.logger.Info("worker", "UAID collision; disconnecting previous client",
 				LogFields{"rid": self.id, "uaid": request.DeviceID})
 		}
-		client.PushWS.Close()
+		self.app.Server().HandleCommand(PushCommand{DIE, nil}, client.PushWS)
 	}
 	if len(request.ChannelIDs) > 0 && !sock.Store.Exists(request.DeviceID) {
 		if logWarning {

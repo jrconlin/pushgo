@@ -47,7 +47,7 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 	go func() {
 		var (
 			pendingAccepts []client.Update
-			err error
+			err            error
 		)
 		timeout := time.After(15 * time.Second)
 		for ok := true; ok; {

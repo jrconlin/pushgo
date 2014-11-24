@@ -25,8 +25,8 @@ import (
 type Client struct {
 	// client descriptor info.
 	Worker Worker
-	PushWS PushWS `json:"-"`
-	UAID   string `json:"uaid"`
+	PushWS *PushWS `json:"-"`
+	UAID   string  `json:"uaid"`
 }
 
 // Basic global server options
@@ -237,7 +237,7 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	sock.Uaid = uaid
 	client := &Client{
 		Worker: worker,
-		PushWS: *sock,
+		PushWS: sock,
 		UAID:   uaid,
 	}
 	self.app.AddClient(uaid, client)
@@ -272,7 +272,10 @@ func (self *Serv) Bye(sock *PushWS) {
 				"uaid":     uaid,
 				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
-	self.app.RemoveClient(uaid)
+	if !sock.IsClosed() {
+		self.app.RemoveClient(uaid)
+	}
+	sock.Close()
 }
 
 func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
@@ -371,7 +374,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 		}
 
 		// Attempt to send the command
-		client.Worker.Flush(&client.PushWS, 0, channel, version, data)
+		client.Worker.Flush(client.PushWS, 0, channel, version, data)
 	}
 	return nil
 }
