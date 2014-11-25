@@ -79,6 +79,7 @@ const (
 	PluginStore
 	PluginRouter
 	PluginLocator
+	PluginBalancer
 	PluginServer
 	PluginHandlers
 )
@@ -90,6 +91,7 @@ var pluginNames = map[PluginType]string{
 	PluginMetrics:  "metrics",
 	PluginStore:    "store",
 	PluginLocator:  "locator",
+	PluginBalancer: "balancer",
 	PluginServer:   "server",
 	PluginHandlers: "handlers",
 }
@@ -182,12 +184,23 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Finally, setup the handlers, Deps: Logger, Metrics
+	// Set up the server. Deps: Logger, Metrics.
 	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
 		return nil, err
 	}
 	serv := obj.(*Serv)
 	app.SetServer(serv)
+
+	// Set up the balancer. Deps: Logger, Metrics, Server.
+	if obj, err = l.loadPlugin(PluginBalancer, app); err != nil {
+		return nil, err
+	}
+	balancer := obj.(Balancer)
+	if err = app.SetBalancer(balancer); err != nil {
+		return nil, err
+	}
+
+	// Finally, setup the handlers, Deps: Logger, Metrics
 	if obj, err = l.loadPlugin(PluginHandlers, app); err != nil {
 		return nil, err
 	}
@@ -349,6 +362,9 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 		},
 		PluginLocator: func(app *Application) (HasConfigStruct, error) {
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, env, configFile)
+		},
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "balancer", AvailableBalancers, env, configFile)
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()

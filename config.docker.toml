@@ -131,10 +131,6 @@ type = "none"
 [router]
 # Default host to shard users to, defaults to global hostname above
 #default_host = "localhost"
-# default scheme for routing http pushes
-#scheme = "http"
-# URL Template for sending routing messages
-#url_template = "{{.Scheme}}://{{.Host}}/route/{{.Uaid}}"
 # Fail a route connection attempt after timeout seconds
 #ctimeout = "3s"
 # Fail a route processing attempt after timeout seconds
@@ -160,3 +156,6 @@ store_snapshots = false
 prefix = "docker"
 statsd_name = "pushgo"
 statsd_server = ":8125"
+
+[balancer]
+type = "none"

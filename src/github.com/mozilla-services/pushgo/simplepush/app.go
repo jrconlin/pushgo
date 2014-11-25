@@ -57,6 +57,7 @@ type Application struct {
 	server             *Serv
 	store              Store
 	router             Router
+	balancer           Balancer
 	handlers           *Handler
 	propping           PropPinger
 }
@@ -150,6 +151,11 @@ func (a *Application) SetRouter(router Router) error {
 	return nil
 }
 
+func (a *Application) SetBalancer(b Balancer) error {
+	a.balancer = b
+	return nil
+}
+
 func (a *Application) SetServer(server *Serv) error {
 	a.server = server
 	return nil
@@ -238,6 +244,10 @@ func (a *Application) Router() Router {
 	return a.router
 }
 
+func (a *Application) Balancer() Balancer {
+	return a.balancer
+}
+
 func (a *Application) Server() *Serv {
 	return a.server
 }
@@ -314,10 +324,21 @@ func (a *Application) RemoveClient(uaid string) {
 }
 
 func (a *Application) Stop() {
-	a.server.Close()
-	a.router.Close()
-	a.store.Close()
-	a.log.Close()
+	if a.server != nil {
+		a.server.Close()
+	}
+	if a.balancer != nil {
+		a.balancer.Close()
+	}
+	if a.router != nil {
+		a.router.Close()
+	}
+	if a.store != nil {
+		a.store.Close()
+	}
+	if a.log != nil {
+		a.log.Close()
+	}
 }
 
 func isSameOrigin(a, b *url.URL) bool {
