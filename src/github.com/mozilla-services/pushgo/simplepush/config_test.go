@@ -250,9 +250,11 @@ func loadEnvConfig(env envconf.Environment, section string,
 	app *Application, configable HasConfigStruct) (err error) {
 
 	confStruct := configable.ConfigStruct()
-	if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
-		return fmt.Errorf("Error decoding config for section %q: %s",
-			section, err)
+	if confStruct != nil {
+		if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
+			return fmt.Errorf("Error decoding config for section %q: %s",
+				section, err)
+		}
 	}
 	return configable.Init(app, confStruct)
 }
