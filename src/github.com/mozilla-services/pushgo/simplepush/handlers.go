@@ -52,7 +52,7 @@ type PluginStatus struct {
 
 func (self *Handler) ConfigStruct() interface{} {
 	return &HandlerConfig{
-		MaxDataLen: 200,
+		MaxDataLen: 1024,
 	}
 }
 
