@@ -185,7 +185,7 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 	}
 
 	b.closeWait.Add(2)
-	go b.pollCounts()
+	go b.updateCounts()
 	go b.publishCounts()
 
 	return nil
@@ -210,7 +210,7 @@ func (b *EtcdBalancer) RedirectURL() (url string, ok bool, err error) {
 	return peer.URL, true, err
 }
 
-func (b *EtcdBalancer) pollCounts() {
+func (b *EtcdBalancer) updateCounts() {
 	defer b.closeWait.Done()
 	ticker := time.NewTicker(b.updateInterval)
 	for ok := true; ok; {

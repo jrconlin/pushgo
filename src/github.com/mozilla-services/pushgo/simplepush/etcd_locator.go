@@ -168,8 +168,8 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	}
 
 	l.closeWait.Add(2)
-	go l.registerLoop()
-	go l.fetchLoop()
+	go l.registerHost()
+	go l.refreshHosts()
 	return nil
 }
 
@@ -293,8 +293,8 @@ func (l *EtcdLocator) getServers() (servers []string, err error) {
 	return servers, nil
 }
 
-// refreshLoop periodically re-registers the current node with etcd.
-func (l *EtcdLocator) registerLoop() {
+// registerHost periodically re-registers the current node with etcd.
+func (l *EtcdLocator) registerHost() {
 	defer l.closeWait.Done()
 	// auto refresh slightly more often than the TTL
 	timeout := 0.75 * l.defaultTTL.Seconds()
@@ -309,8 +309,8 @@ func (l *EtcdLocator) registerLoop() {
 	ticker.Stop()
 }
 
-// fetchLoop polls etcd for new nodes.
-func (l *EtcdLocator) fetchLoop() {
+// refreshHosts polls etcd for new nodes.
+func (l *EtcdLocator) refreshHosts() {
 	defer l.closeWait.Done()
 	fetchTick := time.NewTicker(l.refreshInterval)
 	for ok := true; ok; {
@@ -322,10 +322,10 @@ func (l *EtcdLocator) fetchLoop() {
 			if err != nil {
 				l.contactsErr = err
 			} else {
+				l.lastFetch = t
 				l.contacts = contacts
 				l.contactsErr = nil
 			}
-			l.lastFetch = t
 			l.contactsLock.Unlock()
 		}
 	}
