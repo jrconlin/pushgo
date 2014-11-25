@@ -94,6 +94,13 @@ type PingReply struct {
 	Status int    `json:"status"`
 }
 
+type FlushData struct {
+	LastAccessed int64  `json:"lastaccessed"`
+	Channel      string `json:"channel"`
+	Version      int64  `json:"version"`
+	Data         string `json:"data"`
+}
+
 func NewWorker(app *Application, id string) *WorkerWS {
 	return &WorkerWS{
 		app:          app,
@@ -708,12 +715,8 @@ func (r *NoWorker) Flush(_ *PushWS, lastAccessed int64, channel string, version 
 		"channel": channel,
 		"data":    data,
 	})
-	r.Outbuffer, _ = json.Marshal(&struct {
-		La int64  `json:"lastaccessed"`
-		Ch string `json:"channel"`
-		Ve int64  `json:"version"`
-		Da string `json:"data"`
-	}{lastAccessed, channel, version, data})
+	r.Outbuffer, _ = json.Marshal(&FlushData{lastAccessed,
+		channel, version, data})
 	return nil
 }
 

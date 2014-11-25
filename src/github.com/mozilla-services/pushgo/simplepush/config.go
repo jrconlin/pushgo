@@ -334,7 +334,7 @@ func LoadApplicationFromFileName(filename string, logging int) (app *Application
 		},
 		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
 			handlers := new(Handler)
-			if err := handlers.Init(app, nil); err != nil {
+			if err := LoadConfigForSection(app, "handler", handlers, env, configFile); err != nil {
 				return nil, err
 			}
 			return handlers, nil

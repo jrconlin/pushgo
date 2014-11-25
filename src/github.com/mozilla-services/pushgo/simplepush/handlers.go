@@ -195,7 +195,14 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 
 	data := req.FormValue("data")
 	if len(data) > self.maxDataLen {
-		data = data[:self.maxDataLen]
+		if logWarning {
+			self.logger.Warn("update", "Data too large, rejecting request",
+				LogFields{"rid": requestID})
+		}
+		http.Error(resp, fmt.Sprintf("Data exceeds max length of %d bytes",
+			self.maxDataLen), http.StatusRequestEntityTooLarge)
+		self.metrics.Increment("updates.appserver.toolong")
+		return
 	}
 
 	var pk string
@@ -395,6 +402,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		chid     string
 		timeNano int64
 		sentAt   time.Time
+		data     string
 	)
 	segment, err := capn.ReadFromStream(req.Body, nil)
 	if err != nil {
@@ -417,7 +425,17 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	self.metrics.Increment("updates.routed.incoming")
 	timeNano = r.Time()
 	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
-	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt, r.Data()); err != nil {
+	// Never trust external data
+	data = r.Data()
+	if len(data) > self.maxDataLen {
+		if logWarning {
+			self.logger.Warn("router", "Data segment too long, truncating",
+				LogFields{"rid": req.Header.Get(HeaderID),
+					"uaid": uaid})
+		}
+		data = data[:self.maxDataLen]
+	}
+	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt, data); err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})

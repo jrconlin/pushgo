@@ -65,13 +65,6 @@ func newTestHandler(t *testing.T) (*Handler, *Application) {
 	return handler, app
 }
 
-type TFlushReply struct {
-	LastAccessed int64  `json:"lastaccessed"`
-	Channel      string `json:"channel"`
-	Version      int64  `json:"version"`
-	Data         string `json:"data"`
-}
-
 func Test_UpdateHandler(t *testing.T) {
 	var err error
 	uaid := "deadbeef000000000000000000000000"
@@ -117,7 +110,7 @@ func Test_UpdateHandler(t *testing.T) {
 	if resp.Body.String() != "{}" {
 		t.Error("Unexpected response from server")
 	}
-	rep := TFlushReply{}
+	rep := FlushData{}
 	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
 		t.Errorf("Could not read output buffer %s", err.Error())
 	}
