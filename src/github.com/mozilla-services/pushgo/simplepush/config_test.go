@@ -49,6 +49,9 @@ pool_size = 250
     max_connections = 6000
 
 [discovery]
+
+[handlers]
+max_data_len = 256
 `
 
 var env = envconf.New([]string{
@@ -68,6 +71,7 @@ var env = envconf.New([]string{
 	"PushGo_Router_Pool_Size=250",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
 	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
+	"PUSHGO_HANDLERS_MAX_DATA_LEN=512",
 })
 
 func TestConfigFile(t *testing.T) {
@@ -81,8 +85,8 @@ func TestConfigFile(t *testing.T) {
 	}
 	defer app.Stop()
 	hostname := "push.services.mozilla.com"
-	if app.hostname != hostname {
-		t.Errorf("Mismatched hostname: got %#v; want %#v", app.hostname, hostname)
+	if app.Hostname() != hostname {
+		t.Errorf("Mismatched hostname: got %#v; want %#v", app.Hostname(), hostname)
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
@@ -124,6 +128,10 @@ func TestConfigFile(t *testing.T) {
 		}
 	} else {
 		t.Errorf("Pinger type assertion failed: %#v", pinger)
+	}
+	handlers := app.Handlers()
+	if handlers.maxDataLen != 512 {
+		t.Errorf("Wrong maximum data size: got %d; want 512", handlers.maxDataLen)
 	}
 }
 

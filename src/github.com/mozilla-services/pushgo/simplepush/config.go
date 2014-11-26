@@ -363,7 +363,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 		},
 		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
 			handlers := new(Handler)
-			if err := LoadConfigForSection(app, "handler", handlers, env, configFile); err != nil {
+			if err := LoadConfigForSection(app, "handlers", handlers, env, configFile); err != nil {
 				return nil, err
 			}
 			return handlers, nil

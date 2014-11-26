@@ -248,6 +248,10 @@ func (a *Application) Server() *Serv {
 	return a.server
 }
 
+func (a *Application) Handlers() *Handler {
+	return a.handlers
+}
+
 func (a *Application) TokenKey() []byte {
 	return a.tokenKey
 }
