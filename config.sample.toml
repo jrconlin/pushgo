@@ -221,3 +221,7 @@ type = "static"
 # Optional prefix for metric names, appended to the client name.
 #prefix = "myhostname.simplepush"
 #statsd_server = "heka_statsdinput_host:1234"
+
+[handlers]
+# Maximum allowed data segment (in bytes)
+#max_data_len = 1024

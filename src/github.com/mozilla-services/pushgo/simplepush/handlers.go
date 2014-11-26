@@ -18,16 +18,19 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-type HandlerConfig struct{}
+type HandlerConfig struct {
+	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
+}
 
 type Handler struct {
-	app      *Application
-	logger   *SimpleLogger
-	store    Store
-	router   *Router
-	metrics  *Metrics
-	tokenKey []byte
-	propping PropPinger
+	app        *Application
+	logger     *SimpleLogger
+	store      Store
+	router     *Router
+	metrics    Statistician
+	tokenKey   []byte
+	propping   PropPinger
+	maxDataLen int
 }
 
 type StatusReport struct {
@@ -48,7 +51,9 @@ type PluginStatus struct {
 }
 
 func (self *Handler) ConfigStruct() interface{} {
-	return &HandlerConfig{}
+	return &HandlerConfig{
+		MaxDataLen: 1024,
+	}
 }
 
 func (self *Handler) Init(app *Application, config interface{}) error {
@@ -59,6 +64,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.router = app.Router()
 	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
+	self.maxDataLen = config.(*HandlerConfig).MaxDataLen
 	return nil
 }
 
@@ -185,6 +191,18 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		}
 	} else {
 		version = time.Now().UTC().Unix()
+	}
+
+	data := req.FormValue("data")
+	if len(data) > self.maxDataLen {
+		if logWarning {
+			self.logger.Warn("update", "Data too large, rejecting request",
+				LogFields{"rid": requestID})
+		}
+		http.Error(resp, fmt.Sprintf("Data exceeds max length of %d bytes",
+			self.maxDataLen), http.StatusRequestEntityTooLarge)
+		self.metrics.Increment("updates.appserver.toolong")
+		return
 	}
 
 	var pk string
@@ -314,7 +332,7 @@ sendUpdate:
 		if cn, ok := resp.(http.CloseNotifier); ok {
 			cancelSignal = cn.CloseNotify()
 		}
-		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID); err != nil {
+		if err = self.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 			return
@@ -322,7 +340,7 @@ sendUpdate:
 	}
 
 	if clientConnected {
-		self.app.Server().RequestFlush(client, chid, int64(version))
+		self.app.Server().RequestFlush(client, chid, int64(version), data)
 		self.metrics.Increment("updates.appserver.received")
 	}
 
@@ -384,6 +402,7 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 		chid     string
 		timeNano int64
 		sentAt   time.Time
+		data     string
 	)
 	segment, err := capn.ReadFromStream(req.Body, nil)
 	if err != nil {
@@ -406,7 +425,17 @@ func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
 	self.metrics.Increment("updates.routed.incoming")
 	timeNano = r.Time()
 	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
-	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt); err != nil {
+	// Never trust external data
+	data = r.Data()
+	if len(data) > self.maxDataLen {
+		if logWarning {
+			self.logger.Warn("router", "Data segment too long, truncating",
+				LogFields{"rid": req.Header.Get(HeaderID),
+					"uaid": uaid})
+		}
+		data = data[:self.maxDataLen]
+	}
+	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt, data); err != nil {
 		if logWarning {
 			self.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})

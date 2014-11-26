@@ -134,7 +134,7 @@ func (r *UDPPing) Status() (bool, error) {
 // NOTE: This is still experimental.
 type GCMPing struct {
 	logger      *SimpleLogger
-	metrics     *Metrics
+	metrics     Statistician
 	store       Store
 	client      *http.Client
 	url         string

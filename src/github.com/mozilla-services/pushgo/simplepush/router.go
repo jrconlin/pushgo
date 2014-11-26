@@ -69,7 +69,7 @@ type Router struct {
 	locator     Locator
 	listener    net.Listener
 	logger      *SimpleLogger
-	metrics     *Metrics
+	metrics     Statistician
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	bucketSize  int
@@ -201,7 +201,7 @@ func (r *Router) Close() (err error) {
 }
 
 // Route routes an update packet to the correct server.
-func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string) (err error) {
+func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string, data string) (err error) {
 	startTime := time.Now()
 	locator := r.Locator()
 	if locator == nil {
@@ -217,6 +217,7 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 	routable.SetChannelID(chid)
 	routable.SetVersion(version)
 	routable.SetTime(sentAt.UnixNano())
+	routable.SetData(data)
 	contacts, err := locator.Contacts(uaid)
 	if err != nil {
 		if r.logger.ShouldLog(CRITICAL) {
@@ -236,6 +237,7 @@ func (r *Router) Route(cancelSignal <-chan bool, uaid, chid string, version int6
 			"uaid":    uaid,
 			"chid":    chid,
 			"version": strconv.FormatInt(version, 10),
+			"data":    data,
 			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
 	}
 	ok, err := r.notifyAll(cancelSignal, contacts, uaid, segment, logID)

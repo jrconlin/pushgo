@@ -80,7 +80,7 @@ type EtcdLocatorConf struct {
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
 	logger          *SimpleLogger
-	metrics         *Metrics
+	metrics         Statistician
 	refreshInterval time.Duration
 	defaultTTL      time.Duration
 	maxRetries      int

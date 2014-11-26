@@ -10,7 +10,7 @@ type StaticLocatorConf struct {
 
 type StaticLocator struct {
 	logger   *SimpleLogger
-	metrics  *Metrics
+	metrics  Statistician
 	contacts []string
 }
 

@@ -58,6 +58,7 @@ func (err StorageError) Error() string {
 type Update struct {
 	ChannelID string `json:"channelID"`
 	Version   uint64 `json:"version"`
+	Data      string `json:"data"`
 }
 
 // DbConf specifies generic database adapter options.

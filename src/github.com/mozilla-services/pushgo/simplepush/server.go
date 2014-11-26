@@ -24,7 +24,7 @@ import (
 
 type Client struct {
 	// client descriptor info.
-	Worker *Worker
+	Worker Worker
 	PushWS PushWS `json:"-"`
 	UAID   string `json:"uaid"`
 }
@@ -75,7 +75,7 @@ type Serv struct {
 	endpointLn       net.Listener
 	endpointURL      string
 	maxEndpointConns int
-	metrics          *Metrics
+	metrics          Statistician
 	store            Store
 	key              []byte
 	template         *template.Template
@@ -184,7 +184,7 @@ func (self *Serv) hostPort(ln net.Listener) (host string, port int) {
 }
 
 // A client connects!
-func (self *Serv) Hello(worker *Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
+func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	var uaid string
 
 	args := cmd.Arguments
@@ -336,7 +336,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	return 200, args
 }
 
-func (self *Serv) RequestFlush(client *Client, channel string, version int64) (err error) {
+func (self *Serv) RequestFlush(client *Client, channel string, version int64, data string) (err error) {
 	defer func(client *Client, version int64) {
 		if r := recover(); r != nil {
 			var uaid string
@@ -365,11 +365,13 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64) (e
 				"Requesting flush",
 				LogFields{"uaid": client.UAID,
 					"chid":    channel,
-					"version": strconv.FormatInt(version, 10)})
+					"version": strconv.FormatInt(version, 10),
+					"data":    data,
+				})
 		}
 
 		// Attempt to send the command
-		client.Worker.Flush(&client.PushWS, 0, channel, version)
+		client.Worker.Flush(&client.PushWS, 0, channel, version, data)
 	}
 	return nil
 }
@@ -379,7 +381,7 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	return
 }
 
-func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err error) {
+func (self *Serv) Update(chid, uid string, vers int64, time time.Time, data string) (err error) {
 	var pk string
 	updateErr := errors.New("Update Error")
 	reason := "Unknown UID"
@@ -401,7 +403,7 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time) (err erro
 		goto updateError
 	}
 
-	if err = self.RequestFlush(client, chid, vers); err == nil {
+	if err = self.RequestFlush(client, chid, vers, data); err == nil {
 		return
 	}
 	reason = "Failed to flush"
@@ -429,7 +431,7 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling HELLO event", nil)
 		}
-		worker := args["worker"].(*Worker)
+		worker := args["worker"].(Worker)
 		result, ret = self.Hello(worker, cmd, sock)
 	case UNREG:
 		if self.logger.ShouldLog(DEBUG) {
