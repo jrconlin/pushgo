@@ -215,6 +215,12 @@ type = "static"
 # The polling interval for new nodes.
 #refresh_interval = "5m"
 
+#[discovery.retry]
+#retries = 5
+#delay = "200ms"
+#max_delay = "5s"
+#max_jitter = "400ms"
+
 [metrics]
 # The statsd client name, prepended to all metric names.
 #statsd_name = "undef"
