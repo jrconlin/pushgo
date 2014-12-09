@@ -41,8 +41,8 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid     string          // Hex-encoded client ID; not normalized
-	deviceID []byte          // Raw client ID bytes
+	uaidLock sync.RWMutex
+	uaid     string          // Hex-encoded client ID; not normalized
 	Socket   *websocket.Conn // Remote connection
 	Store
 	Logger    *SimpleLogger
@@ -50,6 +50,19 @@ type PushWS struct {
 	Born      time.Time
 	closeLock sync.RWMutex
 	closed    bool
+}
+
+func (ws *PushWS) UAID() (uaid string) {
+	ws.uaidLock.RLock()
+	uaid = ws.uaid
+	ws.uaidLock.RUnlock()
+	return
+}
+
+func (ws *PushWS) SetUAID(uaid string) {
+	ws.uaidLock.Lock()
+	ws.uaid = uaid
+	ws.uaidLock.Unlock()
 }
 
 func (ws *PushWS) IsClosed() (closed bool) {

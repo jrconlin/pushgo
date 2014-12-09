@@ -351,8 +351,7 @@ sendUpdate:
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	requestID := ws.Request().Header.Get(HeaderID)
-	sock := PushWS{Uaid: "",
-		Socket: ws,
+	sock := PushWS{Socket: ws,
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   time.Now()}
