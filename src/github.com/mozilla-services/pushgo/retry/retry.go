@@ -51,6 +51,7 @@ func (conf *Config) NewHelper() (r *Helper, err error) {
 			conf.MaxJitter, err)
 	}
 	r = &Helper{
+		Backoff:   2,
 		Retries:   conf.Retries,
 		Delay:     delay,
 		MaxDelay:  maxDelay,
@@ -67,6 +68,7 @@ type Helper struct {
 	// non-temporary errors will not be retried.
 	CanRetry func(error) bool
 
+	Backoff   int           // Backoff multiplier.
 	Retries   int           // Maximum retry attempts.
 	Delay     time.Duration // Initial retry delay.
 	MaxDelay  time.Duration // Maximum retry delay.
@@ -102,7 +104,7 @@ func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 			case <-r.closeNotify():
 				ok = false
 			case <-time.After(delay):
-				retryDelay *= 2
+				retryDelay *= time.Duration(r.Backoff)
 			}
 			continue
 		}
@@ -121,7 +123,7 @@ func (r *Helper) RetryAttempt(attempt, multiplier int, err error) bool {
 	}
 	var retryDelay time.Duration
 	if attempt > 1 {
-		retryDelay = time.Duration(int64(r.Delay) * (1 << uint(attempt-1)))
+		retryDelay = r.Delay * time.Duration(pow(attempt-1, r.Backoff))
 	} else {
 		retryDelay = r.Delay
 	}
@@ -140,4 +142,18 @@ func (r *Helper) withJitter(delay time.Duration) time.Duration {
 	}
 	jitter := time.Duration(rand.Int63n(int64(r.MaxJitter)))
 	return delay + jitter
+}
+
+// Binary powering algorithm for integers. Go's math.Pow only works for
+// floats. See https://groups.google.com/d/topic/golang-nuts/PnLnr4bc9Wo/discussion.
+func pow(x, y int) (r int) {
+	r = 1
+	for y > 0 {
+		if y%2 != 0 {
+			r *= x
+		}
+		y >>= 1
+		x *= x
+	}
+	return
 }
