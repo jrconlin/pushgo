@@ -704,7 +704,7 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 	if self.app.pushLongPongs {
 		websocket.JSON.Send(sock.Socket, PingReply{header.Type, 200})
 	} else {
-		websocket.Message.Send(sock.Socket, []byte("{}"))
+		websocket.Message.Send(sock.Socket, "{}")
 	}
 	self.metrics.Increment("updates.client.ping")
 	return nil
@@ -718,7 +718,7 @@ func (self *WorkerWS) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error
 	       Arguments:JsMap{"uaid": sock.Uaid}}
 	   result := <-sock.Scmd
 	*/
-	websocket.Message.Send(sock.Socket, []byte("{}"))
+	websocket.Message.Send(sock.Socket, "{}")
 	return nil
 }
 
