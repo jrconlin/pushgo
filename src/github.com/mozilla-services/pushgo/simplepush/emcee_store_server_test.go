@@ -1,5 +1,5 @@
 // +build memcached_server_test
-// +build !cgo !libmemcached
+// +build cgo,libmemcached
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -14,11 +14,11 @@ import (
 )
 
 // Server is a memcached-backed test Simple Push server, using the
-// gomemcache driver.
+// gomc driver.
 var Server = &TestServer{
 	LogLevel: 0,
 	NewStore: func() (store ConfigStore, configStruct interface{}, err error) {
-		store = NewGomemc()
+		store = NewEmcee()
 		configStruct = store.ConfigStruct()
 		env := envconf.Load()
 		if err = env.DecodeStrict(toEnvName("test_storage"), EnvSep, configStruct, nil); err != nil {

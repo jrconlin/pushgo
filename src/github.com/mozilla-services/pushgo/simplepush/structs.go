@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"sync"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -44,9 +45,36 @@ type PushWS struct {
 	deviceID []byte          // Raw client ID bytes
 	Socket   *websocket.Conn // Remote connection
 	Store
-	Logger  *SimpleLogger
-	Metrics *Metrics
-	Born    time.Time
+	Logger    *SimpleLogger
+	Metrics   *Metrics
+	Born      time.Time
+	closeLock sync.RWMutex
+	closed    bool
+}
+
+func (ws *PushWS) IsClosed() (closed bool) {
+	ws.closeLock.RLock()
+	closed = ws.closed
+	ws.closeLock.RUnlock()
+	return
+}
+
+func (ws *PushWS) Close() error {
+	if ws == nil {
+		return nil
+	}
+	ws.closeLock.Lock()
+	if ws.closed {
+		ws.closeLock.Unlock()
+		return nil
+	}
+	ws.closed = true
+	ws.closeLock.Unlock()
+	socket := ws.Socket
+	if socket == nil {
+		return nil
+	}
+	return socket.Close()
 }
 
 func (ws *PushWS) Origin() string {

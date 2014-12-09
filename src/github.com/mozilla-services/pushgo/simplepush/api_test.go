@@ -794,8 +794,12 @@ func TestUnregisterRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
+	connId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating connection ID: %#v", err)
+	}
 	// Spool all notifications, including those received on dregistered channels.
-	conn := client.NewConn(socket, true)
+	conn := client.NewConn(socket, connId, true)
 	defer conn.Close()
 	if _, err = conn.WriteHelo(""); err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)

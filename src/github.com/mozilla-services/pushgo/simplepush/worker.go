@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -40,6 +41,23 @@ type WorkerWS struct {
 }
 
 type WorkerState int
+
+// replaceWorkers controls client reconnect behavior. By default, clients that
+// present already-connected device IDs will be issued new IDs. This can be
+// overridden to disconnect existing clients.
+var replaceWorkers = int32(0)
+
+func setReplaceEnabled(v bool) {
+	if v {
+		atomic.StoreInt32(&replaceWorkers, 1)
+	} else {
+		atomic.StoreInt32(&replaceWorkers, 0)
+	}
+}
+
+func replaceEnabled() bool {
+	return atomic.LoadInt32(&replaceWorkers) == 1
+}
 
 const (
 	WorkerInactive WorkerState = 0
@@ -378,6 +396,10 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 		}
 		return "", false, ErrExistingID
 	}
+	var (
+		client          *Client
+		clientConnected bool
+	)
 	if len(request.DeviceID) == 0 {
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("worker", "Generating new UAID for device",
@@ -392,13 +414,6 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 		}
 		return "", false, ErrInvalidID
 	}
-	if self.app.ClientExists(request.DeviceID) {
-		if logWarning {
-			self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-				LogFields{"rid": self.id, "uaid": request.DeviceID})
-		}
-		goto forceReset
-	}
 	if !sock.Store.CanStore(len(request.ChannelIDs)) {
 		// are there a suspicious number of channels?
 		if logWarning {
@@ -410,6 +425,21 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 		}
 		sock.Store.DropAll(request.DeviceID)
 		goto forceReset
+	}
+	client, clientConnected = self.app.GetClient(request.DeviceID)
+	if clientConnected {
+		if !replaceEnabled() {
+			if logWarning {
+				self.logger.Warn("worker", "UAID collision; resetting UAID for device",
+					LogFields{"rid": self.id, "uaid": request.DeviceID})
+			}
+			goto forceReset
+		}
+		if self.logger.ShouldLog(INFO) {
+			self.logger.Info("worker", "UAID collision; disconnecting previous client",
+				LogFields{"rid": self.id, "uaid": request.DeviceID})
+		}
+		self.app.Server().HandleCommand(PushCommand{DIE, nil}, client.PushWS)
 	}
 	if len(request.ChannelIDs) > 0 && !sock.Store.Exists(request.DeviceID) {
 		if logWarning {

@@ -619,23 +619,25 @@ func (s *GomemcStore) storeAppIDArray(uaid string, chids ChannelIDs) error {
 	return s.client.Set(&mc.Item{Key: uaid, Value: raw, Expiration: 0})
 }
 
-// Retrieves a channel record from memcached.
+// Retrieves a channel record from memcached. Returns an empty record if the
+// channel does not exist.
 func (s *GomemcStore) fetchRec(pk string) (*ChannelRecord, error) {
 	if len(pk) == 0 {
 		return nil, ErrNoKey
 	}
 	result := new(ChannelRecord)
 	raw, err := s.client.Get(pk)
-	if err != nil && err != mc.ErrCacheMiss {
-		if s.logger.ShouldLog(ERROR) {
-			s.logger.Error("gomemc", "Get Failed", LogFields{
-				"pk":    pk,
-				"error": err.Error(),
-			})
+	if err != nil {
+		if err != mc.ErrCacheMiss {
+			if s.logger.ShouldLog(ERROR) {
+				s.logger.Error("gomemc", "Get Failed", LogFields{
+					"pk":    pk,
+					"error": err.Error(),
+				})
+			}
+			return nil, err
 		}
-		return nil, err
-	}
-	if err = json.Unmarshal(raw.Value, result); err != nil {
+	} else if err = json.Unmarshal(raw.Value, result); err != nil {
 		if s.logger.ShouldLog(ERROR) {
 			s.logger.Error("gomemc", "Could not unmarshal rec", LogFields{
 				"pk":    pk,
