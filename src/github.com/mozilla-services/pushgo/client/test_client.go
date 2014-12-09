@@ -25,10 +25,10 @@ var (
 
 	NotifyClient = &http.Client{}
 	NotifyRetry  = &retry.Helper{
-		Filter:    IsTemporaryErr,
+		CanRetry:  IsTemporaryErr,
 		Retries:   5,
 		Delay:     200 * time.Millisecond,
-		MaxDelay:  5 * time.Millisecond,
+		MaxDelay:  5 * time.Second,
 		MaxJitter: 400 * time.Millisecond,
 	}
 )

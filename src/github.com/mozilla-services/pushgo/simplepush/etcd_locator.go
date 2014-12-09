@@ -161,7 +161,7 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 	l.rh.CloseNotifier = l
-	l.rh.Filter = IsEtcdTemporary
+	l.rh.CanRetry = IsEtcdTemporary
 
 	if l.logger.ShouldLog(INFO) {
 		l.logger.Info("etcd", "connecting to etcd servers",

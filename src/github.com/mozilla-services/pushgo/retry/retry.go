@@ -60,33 +60,40 @@ func (conf *Config) NewHelper() (r *Helper, err error) {
 }
 
 type Helper struct {
+	// CloseNotifier can be used to cancel all in-progress retries.
 	CloseNotifier
-	Filter    func(error) bool
-	Retries   int
-	Delay     time.Duration
-	MaxDelay  time.Duration
-	MaxJitter time.Duration
+
+	// CanRetry indicates whether an error is temporary. Operations that return
+	// non-temporary errors will not be retried.
+	CanRetry func(error) bool
+
+	Retries   int           // Maximum retry attempts.
+	Delay     time.Duration // Initial retry delay.
+	MaxDelay  time.Duration // Maximum retry delay.
+	MaxJitter time.Duration // Maximum additional randomized delay.
 }
 
 func (r *Helper) closeNotify() <-chan bool {
-	if cn := r.CloseNotifier; cn != nil {
-		return cn.CloseNotify()
+	if r.CloseNotifier != nil {
+		return r.CloseNotifier.CloseNotify()
 	}
 	return nil
 }
 
-func (r *Helper) filter(err error) bool {
-	if filter := r.Filter; filter != nil {
-		return filter(err)
+func (r *Helper) canRetry(err error) bool {
+	if r.CanRetry != nil {
+		return r.CanRetry(err)
 	}
 	return true
 }
 
+// RetryFunc calls the function f until it returns a non-temporary error
+// or exceeds the maximum number of retry attempts.
 func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 	retryDelay := r.Delay
 	for ok := true; ok; {
 		if err = f(); err != nil {
-			if !r.filter(err) || retries >= r.Retries {
+			if !r.canRetry(err) || retries >= r.Retries {
 				break
 			}
 			retries++
@@ -104,12 +111,13 @@ func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 	return
 }
 
+// RetryAttempt indicates whether an operation that returned err can be
+// retried. It's useful for operations that already keep track of the retry
+// count, such as the CheckRetry mechanism used by go-etcd. The multiplier
+// controls the number of attempts per node.
 func (r *Helper) RetryAttempt(attempt, multiplier int, err error) bool {
-	if attempt > r.Retries*multiplier {
+	if attempt > r.Retries*multiplier || !r.canRetry(err) {
 		return false
-	}
-	if !r.filter(err) {
-		return true
 	}
 	var retryDelay time.Duration
 	if attempt > 1 {
