@@ -274,6 +274,10 @@ func (r *BroadcastRouter) Unregister(uaid string) error {
 	return nil
 }
 
+func (r *BroadcastRouter) Status() (bool, error) {
+	return true, nil
+}
+
 func (r *BroadcastRouter) Close() (err error) {
 	r.closeLock.Lock()
 	err = r.lastErr

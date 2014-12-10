@@ -195,7 +195,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockLogger, mockMetrics); err != nil {
 				return nil, err
 			}
-			router := NewRouter()
+			router := NewBroadcastRouter()
 			mockRouter = newMockPlugin(PluginRouter, router)
 			if err := loadEnvConfig(env, "router", app, mockRouter); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)

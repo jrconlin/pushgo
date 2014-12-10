@@ -114,8 +114,8 @@ func (t *TestServer) load() (*Application, error) {
 			return store, nil
 		},
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
-			router := NewRouter()
-			routerConf := router.ConfigStruct().(*RouterConfig)
+			router := NewBroadcastRouter()
+			routerConf := router.ConfigStruct().(*BroadcastRouterConfig)
 			routerConf.Listener.Addr = t.RouterAddr
 			if err := router.Init(app, routerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)
