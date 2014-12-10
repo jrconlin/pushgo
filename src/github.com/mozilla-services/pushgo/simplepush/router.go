@@ -46,6 +46,12 @@ type Router interface {
 	// Set the Locator for the router to use
 	SetLocator(locator Locator) error
 
+	// Return the Locator that was set
+	Locator() Locator
+
 	// Unique identifier used by locators for this node
 	URL() string
+
+	// Indicate status of the router, error if there's a problem
+	Status() (bool, error)
 }

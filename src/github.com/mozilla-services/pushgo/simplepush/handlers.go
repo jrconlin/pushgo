@@ -109,9 +109,9 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	if pinger := self.PropPinger(); pinger != nil {
 		status.Pinger.Healthy, status.Pinger.Error = pinger.Status()
 	}
-	// if locator := self.router.Locator(); locator != nil {
-	// 	status.Locator.Healthy, status.Locator.Error = locator.Status()
-	// }
+	if locator := self.router.Locator(); locator != nil {
+		status.Locator.Healthy, status.Locator.Error = locator.Status()
+	}
 
 	status.Healthy = status.Store.Healthy && status.Pinger.Healthy &&
 		status.Locator.Healthy
