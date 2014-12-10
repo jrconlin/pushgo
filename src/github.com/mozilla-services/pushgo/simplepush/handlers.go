@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"time"
 
-	capn "github.com/glycerine/go-capnproto"
 	"github.com/gorilla/mux"
 	"golang.org/x/net/websocket"
 )
@@ -26,7 +25,7 @@ type Handler struct {
 	app        *Application
 	logger     *SimpleLogger
 	store      Store
-	router     *Router
+	router     Router
 	metrics    Statistician
 	tokenKey   []byte
 	propping   PropPinger
@@ -110,9 +109,9 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	if pinger := self.PropPinger(); pinger != nil {
 		status.Pinger.Healthy, status.Pinger.Error = pinger.Status()
 	}
-	if locator := self.router.Locator(); locator != nil {
-		status.Locator.Healthy, status.Locator.Error = locator.Status()
-	}
+	// if locator := self.router.Locator(); locator != nil {
+	// 	status.Locator.Healthy, status.Locator.Error = locator.Status()
+	// }
 
 	status.Healthy = status.Store.Healthy && status.Pinger.Healthy &&
 		status.Locator.Healthy
@@ -376,81 +375,6 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		self.logger.Info("main", "Server for client shut-down",
 			LogFields{"rid": requestID})
 	}
-}
-
-// Boy Golly, sure would be nice to put this in router.go, huh?
-// well, thanks to go being picky about circular references, you can't.
-func (self *Handler) RouteHandler(resp http.ResponseWriter, req *http.Request) {
-	var err error
-	logWarning := self.logger.ShouldLog(WARNING)
-	// get the uaid from the url
-	uaid, ok := mux.Vars(req)["uaid"]
-	if req.Method != "PUT" {
-		http.Error(resp, "", http.StatusMethodNotAllowed)
-		self.metrics.Increment("updates.routed.invalid")
-		return
-	}
-	// if uid is not present, or doesn't exist in the known clients...
-	if !ok || !self.app.ClientExists(uaid) {
-		http.Error(resp, "UID Not Found", http.StatusNotFound)
-		self.metrics.Increment("updates.routed.unknown")
-		return
-	}
-	// We know of this one.
-	var (
-		r        Routable
-		chid     string
-		timeNano int64
-		sentAt   time.Time
-		data     string
-	)
-	segment, err := capn.ReadFromStream(req.Body, nil)
-	if err != nil {
-		if logWarning {
-			self.logger.Warn("router", "Could not read update body",
-				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
-		}
-		goto invalidBody
-	}
-	r = ReadRootRoutable(segment)
-	chid = r.ChannelID()
-	if len(chid) == 0 {
-		if logWarning {
-			self.logger.Warn("router", "Missing channel ID",
-				LogFields{"rid": req.Header.Get(HeaderID), "uaid": uaid})
-		}
-		goto invalidBody
-	}
-	// routed data is already in storage.
-	self.metrics.Increment("updates.routed.incoming")
-	timeNano = r.Time()
-	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
-	// Never trust external data
-	data = r.Data()
-	if len(data) > self.maxDataLen {
-		if logWarning {
-			self.logger.Warn("router", "Data segment too long, truncating",
-				LogFields{"rid": req.Header.Get(HeaderID),
-					"uaid": uaid})
-		}
-		data = data[:self.maxDataLen]
-	}
-	if err = self.app.Server().Update(chid, uaid, r.Version(), sentAt, data); err != nil {
-		if logWarning {
-			self.logger.Warn("router", "Could not update local user",
-				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
-		}
-		http.Error(resp, "Server Error", http.StatusInternalServerError)
-		self.metrics.Increment("updates.routed.error")
-		return
-	}
-	resp.Write([]byte("Ok"))
-	self.metrics.Increment("updates.routed.received")
-	return
-
-invalidBody:
-	http.Error(resp, "Invalid body", http.StatusNotAcceptable)
-	self.metrics.Increment("updates.routed.invalid")
 }
 
 func (r *Handler) SetPropPinger(ping PropPinger) (err error) {

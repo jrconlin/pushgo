@@ -168,7 +168,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginRouter, app); err != nil {
 		return nil, err
 	}
-	router := obj.(*Router)
+	router := obj.(Router)
 	if err = app.SetRouter(router); err != nil {
 		return nil, err
 	}
@@ -345,11 +345,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return LoadExtensibleSection(app, "storage", AvailableStores, env, configFile)
 		},
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
-			router := NewRouter()
-			if err := LoadConfigForSection(app, "router", router, env, configFile); err != nil {
-				return nil, err
-			}
-			return router, nil
+			return LoadExtensibleSection(app, "router", AvailableRouters, env, configFile)
 		},
 		PluginLocator: func(app *Application) (HasConfigStruct, error) {
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, env, configFile)
