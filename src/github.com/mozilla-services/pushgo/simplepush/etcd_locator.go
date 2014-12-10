@@ -209,7 +209,7 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int, lastResp ht
 	} else {
 		retryErr = err
 	}
-	if ok := l.rh.RetryAttempt(attempt, len(cluster.Machines), retryErr); !ok {
+	if _, ok := l.rh.RetryAttempt(attempt, len(cluster.Machines), retryErr); !ok {
 		l.metrics.Increment("locator.etcd.error")
 		return &etcd.EtcdError{
 			ErrorCode: etcd.ErrCodeEtcdNotReachable,

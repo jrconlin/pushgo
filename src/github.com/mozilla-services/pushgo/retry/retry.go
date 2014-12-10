@@ -98,12 +98,12 @@ func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 			if !r.canRetry(err) || retries >= r.Retries {
 				break
 			}
-			retries++
 			delay := r.withJitter(retryDelay)
 			select {
 			case <-r.closeNotify():
 				ok = false
 			case <-time.After(delay):
+				retries++
 				retryDelay *= time.Duration(r.Backoff)
 			}
 			continue
@@ -114,26 +114,26 @@ func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 }
 
 // RetryAttempt indicates whether an operation that returned err can be
-// retried. It's useful for operations that already keep track of the retry
+// retried. It's useful for operations that already keep track of the attempt
 // count, such as the CheckRetry mechanism used by go-etcd. The multiplier
 // controls the number of attempts per node.
-func (r *Helper) RetryAttempt(attempt, multiplier int, err error) bool {
-	if attempt > r.Retries*multiplier || !r.canRetry(err) {
-		return false
+func (r *Helper) RetryAttempt(attempt, multiplier int, err error) (
+	delay time.Duration, ok bool) {
+
+	if attempt > r.Retries*multiplier {
+		return 0, false
 	}
-	var retryDelay time.Duration
-	if attempt > 1 {
-		retryDelay = r.Delay * time.Duration(pow(attempt-1, r.Backoff))
-	} else {
-		retryDelay = r.Delay
+	if !r.canRetry(err) {
+		return 0, false
 	}
-	delay := r.withJitter(retryDelay)
+	retryDelay := r.Delay * time.Duration(pow(r.Backoff, attempt-1))
+	delay = r.withJitter(retryDelay)
 	select {
 	case <-r.closeNotify():
-		return false
+		return delay, false
 	case <-time.After(delay):
 	}
-	return true
+	return delay, true
 }
 
 func (r *Helper) withJitter(delay time.Duration) time.Duration {
