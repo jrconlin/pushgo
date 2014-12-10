@@ -140,8 +140,11 @@ func (r *Helper) withJitter(delay time.Duration) time.Duration {
 	if delay > r.MaxDelay {
 		delay = r.MaxDelay
 	}
-	jitter := time.Duration(rand.Int63n(int64(r.MaxJitter)))
-	return delay + jitter
+	var jitter int64
+	if r.MaxJitter > 0 {
+		jitter = rand.Int63n(int64(r.MaxJitter))
+	}
+	return delay + time.Duration(jitter)
 }
 
 // Binary powering algorithm for integers. Go's math.Pow only works for
