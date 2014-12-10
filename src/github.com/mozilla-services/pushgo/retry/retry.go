@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var timeAfter = time.After
+
 type StatusError int
 
 func (err StatusError) Error() string {
@@ -102,7 +104,7 @@ func (r *Helper) RetryFunc(f func() error) (retries int, err error) {
 			select {
 			case <-r.closeNotify():
 				ok = false
-			case <-time.After(delay):
+			case <-timeAfter(delay):
 				retries++
 				retryDelay *= time.Duration(r.Backoff)
 			}
@@ -131,7 +133,7 @@ func (r *Helper) RetryAttempt(attempt, multiplier int, err error) (
 	select {
 	case <-r.closeNotify():
 		return delay, false
-	case <-time.After(delay):
+	case <-timeAfter(delay):
 	}
 	return delay, true
 }
