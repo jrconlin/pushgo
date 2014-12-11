@@ -8,6 +8,7 @@
 #    hg log |head -1 |sed "s/changeset:\s*//"
 #
 golang.org/x/net/websocket cbcac7bb8415db9b6cb4d1ebab1dc9afbd688b97
+golang.org/x/tools/cmd/cover 0ea69b51f7d843942e31d2eead54090a8824ae42
 code.google.com/p/goprotobuf/proto 256:36be16571e14
 github.com/bbangert/toml a2063ce2e5cf10e54ab24075840593d60f59b611
 github.com/bradfitz/gomemcache/memcache 4faecadd4f695d18a912ba110120fcfd460aca98
