@@ -4,7 +4,6 @@ BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
 GOPATH = $(DEPS):$(HERE)
-GOBIN = $(BIN)
 
 PLATFORM=$(shell uname)
 
@@ -31,6 +30,7 @@ $(BIN):
 $(DEPS):
 	@echo "Installing dependencies"
 	GOPATH=$(GOPATH) $(GPM) install
+	GOPATH=$(GOPATH) go get -u github.com/mattn/goveralls
 
 build: $(DEPS)
 
@@ -97,6 +97,10 @@ test-cov: retry-cov id-cov simplepush-cov
 html-cov: test-cov
 	GOPATH=$(GOPATH) go tool cover \
 		-html=coverage.out -o coverage.html
+
+travis-cov: test-cov
+	GOPATH=$(GOPATH) goveralls -coverprofile=coverage.out \
+		-service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
 test:
 	GOPATH=$(GOPATH) go test \
