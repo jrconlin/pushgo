@@ -356,7 +356,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 						"stack": string(stack[:n])})
 			}
 			if len(uaid) > 0 && self.prop != nil {
-				self.prop.Send(uaid, version)
+				self.prop.Send(uaid, version, data)
 			}
 		}
 		return
