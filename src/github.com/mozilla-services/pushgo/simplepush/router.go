@@ -378,9 +378,9 @@ func (r *Router) runLoop() {
 	}
 }
 
-func pipeTo(dest io.WriteCloser, src io.WriterTo) (err error) {
+func pipeTo(dest *io.PipeWriter, src io.WriterTo) (err error) {
 	if _, err = src.WriteTo(dest); err != nil {
-		return
+		return dest.CloseWithError(err)
 	}
 	return dest.Close()
 }
