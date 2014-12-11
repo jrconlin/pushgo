@@ -55,18 +55,18 @@ $(TARGET):
 
 test-gomc:
 	GOPATH=$(GOPATH) go test \
-		-tags "memcached_server_test libmemcached" -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+		-tags "memcached_server_test libmemcached" -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test-gomemcache:
 	GOPATH=$(GOPATH) go test \
-		-tags memcached_server_test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+		-tags memcached_server_test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test:
 	GOPATH=$(GOPATH) go test \
-		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id simplepush)
+		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:
-	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id simplepush)
+	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id retry simplepush)
 
 clean:
 	rm -rf bin $(DEPS)
