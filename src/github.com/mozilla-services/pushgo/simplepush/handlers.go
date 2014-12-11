@@ -281,7 +281,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if pinger == nil {
 		goto sendUpdate
 	}
-	if ok, err = pinger.Send(uaid, version); err != nil {
+	if ok, err = pinger.Send(uaid, version, data); err != nil {
 		if logWarning {
 			self.logger.Warn("update", "Could not send proprietary ping", LogFields{
 				"rid": requestID, "uaid": uaid, "error": err.Error()})

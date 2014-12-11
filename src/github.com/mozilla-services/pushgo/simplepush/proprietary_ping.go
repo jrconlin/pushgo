@@ -5,10 +5,10 @@
 package simplepush
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -17,7 +17,7 @@ import (
 type PropPinger interface {
 	HasConfigStruct
 	Register(uaid string, pingData []byte) error
-	Send(uaid string, vers int64) (ok bool, err error)
+	Send(uaid string, vers int64, data string) (ok bool, err error)
 	CanBypassWebsocket() bool
 	Status() (bool, error)
 }
@@ -66,7 +66,7 @@ func (r *NoopPing) CanBypassWebsocket() bool {
 }
 
 // try to send the ping.
-func (r *NoopPing) Send(string, int64) (bool, error) {
+func (r *NoopPing) Send(string, int64, string) (bool, error) {
 	return false, nil
 }
 
@@ -117,7 +117,7 @@ func (r *UDPPing) CanBypassWebsocket() bool {
 
 // Send the version info to the Proprietary ping URL provided
 // by the carrier.
-func (r *UDPPing) Send(string, int64) (bool, error) {
+func (r *UDPPing) Send(string, int64, string) (bool, error) {
 	// Obviously, this needs to be filled out with the appropriate
 	// setup and calls to communicate to the remote server.
 	// Since UDP is not actually defined, we're returning this
@@ -159,10 +159,15 @@ type GCMRequest struct {
 	CollapseKey string    `json:"collapse_key"`
 	TTL         uint64    `json:"time_to_live"`
 	DryRun      bool      `json:"dry_run"`
+	Data        GCMData   `json:"data"`
 }
 
 type GCMPingData struct {
 	RegID string `json:"regid"`
+}
+
+type GCMData struct {
+	Msg string `json:"msg"`
 }
 
 type GCMError int
@@ -223,35 +228,7 @@ func (r *GCMPing) CanBypassWebsocket() bool {
 }
 
 func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
-	ping := new(GCMPingData)
-	if err = json.Unmarshal(pingData, ping); err != nil {
-		return err
-	}
-	if len(ping.RegID) == 0 {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("gcmping",
-				"No user registration ID present. Cannot send message",
-				nil)
-		}
-		return ConfigurationErr
-	}
-	request := &GCMRequest{
-		// google docs lie. You MUST send the regid as an array, even if it's one
-		// element.
-		Regs:        [1]string{ping.RegID},
-		CollapseKey: r.collapseKey,
-		TTL:         r.ttl,
-		DryRun:      r.dryRun,
-	}
-	requestData, err := json.Marshal(request)
-	if err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("gcmping", "Could not marshal connection string for storage",
-				LogFields{"error": err.Error()})
-		}
-		return err
-	}
-	if err = r.store.PutPing(uaid, requestData); err != nil {
+	if err = r.store.PutPing(uaid, pingData); err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("gcmping", "Could not store connect",
 				LogFields{"error": err.Error()})
@@ -261,7 +238,7 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 	return nil
 }
 
-func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
+func (r *GCMPing) Send(uaid string, vers int64, data string) (ok bool, err error) {
 	pingData, err := r.store.FetchPing(uaid)
 	if err != nil {
 		return false, err
@@ -269,7 +246,34 @@ func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
 	if len(pingData) == 0 {
 		return false, nil
 	}
-	req, err := http.NewRequest("POST", r.url, bytes.NewBuffer(pingData))
+	ping := new(GCMPingData)
+	if err = json.Unmarshal(pingData, ping); err != nil {
+		return false, err
+	}
+	if len(ping.RegID) == 0 {
+		return false, err
+	}
+	request := &GCMRequest{
+		// google docs lie. You MUST send the regid as an array, even if it's one
+		// element.
+		Regs:        [1]string{ping.RegID},
+		CollapseKey: r.collapseKey,
+		TTL:         r.ttl,
+		DryRun:      r.dryRun,
+		Data: GCMData{
+			Msg: data,
+		},
+	}
+	pr, pw := io.Pipe()
+	enc := json.NewEncoder(pw)
+	go func() {
+		if err := enc.Encode(request); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		pw.Close()
+	}()
+	req, err := http.NewRequest("POST", r.url, pr)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("propping",
