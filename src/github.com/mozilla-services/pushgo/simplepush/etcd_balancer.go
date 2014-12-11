@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"path"
 	"sort"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
+
+	"github.com/mozilla-services/pushgo/retry"
 )
 
 var (
@@ -57,6 +60,9 @@ type EtcdBalancerConf struct {
 	// UpdateInterval is the interval for publishing client counts to etcd.
 	// Defaults to "10s".
 	UpdateInterval string `toml:"update_interval" env:"update_interval"`
+
+	// Retry specifies request retry options.
+	Retry retry.Config
 }
 
 // EtcdBalancer stores the number of available client connections in etcd.
@@ -69,6 +75,7 @@ type EtcdBalancer struct {
 	dir       string
 	url       *url.URL
 	key       string
+	rh        *retry.Helper
 	connCount func() int
 
 	fetchLock sync.RWMutex // Protects the following fields.
@@ -175,7 +182,17 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 		return err
 	}
 
+	if b.rh, err = conf.Retry.NewHelper(); err != nil {
+		b.log.Panic("balancer", "Error configuring retry helper",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	b.rh.CloseNotifier = b
+	b.rh.CanRetry = IsEtcdTemporary
+
 	b.client = etcd.NewClient(conf.Servers)
+	b.client.CheckRetry = b.checkRetry
+
 	if _, err = b.client.CreateDir(b.dir, 0); err != nil {
 		if !IsEtcdKeyExist(err) {
 			b.log.Panic("balancer", "Error creating etcd directory",
@@ -345,7 +362,13 @@ func (b *EtcdBalancer) filterPeers(root *etcd.Node) (peers EtcdPeers, err error)
 
 // Fetch retrieves a list of peer nodes from etcd, sorted by free connections.
 func (b *EtcdBalancer) Fetch() (peers EtcdPeers, err error) {
-	response, err := b.client.Get(b.dir, false, true)
+	var response *etcd.Response
+	fetchOnce := func() (err error) {
+		response, err = b.client.Get(b.dir, false, true)
+		return err
+	}
+	retries, err := b.rh.RetryFunc(fetchOnce)
+	b.metrics.IncrementBy("balancer.fetch.retry", int64(retries))
 	if err != nil {
 		if b.log.ShouldLog(CRITICAL) {
 			b.log.Critical("balancer",
@@ -374,9 +397,13 @@ func (b *EtcdBalancer) Publish() (err error) {
 		b.log.Info("balancer", "Publishing free connection count to etcd",
 			LogFields{"host": b.url.Host, "conns": freeConns})
 	}
-	if _, err = b.client.Set(b.key, freeConns,
-		uint64(b.ttl/time.Second)); err != nil {
-
+	publishOnce := func() (err error) {
+		_, err = b.client.Set(b.key, freeConns, uint64(b.ttl/time.Second))
+		return err
+	}
+	retries, err := b.rh.RetryFunc(publishOnce)
+	b.metrics.IncrementBy("balancer.publish.retry", int64(retries))
+	if err != nil {
 		if b.log.ShouldLog(CRITICAL) {
 			b.log.Critical("balancer", "Error publishing connection count to etcd",
 				LogFields{"error": err.Error(), "conns": freeConns, "host": b.url.Host})
@@ -385,6 +412,37 @@ func (b *EtcdBalancer) Publish() (err error) {
 		return err
 	}
 	b.metrics.Increment("balancer.publish.success")
+	return nil
+}
+
+func (b *EtcdBalancer) CloseNotify() <-chan bool {
+	return b.closeSignal
+}
+
+func (b *EtcdBalancer) checkRetry(cluster *etcd.Cluster, attempt int,
+	lastResp http.Response, err error) error {
+
+	if b.log.ShouldLog(ERROR) {
+		b.log.Error("balancer", "etcd request error", LogFields{
+			"error":   err.Error(),
+			"attempt": strconv.Itoa(attempt),
+			"status":  strconv.Itoa(lastResp.StatusCode)})
+	}
+	var retryErr error
+	if lastResp.StatusCode >= 500 {
+		retryErr = retry.StatusError(lastResp.StatusCode)
+	} else {
+		retryErr = err
+	}
+	if _, ok := b.rh.RetryAttempt(attempt, len(cluster.Machines), retryErr); !ok {
+		b.metrics.Increment("balancer.etcd.error")
+		return &etcd.EtcdError{
+			ErrorCode: etcd.ErrCodeEtcdNotReachable,
+			Message: fmt.Sprintf("Error connecting to etcd after %d retries",
+				attempt),
+		}
+	}
+	b.metrics.Increment("balancer.etcd.retry")
 	return nil
 }
 

@@ -173,7 +173,9 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	return nil
 }
 
-func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int, lastResp http.Response, err error) error {
+func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
+	lastResp http.Response, err error) error {
+
 	if l.logger.ShouldLog(ERROR) {
 		l.logger.Error("locator", "etcd request error", LogFields{
 			"error":   err.Error(),
@@ -190,7 +192,8 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int, lastResp ht
 		l.metrics.Increment("locator.etcd.error")
 		return &etcd.EtcdError{
 			ErrorCode: etcd.ErrCodeEtcdNotReachable,
-			Message:   fmt.Sprintf("Error connecting to etcd after %d retries", attempt),
+			Message: fmt.Sprintf("Error connecting to etcd after %d retries",
+				attempt),
 		}
 	}
 	l.metrics.Increment("locator.etcd.retry.request")
