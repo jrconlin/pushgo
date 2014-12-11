@@ -4,7 +4,6 @@ BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
 GOPATH = $(DEPS):$(HERE)
-GOBIN = $(BIN)
 
 PLATFORM=$(shell uname)
 
@@ -13,6 +12,8 @@ PATH := $(HERE)/bin:$(DEPS)/bin:$(PATH)
 
 PACKAGE = github.com/mozilla-services/pushgo
 TARGET = simplepush
+COVER_MODE = count
+COVER_PATH = $(HERE)/.coverage
 
 VERSION=$(shell git describe --tags --always HEAD 2>/dev/null)
 ifneq ($(strip $(VERSION)),)
@@ -29,6 +30,7 @@ $(BIN):
 $(DEPS):
 	@echo "Installing dependencies"
 	GOPATH=$(GOPATH) $(GPM) install
+	GOPATH=$(GOPATH) go get -u github.com/mattn/goveralls
 
 build: $(DEPS)
 
@@ -51,15 +53,54 @@ memcached: libmemcached-1.0.18
 $(TARGET):
 	rm -f $(TARGET)
 	@echo "Building simplepush"
-	GOPATH=$(GOPATH) go build -ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
+	GOPATH=$(GOPATH) go build \
+		-ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
 test-gomc:
 	GOPATH=$(GOPATH) go test \
-		-tags "memcached_server_test libmemcached" -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
+		-tags "memcached_server_test libmemcached" \
+		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test-gomemcache:
 	GOPATH=$(GOPATH) go test \
-		-tags memcached_server_test -ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
+		-tags memcached_server_test \
+		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
+
+clean-cov:
+	rm -rf $(COVER_PATH)
+	rm -f $(addprefix coverage,.out .html)
+
+cov-dir: clean-cov
+	mkdir -p $(COVER_PATH)
+
+retry-cov: cov-dir
+	GOPATH=$(GOPATH) go test \
+		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/retry.out \
+		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/retry
+
+id-cov: cov-dir
+	GOPATH=$(GOPATH) go test \
+		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/id.out \
+		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/id
+
+simplepush-cov: cov-dir
+	GOPATH=$(GOPATH) go test \
+		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
+		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
+
+# Merge coverage reports for each package. -coverprofile does not support
+# multiple packages; see https://github.com/golang/go/issues/6909.
+test-cov: retry-cov id-cov simplepush-cov
+	echo "mode: $(COVER_MODE)" > coverage.out
+	grep -h -v "^mode:" $(COVER_PATH)/*.out >> coverage.out
+
+html-cov: test-cov
+	GOPATH=$(GOPATH) go tool cover \
+		-html=coverage.out -o coverage.html
+
+travis-cov: test-cov
+	GOPATH=$(GOPATH) goveralls -coverprofile=coverage.out \
+		-service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
 test:
 	GOPATH=$(GOPATH) go test \
@@ -68,6 +109,6 @@ test:
 vet:
 	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id retry simplepush)
 
-clean:
+clean: clean-cov
 	rm -rf bin $(DEPS)
 	rm -f $(TARGET)
