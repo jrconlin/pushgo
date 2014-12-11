@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +33,29 @@ func CanonicalURL(scheme, host string, port int) string {
 		return fmt.Sprintf("%s://%s", scheme, host)
 	}
 	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// ParseRetryAfter parses a Retry-After header value. Per RFC 7231
+// section 7.1.3, the value may be either an absolute time or the
+// number of seconds to wait.
+func ParseRetryAfter(header string) (d time.Duration, ok bool) {
+	if len(header) == 0 {
+		return 0, false
+	}
+	sec, err := strconv.ParseInt(header, 10, 64)
+	if err != nil {
+		t, err := http.ParseTime(header)
+		if err != nil {
+			return 0, false
+		}
+		d = t.Sub(time.Now())
+	} else {
+		d = time.Duration(sec) * time.Second
+	}
+	if d > 0 {
+		return d, true
+	}
+	return 0, false
 }
 
 // TooBusyError is a temporary error returned when too many simultaneous
