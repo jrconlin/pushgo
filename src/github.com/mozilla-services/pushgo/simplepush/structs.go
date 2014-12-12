@@ -5,9 +5,10 @@
 package simplepush
 
 import (
+	"sync"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
+	"golang.org/x/net/websocket"
 )
 
 type CommandType int
@@ -40,13 +41,72 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	Uaid     string          // Hex-encoded client ID; not normalized
-	deviceID []byte          // Raw client ID bytes
+	uaidLock sync.RWMutex
+	uaid     string          // Hex-encoded client ID; not normalized
 	Socket   *websocket.Conn // Remote connection
 	Store
-	Logger  *SimpleLogger
-	Metrics *Metrics
-	Born    time.Time
+	Logger    *SimpleLogger
+	Metrics   *Metrics
+	Born      time.Time
+	closeLock sync.RWMutex
+	closed    bool
+}
+
+func (ws *PushWS) UAID() (uaid string) {
+	ws.uaidLock.RLock()
+	uaid = ws.uaid
+	ws.uaidLock.RUnlock()
+	return
+}
+
+func (ws *PushWS) SetUAID(uaid string) {
+	ws.uaidLock.Lock()
+	ws.uaid = uaid
+	ws.uaidLock.Unlock()
+}
+
+func (ws *PushWS) IsClosed() (closed bool) {
+	ws.closeLock.RLock()
+	closed = ws.closed
+	ws.closeLock.RUnlock()
+	return
+}
+
+func (ws *PushWS) Close() error {
+	if ws == nil {
+		return nil
+	}
+	ws.closeLock.Lock()
+	if ws.closed {
+		ws.closeLock.Unlock()
+		return nil
+	}
+	ws.closed = true
+	ws.closeLock.Unlock()
+	socket := ws.Socket
+	if socket == nil {
+		return nil
+	}
+	return socket.Close()
+}
+
+func (ws *PushWS) Origin() string {
+	// protect against null pointers.
+	if ws == nil {
+		return "Unknown"
+	}
+	if ws.Socket == nil {
+		return "No Socket"
+	}
+	conf := ws.Socket.Config()
+	if conf == nil {
+		return "No Socket Config"
+	}
+	origin := conf.Origin
+	if origin == nil {
+		return "No Socket Origin"
+	}
+	return origin.String()
 }
 
 // o4fs

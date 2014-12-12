@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
-	ws "code.google.com/p/go.net/websocket"
+	ws "golang.org/x/net/websocket"
 
 	"github.com/mozilla-services/pushgo/id"
 )
@@ -34,6 +35,8 @@ var (
 
 type Conn struct {
 	Socket        *ws.Conn      // The underlying WebSocket connection.
+	Id            string        // The unique connection ID.
+	ErrorLog      *log.Logger   // An optional logger for connection errors.
 	PingInterval  time.Duration // The amount of time the connection may remain idle before sending a ping.
 	PingDeadlime  time.Duration // The amount of time to wait for a pong before closing the connection.
 	DecodeDefault bool          // Use the default message decoders if a custom decoder is not registered.
@@ -50,6 +53,7 @@ type Conn struct {
 	closeWait     sync.WaitGroup
 	lastErr       error
 	isClosing     bool
+	isClosed      bool
 }
 
 type (
@@ -77,16 +81,16 @@ var DefaultDecoders = Decoders{
 	"notification": DecoderFunc(decodeNotification),
 }
 
-func Dial(origin string) (*Conn, error) {
-	deviceId, err := id.Generate()
-	if err != nil {
-		return nil, err
+func Dial(origin string, channelIds ...string) (conn *Conn,
+	deviceId string, err error) {
+
+	if deviceId, err = id.Generate(); err != nil {
+		return nil, "", err
 	}
-	conn, err := DialId(origin, &deviceId)
-	if err != nil {
-		return nil, err
+	if conn, err = DialId(origin, &deviceId, channelIds...); err != nil {
+		return nil, "", err
 	}
-	return conn, nil
+	return conn, deviceId, nil
 }
 
 func DialId(origin string, deviceId *string, channelIds ...string) (*Conn, error) {
@@ -110,12 +114,17 @@ func DialOrigin(origin string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewConn(socket, false), nil
+	id, err := id.Generate()
+	if err != nil {
+		return nil, err
+	}
+	return NewConn(socket, id, false), nil
 }
 
-func NewConn(socket *ws.Conn, spoolAll bool) *Conn {
+func NewConn(socket *ws.Conn, id string, spoolAll bool) *Conn {
 	conn := &Conn{
 		Socket:        socket,
+		Id:            id,
 		PingInterval:  30 * time.Minute,
 		PingDeadlime:  10 * time.Second,
 		DecodeDefault: true,
@@ -141,61 +150,68 @@ func (c *Conn) Origin() string {
 // RegisterDecoder registers a decoder for the specified message type. Message
 // types are case-insensitive.
 func (c *Conn) RegisterDecoder(messageType string, d Decoder) {
-	defer c.decoderLock.Unlock()
+	name := strings.ToLower(messageType)
 	c.decoderLock.Lock()
-	c.decoders[strings.ToLower(messageType)] = d
+	c.decoders[name] = d
+	c.decoderLock.Unlock()
 }
 
 // Decoder returns a registered custom decoder, or the default decoder if
 // c.DecodeDefault == true.
 func (c *Conn) Decoder(messageType string) (d Decoder) {
-	defer c.decoderLock.RUnlock()
-	c.decoderLock.RLock()
 	name := strings.ToLower(messageType)
-	if d = c.decoders[name]; d == nil && c.DecodeDefault {
+	c.decoderLock.RLock()
+	d = c.decoders[name]
+	c.decoderLock.RUnlock()
+	if d == nil && c.DecodeDefault {
 		d = DefaultDecoders[name]
 	}
 	return
 }
 
-// Close closes the connection to the push server, unblocking all
-// ReadMessage(), AcceptBatch(), and AcceptUpdate() calls. All registrations
-// and pending updates will be dropped.
+// Close closes the connection to the push server and waits for the read and
+// write loops to exit. Any pending ReadMessage(), AcceptBatch(), or
+// AcceptUpdate() calls will be unblocked with errors. All registrations and
+// pending updates will be dropped.
 func (c *Conn) Close() (err error) {
-	err, ok := c.stop()
-	if !ok {
+	c.closeLock.Lock()
+	err = c.lastErr
+	if c.isClosed {
+		c.closeLock.Unlock()
 		return err
 	}
-	c.closeWait.Wait()
+	c.isClosed = true
+	c.lastErr = c.signalClose()
+	c.closeLock.Unlock()
 	c.removeAllChannels()
 	return
 }
 
-// Acquires c.closeLock, closes the socket, and releases the lock, recording
-// the error in c.lastErr.
+// CloseNotify returns a receive-only channel that is closed when the
+// underlying socket is closed.
+func (c *Conn) CloseNotify() <-chan bool {
+	return c.signalChan
+}
+
+// fatal acquires c.closeLock, closes the socket, and releases the lock,
+// recording the error in c.lastErr.
 func (c *Conn) fatal(err error) {
-	defer c.closeLock.Unlock()
 	c.closeLock.Lock()
 	c.signalClose()
-	if c.lastErr == nil {
-		c.lastErr = err
-	}
+	c.lastErr = err
+	c.closeLock.Unlock()
 }
 
-// Acquires c.closeLock, closes the socket, and releases the lock, reporting
-// any errors to the caller. ok specifies whether the caller should wait for
-// the socket to close before returning.
-func (c *Conn) stop() (err error, ok bool) {
-	defer c.closeLock.Unlock()
+// stop closes the socket without waiting for the read and write loops to
+// complete.
+func (c *Conn) stop() (err error) {
 	c.closeLock.Lock()
-	if c.isClosing {
-		return c.lastErr, false
-	}
-	return c.signalClose(), true
+	err = c.signalClose()
+	c.closeLock.Unlock()
+	return
 }
 
-// Closes the underlying socket and unblocks the read and write loops. Assumes
-// the caller holds c.closeLock.
+// signalClose closes the underlying socket. The caller must hold c.closeLock.
 func (c *Conn) signalClose() (err error) {
 	if c.isClosing {
 		return
@@ -211,6 +227,7 @@ func (c *Conn) Receive() {
 	for ok := true; ok; {
 		packet, err := c.readPacket()
 		if err != nil {
+			c.logf("Error reading packet: %s", err)
 			c.fatal(err)
 			break
 		}
@@ -235,7 +252,7 @@ func (c *Conn) Receive() {
 	close(c.Packets)
 }
 
-// Cancels a pending request.
+// cancel cancels a pending request.
 func cancel(request Request) {
 	request.Error(io.EOF)
 	request.Close()
@@ -346,6 +363,7 @@ func (c *Conn) Send() {
 		}
 		if err != nil {
 			c.fatal(err)
+			break
 		}
 	}
 	// Unblock pending requests.
@@ -362,8 +380,8 @@ func (c *Conn) Send() {
 	}
 }
 
-// Attempts to send an outgoing request, returning an error if the connection
-// has been closed.
+// WriteRequest sends an outgoing request, returning io.EOF if the connection
+// is closed.
 func (c *Conn) WriteRequest(request Request) (reply Reply, err error) {
 	select {
 	case c.requests <- request:
@@ -401,12 +419,10 @@ func (c *Conn) WriteHelo(deviceId string, channelIds ...string) (actualId string
 
 // Subscribe subscribes a client to a new channel.
 func (c *Conn) Subscribe() (channelId, endpoint string, err error) {
-	channelId, err = id.Generate()
-	if err != nil {
+	if channelId, err = id.Generate(); err != nil {
 		return "", "", err
 	}
-	endpoint, err = c.Register(channelId)
-	if err != nil {
+	if endpoint, err = c.Register(channelId); err != nil {
 		return "", "", err
 	}
 	return
@@ -440,30 +456,31 @@ func (c *Conn) Register(channelId string) (endpoint string, err error) {
 
 // Registered indicates whether the client is subscribed to the specified
 // channel.
-func (c *Conn) Registered(channelId string) bool {
-	defer c.channelLock.RUnlock()
+func (c *Conn) Registered(channelId string) (ok bool) {
 	c.channelLock.RLock()
-	return c.channels[channelId]
+	ok = c.channels[channelId]
+	c.channelLock.RUnlock()
+	return
 }
 
 func (c *Conn) addChannel(channelId string) {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	c.channels[channelId] = true
+	c.channelLock.Unlock()
 }
 
 func (c *Conn) removeChannel(channelId string) {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	delete(c.channels, channelId)
+	c.channelLock.Unlock()
 }
 
 func (c *Conn) removeAllChannels() {
-	defer c.channelLock.Unlock()
 	c.channelLock.Lock()
 	for id := range c.channels {
 		delete(c.channels, id)
 	}
+	c.channelLock.Unlock()
 }
 
 // Unregister signals that the client is no longer interested in receiving
@@ -514,6 +531,7 @@ func (c *Conn) AcceptUpdate(update Update) (err error) {
 func (c *Conn) readPacket() (packet Packet, err error) {
 	var data []byte
 	if err = ws.Message.Receive(c.Socket, &data); err != nil {
+		c.logf("Socket read error: %s", err)
 		return nil, err
 	}
 	var (
@@ -568,6 +586,12 @@ Decode:
 		return nil, &ServerError{messageType, c.Origin(), errorText, statusCode}
 	}
 	return nil, nil
+}
+
+func (c *Conn) logf(format string, v ...interface{}) {
+	if log := c.ErrorLog; log != nil {
+		log.Printf(fmt.Sprintf("%s: %s", c.Id, format), v)
+	}
 }
 
 func decodeHelo(c *Conn, fields Fields, statusCode int, errorText string) (Packet, error) {

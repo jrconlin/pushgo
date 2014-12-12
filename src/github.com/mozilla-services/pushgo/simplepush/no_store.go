@@ -11,24 +11,34 @@ import (
 )
 
 type NoStoreConfig struct {
-	MaxChannels int `toml:"max_channels"`
+	UAIDExists  bool `toml:"uaid_exists" env:"uaid_exists"`
+	MaxChannels int  `toml:"max_channels" env:"max_channels"`
 }
 
 type NoStore struct {
 	logger      *SimpleLogger
+	UAIDExists  bool
 	maxChannels int
 }
 
-func (*NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
+func (n *NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
 	items := strings.SplitN(key, ".", 2)
 	if len(items) < 2 {
+		if n.logger.ShouldLog(WARNING) {
+			n.logger.Warn("nostore", "Invalid Key, returning blank IDs",
+				LogFields{"key": key})
+		}
 		return "", "", false
 	}
 	return items[0], items[1], true
 }
 
-func (*NoStore) IDsToKey(suaid, schid string) (string, bool) {
+func (n *NoStore) IDsToKey(suaid, schid string) (string, bool) {
 	if len(suaid) == 0 || len(schid) == 0 {
+		if n.logger.ShouldLog(WARNING) {
+			n.logger.Warn("nostore", "Invalid IDs, returning blank Key",
+				LogFields{"uaid": suaid, "chid": schid})
+		}
 		return "", false
 	}
 	return fmt.Sprintf("%s.%s", suaid, schid), true
@@ -36,6 +46,7 @@ func (*NoStore) IDsToKey(suaid, schid string) (string, bool) {
 
 func (*NoStore) ConfigStruct() interface{} {
 	return &NoStoreConfig{
+		UAIDExists:  true,
 		MaxChannels: 200,
 	}
 }
@@ -46,10 +57,22 @@ func (n *NoStore) Init(app *Application, config interface{}) error {
 	return nil
 }
 
-func (n *NoStore) MaxChannels() int                                     { return n.maxChannels }
-func (*NoStore) Close() error                                           { return nil }
-func (*NoStore) Status() (bool, error)                                  { return true, nil }
-func (*NoStore) Exists(string) bool                                     { return false }
+func (n *NoStore) CanStore(channels int) bool {
+	return channels <= n.maxChannels
+}
+
+func (*NoStore) Close() error          { return nil }
+func (*NoStore) Status() (bool, error) { return true, nil }
+
+// return true in this case so that registration doesn't cause a new
+// UAID to be issued
+func (n *NoStore) Exists(uaid string) bool {
+	if ok, hasID := hasExistsHook(uaid); hasID {
+		return ok
+	}
+	return n.UAIDExists
+}
+
 func (*NoStore) Register(string, string, int64) error                   { return nil }
 func (*NoStore) Update(string, int64) error                             { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }
@@ -61,5 +84,8 @@ func (*NoStore) PutPing(string, []byte) error                           { return
 func (*NoStore) DropPing(string) error                                  { return nil }
 
 func init() {
-	AvailableStores["none"] = func() HasConfigStruct { return new(NoStore) }
+	AvailableStores["none"] = func() HasConfigStruct {
+		return &NoStore{UAIDExists: true}
+	}
+	AvailableStores.SetDefault("none")
 }

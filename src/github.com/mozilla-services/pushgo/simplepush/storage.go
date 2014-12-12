@@ -6,13 +6,45 @@ package simplepush
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
 var (
-	ErrInvalidID    StorageError = "Invalid UUID"
-	AvailableStores              = make(AvailableExtensions)
+	AvailableStores = make(AvailableExtensions)
+
+	// testExistsHooks contains device IDs for which Store.Exists() always
+	// returns the associated value.
+	testExistsHooks map[string]bool = nil
+	testExistsLock  sync.RWMutex
 )
+
+func hasExistsHook(id string) (ok bool, hasID bool) {
+	if testExistsHooks != nil {
+		testExistsLock.RLock()
+		ok, hasID = testExistsHooks[id]
+		testExistsLock.RUnlock()
+	}
+	return
+}
+
+func addExistsHook(id string, ok bool) {
+	if testExistsHooks == nil {
+		panic("addExistsHook: testExistsHooks not initialized")
+	}
+	testExistsLock.Lock()
+	testExistsHooks[id] = ok
+	testExistsLock.Unlock()
+}
+
+func removeExistsHook(id string) {
+	if testExistsHooks == nil {
+		panic("removeExistsHook: testExistsHooks not initialized")
+	}
+	testExistsLock.Lock()
+	delete(testExistsHooks, id)
+	testExistsLock.Unlock()
+}
 
 // StorageError represents an adapter storage error.
 type StorageError string
@@ -26,36 +58,37 @@ func (err StorageError) Error() string {
 type Update struct {
 	ChannelID string `json:"channelID"`
 	Version   uint64 `json:"version"`
+	Data      string `json:"data"`
 }
 
 // DbConf specifies generic database adapter options.
 type DbConf struct {
 	// TimeoutLive is the active channel record timeout. Defaults to 3 days.
-	TimeoutLive int64 `toml:"timeout_live"`
+	TimeoutLive int64 `toml:"timeout_live" env:"live_timeout"`
 
 	// TimeoutReg is the registered channel record timeout. Defaults to 3 hours;
 	// an app server should send a notification on a registered channel before
 	// this timeout.
-	TimeoutReg int64 `toml:"timeout_reg"`
+	TimeoutReg int64 `toml:"timeout_reg" env:"reg_timeout"`
 
 	// TimeoutDel is the deleted channel record timeout. Defaults to 1 day;
 	// deleted records will be pruned after this timeout.
-	TimeoutDel int64 `toml:"timeout_del"`
+	TimeoutDel int64 `toml:"timeout_del" env:"del_timeout"`
 
 	// HandleTimeout is the maximum time to wait when acquiring a connection from
 	// the pool. Defaults to 5 seconds.
-	HandleTimeout string `toml:"handle_timeout"`
+	HandleTimeout string `toml:"handle_timeout" env:"handle_timeout"`
 
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
 	// "_pc-".
-	PingPrefix string `toml:"prop_prefix"`
+	PingPrefix string `toml:"prop_prefix" env:"prop_prefix"`
 }
 
 // Store describes a storage adapter.
 type Store interface {
-	// MaxChannels returns the maximum number of channel registrations allowed
-	// per client.
-	MaxChannels() int
+	// CanStore indicates whether the storage adapter can store the specified
+	// number of channels per client.
+	CanStore(channels int) bool
 
 	// Close closes a storage adapter. Any resources (e.g., connections, open
 	// files) associated with the adapter should be cleaned up, and all pending

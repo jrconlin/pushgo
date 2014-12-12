@@ -16,15 +16,10 @@ import (
 	"testing"
 	"time"
 
-	ws "code.google.com/p/go.net/websocket"
+	ws "golang.org/x/net/websocket"
 
 	"github.com/mozilla-services/pushgo/client"
 	"github.com/mozilla-services/pushgo/id"
-)
-
-var (
-	// Server is a test Simple Push server.
-	Server = &TestServer{LogLevel: 0}
 )
 
 const (
@@ -35,9 +30,8 @@ const (
 	// validId is a placeholder device ID used by typeTest.
 	validId = "57954545-c1bc-4fc4-9c1a-cd186d861336"
 
-	// NilId is used to simulate a nil packet ID, as Conn.Send() will
-	// close the connection with an error if Request.Id() == nil. getId()
-	// converts NilId to nil.
+	// NilId simulates a nil packet ID, as Conn.Send() will close the connection
+	// with an error if Request.Id() == nil. getId() converts NilId to nil.
 	NilId client.PacketType = -1
 )
 
@@ -238,50 +232,12 @@ func isValidEndpoint(endpoint string) bool {
 	return strings.HasPrefix(uri.Path, "/update/")
 }
 
-// Sending channel IDs with an unknown device ID should return a new device ID.
-func TestHeloReset(t *testing.T) {
-	origin, err := Server.Origin()
-	if err != nil {
-		t.Fatalf("Error initializing test server: %#v", err)
-	}
-	deviceId, err := id.Generate()
-	if err != nil {
-		t.Fatalf("Error generating device ID: %#v", err)
-	}
-	conn, err := client.DialOrigin(origin)
-	if err != nil {
-		t.Fatalf("Error dialing origin: %#v", err)
-	}
-	defer conn.Close()
-	defer conn.Purge()
-	request := CustomHelo{
-		MessageType: "hello",
-		DeviceId:    deviceId,
-		ChannelIds:  []interface{}{"1", "2"},
-		replies:     make(chan client.Reply),
-		errors:      make(chan error),
-	}
-	reply, err := conn.WriteRequest(request)
-	if err != nil {
-		t.Fatalf("Error writing handshake request: %#v", err)
-	}
-	helo, ok := reply.(client.ServerHelo)
-	if !ok {
-		t.Fatalf("Type assertion failed for reply: %#v", reply)
-	}
-	if helo.StatusCode != 200 {
-		t.Errorf("Unexpected status code: got %#v; want 200", reply.Status())
-	}
-	if helo.DeviceId == deviceId {
-		t.Errorf("Want new device ID; got %#v", deviceId)
-	}
-}
-
 type typeTest struct {
 	name        string
 	messageType interface{}
 	deviceId    interface{}
 	statusCode  int
+	shouldReset bool
 }
 
 func (t typeTest) Run() error {
@@ -318,8 +274,10 @@ func (t typeTest) Run() error {
 		deviceId, _ := t.deviceId.(string)
 		if len(deviceId) == 0 && !id.Valid(helo.DeviceId) {
 			return fmt.Errorf("On test %v, got invalid device ID: %#v", t.name, helo.DeviceId)
-		} else if deviceId != helo.DeviceId {
+		} else if !t.shouldReset && deviceId != helo.DeviceId {
 			return fmt.Errorf("On test %v, mismatched device ID: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
+		} else if t.shouldReset && deviceId == helo.DeviceId {
+			return fmt.Errorf("On test %v, want new device ID; got %#v", t.name, deviceId)
 		}
 		return nil
 	}
@@ -338,80 +296,134 @@ func (t typeTest) Run() error {
 }
 
 var typeTests = []typeTest{
-	typeTest{"invalid device ID", "hello", "invalid_uaid", 503},
+	{"invalid device ID", "hello", "invalid_uaid", 503, true},
 
 	// Leading and trailing whitespace.
-	typeTest{"whitespace in device ID", "hello", " fooey barrey ", 503},
-	typeTest{"whitespace in message type", " fooey barrey ", validId, 401},
+	{"whitespace in device ID", "hello", " fooey barrey ", 503, true},
+	{"whitespace in message type", " fooey barrey ", validId, 401, true},
 
 	// Special characters.
-	typeTest{"special characters in device ID", "hello", `!@#$%^&*()-+`, 503},
-	typeTest{"special characters in message type", `!@#$%^&*()-+`, validId, 401},
+	{"special characters in device ID", "hello", `!@#$%^&*()-+`, 503, true},
+	{"special characters in message type", `!@#$%^&*()-+`, validId, 401, true},
 
 	// Integer strings.
-	typeTest{`device ID = "0"`, "hello", "0", 503},
-	typeTest{`message type = "0"`, "0", validId, 401},
-	typeTest{`device ID = "1"`, "hello", "1", 503},
-	typeTest{`message type = "1"`, "1", validId, 401},
+	{`device ID = "0"`, "hello", "0", 503, true},
+	{`message type = "0"`, "0", validId, 401, true},
+	{`device ID = "1"`, "hello", "1", 503, true},
+	{`message type = "1"`, "1", validId, 401, true},
 
 	// Integers.
-	typeTest{"device ID = 0", "hello", 0, 401},
-	typeTest{"message type = 0", 0, validId, 401},
-	typeTest{"device ID = 1", "hello", 1, 401},
-	typeTest{"message type = 1", 1, validId, 401},
+	{"device ID = 0", "hello", 0, 401, true},
+	{"message type = 0", 0, validId, 401, true},
+	{"device ID = 1", "hello", 1, 401, true},
+	{"message type = 1", 1, validId, 401, true},
 
 	// Negative integers.
-	typeTest{"negative integer string as device ID", "hello", "-66000", 503},
-	typeTest{"negative integer string as message type", "-66000", validId, 401},
-	typeTest{"negative integer as device ID", "hello", -66000, 401},
-	typeTest{"negative integer as message type", -66000, validId, 401},
+	{"negative integer string as device ID", "hello", "-66000", 503, true},
+	{"negative integer string as message type", "-66000", validId, 401, true},
+	{"negative integer as device ID", "hello", -66000, 401, true},
+	{"negative integer as message type", -66000, validId, 401, true},
 
 	// "True", "true", "False", and "false".
-	typeTest{`device ID = "True"`, "hello", "True", 503},
-	typeTest{`message type = "True"`, "True", validId, 401},
-	typeTest{`device ID = "true"`, "hello", "true", 503},
-	typeTest{`message type = "true"`, "true", validId, 401},
-	typeTest{`device ID = "False"`, "hello", "False", 503},
-	typeTest{`message type = "False"`, "False", validId, 401},
-	typeTest{`device ID = "false"`, "hello", "false", 503},
-	typeTest{`message type = "false"`, "false", validId, 401},
+	{`device ID = "True"`, "hello", "True", 503, true},
+	{`message type = "True"`, "True", validId, 401, true},
+	{`device ID = "true"`, "hello", "true", 503, true},
+	{`message type = "true"`, "true", validId, 401, true},
+	{`device ID = "False"`, "hello", "False", 503, true},
+	{`message type = "False"`, "False", validId, 401, true},
+	{`device ID = "false"`, "hello", "false", 503, true},
+	{`message type = "false"`, "false", validId, 401, true},
 
 	// `true` and `false`.
-	typeTest{"device ID = true", "hello", true, 401},
-	typeTest{"message type = true", true, validId, 401},
-	typeTest{"device ID = false", "hello", false, 401},
-	typeTest{"message type = false", false, validId, 401},
+	{"device ID = true", "hello", true, 401, true},
+	{"message type = true", true, validId, 401, true},
+	{"device ID = false", "hello", false, 401, true},
+	{"message type = false", false, validId, 401, true},
 
 	// "None", "null", "nil", and `nil`.
-	typeTest{`device ID = "None"`, "hello", "None", 503},
-	typeTest{`message type = "None"`, "None", validId, 401},
-	typeTest{`device ID = "null"`, "hello", "null", 503},
-	typeTest{`message type = "null"`, "null", validId, 401},
-	typeTest{`device ID = "nil"`, "hello", "nil", 503},
-	typeTest{`message type = "nil"`, "nil", validId, 401},
-	typeTest{"device ID = nil", "hello", NilId, 401},
-	typeTest{"message type = nil", NilId, validId, 401},
+	{`device ID = "None"`, "hello", "None", 503, true},
+	{`message type = "None"`, "None", validId, 401, true},
+	{`device ID = "null"`, "hello", "null", 503, true},
+	{`message type = "null"`, "null", validId, 401, true},
+	{`device ID = "nil"`, "hello", "nil", 503, true},
+	{`message type = "nil"`, "nil", validId, 401, true},
+	{"message type = nil", NilId, validId, 401, true},
 
 	// Quoted strings.
-	typeTest{"quoted string as device ID", "hello", `"foo bar"`, 503},
-	typeTest{"quoted string as message type", `"foo bar"`, validId, 401},
+	{"quoted string as device ID", "hello", `"foo bar"`, 503, true},
+	{"quoted string as message type", `"foo bar"`, validId, 401, true},
 }
 
 func TestMessageTypes(t *testing.T) {
 	longId, err := generateIdSize(64000)
 	if err != nil {
-		t.Fatalf("Error generating device ID: %#v", err)
+		t.Fatalf("Error generating longId: %#v", err)
 	}
-	if err = (typeTest{"long device ID", "hello", longId, 503}).Run(); err != nil {
-		t.Error(err)
+
+	existingId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating existingId: %#v", err)
 	}
-	if err = (typeTest{"long message type", longId, validId, 401}).Run(); err != nil {
-		t.Error(err)
+	addExistsHook(existingId, true)
+	defer removeExistsHook(existingId)
+
+	missingId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating missingId: %#v", err)
 	}
+	addExistsHook(missingId, false)
+	defer removeExistsHook(missingId)
+
+	specialTypes := []typeTest{
+		{"long device ID", "hello", longId, 503, true},
+		{"long message type", longId, validId, 401, true},
+
+		{"existing device ID with channels", "hello", existingId, 200, false},
+		// Sending channel IDs with an unknown device ID should return a new device ID.
+		{"unknown device ID with channels", "hello", missingId, 200, true},
+	}
+	for _, test := range specialTypes {
+		if err := test.Run(); err != nil {
+			t.Error(err)
+		}
+	}
+
 	for _, test := range typeTests {
 		if err := test.Run(); err != nil {
 			t.Error(err)
 		}
+	}
+}
+
+func TestNilDeviceId(t *testing.T) {
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %#v", err)
+	}
+	conn, err := client.DialOrigin(origin)
+	if err != nil {
+		t.Fatalf("Error dialing origin: %#v", err)
+	}
+	defer conn.Close()
+	defer conn.Purge()
+	request := CustomHelo{
+		MessageType: "hello",
+		DeviceId:    NilId,
+		ChannelIds:  []interface{}{},
+		Extra:       "extra field",
+		replies:     make(chan client.Reply),
+		errors:      make(chan error),
+	}
+	reply, err := conn.WriteRequest(request)
+	if err != nil {
+		t.Fatalf("Error writing handshake request: %#v", err)
+	}
+	helo, ok := reply.(client.ServerHelo)
+	if !ok {
+		t.Errorf("Type assertion failed for handshake reply: %#v", reply)
+	}
+	if !id.Valid(helo.DeviceId) {
+		t.Errorf("Got invalid device ID: %#v", helo.DeviceId)
 	}
 }
 
@@ -424,7 +436,7 @@ func TestDuplicateRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -481,6 +493,8 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	channelId, err := id.Generate()
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
@@ -499,8 +513,8 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
 	}
-	if actualId == deviceId {
-		t.Errorf("Want new device ID; got %#v", deviceId)
+	if actualId != deviceId {
+		t.Errorf("Mismatched device ID: got %#v; want %#v", actualId, deviceId)
 	}
 	if !AllowDupes {
 		return
@@ -523,7 +537,7 @@ func TestMultipleRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -555,6 +569,8 @@ func (t idTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On handshake test %v, error generating device ID: %#v", t.name, err)
 	}
+	addExistsHook(deviceId, true)
+	defer removeExistsHook(deviceId)
 	origin, err := Server.Origin()
 	if err != nil {
 		return fmt.Errorf("On handshake test %v, error initializing test server: %#v", t.name, err)
@@ -587,8 +603,8 @@ func (t idTest) TestHelo() error {
 		// The Simple Push server requires the channelIDs field to be present in
 		// the handshake, but does not validate its contents, since any queued
 		// messages will be immediately flushed to the client.
-		if helo.DeviceId == deviceId {
-			return fmt.Errorf("On handshake test %v, want new device ID; got %#v", t.name, deviceId)
+		if helo.DeviceId != deviceId {
+			return fmt.Errorf("On handshake test %v, mismatched device ID: got %#v; want %#v", t.name, helo.DeviceId, deviceId)
 		}
 		return nil
 	}
@@ -611,7 +627,7 @@ func (t idTest) TestRegister() error {
 	if err != nil {
 		return fmt.Errorf("On registration test %v, error initializing test server: %#v", t.name, err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		return fmt.Errorf("On registration test %v, error dialing origin: %#v", t.name, err)
 	}
@@ -647,26 +663,26 @@ func (t idTest) TestRegister() error {
 }
 
 var registerIdTests = []idTest{
-	idTest{"invalid ID", "invalid_uaid", 401},
-	idTest{"leading and trailing whitespace", " fooey barrey ", 401},
-	idTest{"special characters", `!@#$%^&*()-+`, 401},
-	idTest{`"0"`, "0", 401},
-	idTest{`"1"`, "1", 401},
-	idTest{"negative integer string", "-66000", 401},
-	idTest{"negative integer", -66000, 401},
-	idTest{`"True"`, "True", 401},
-	idTest{`"False"`, "False", 401},
-	idTest{`"true"`, "true", 401},
-	idTest{`"false"`, "false", 401},
-	idTest{"true", true, 401},
-	idTest{"false", false, 401},
-	idTest{`"None"`, "None", 401},
-	idTest{`"null"`, "null", 401},
-	idTest{`"nil"`, "nil", 401},
-	idTest{"nil", NilId, 401},
-	idTest{"quoted string", `"foo bar"`, 401},
-	idTest{"null character", "\x00", 401},
-	idTest{"control characters", "\x01\x00\x12\x59", 401},
+	{"invalid ID", "invalid_uaid", 401},
+	{"leading and trailing whitespace", " fooey barrey ", 401},
+	{"special characters", `!@#$%^&*()-+`, 401},
+	{`"0"`, "0", 401},
+	{`"1"`, "1", 401},
+	{"negative integer string", "-66000", 401},
+	{"negative integer", -66000, 401},
+	{`"True"`, "True", 401},
+	{`"False"`, "False", 401},
+	{`"true"`, "true", 401},
+	{`"false"`, "false", 401},
+	{"true", true, 401},
+	{"false", false, 401},
+	{`"None"`, "None", 401},
+	{`"null"`, "null", 401},
+	{`"nil"`, "nil", 401},
+	{"nil", NilId, 401},
+	{"quoted string", `"foo bar"`, 401},
+	{"null character", "\x00", 401},
+	{"control characters", "\x01\x00\x12\x59", 401},
 }
 
 func TestRegisterInvalidIds(t *testing.T) {
@@ -680,26 +696,26 @@ func TestRegisterInvalidIds(t *testing.T) {
 // The Simple Push server does not validate the contents of the channelIDs
 // field, so handshakes containing invalid channel IDs should succeed.
 var heloIdTests = []idTest{
-	idTest{"invalid channel ID", "invalid_uaid", 200},
-	idTest{"leading and trailing whitespace in channel ID", " fooey barrey ", 200},
-	idTest{"special characters in channel ID", `!@#$%^&*()-+`, 200},
-	idTest{`channel ID = "0"`, "0", 200},
-	idTest{`channel ID = "1"`, "1", 200},
-	idTest{"negative integer string as channel ID", "-66000", 200},
-	idTest{"negative integer as channel ID", -66000, 200},
-	idTest{`channel ID = "True"`, "True", 200},
-	idTest{`channel ID = "False"`, "False", 200},
-	idTest{`channel ID = "true"`, "true", 200},
-	idTest{`channel ID = "false"`, "false", 200},
-	idTest{"channel ID = true", true, 200},
-	idTest{"channel ID = false", false, 200},
-	idTest{`channel ID = "None"`, "None", 200},
-	idTest{`channel ID = "null"`, "null", 200},
-	idTest{`channel ID = "nil"`, "nil", 200},
-	idTest{"channel ID = nil", NilId, 200},
-	idTest{"quoted string as channel ID", `"foo bar"`, 200},
-	idTest{"null character in channel ID", "\x00", 200},
-	idTest{"control characters in channel ID", "\x01\x00\x12\x59", 200},
+	{"invalid channel ID", "invalid_uaid", 200},
+	{"leading and trailing whitespace in channel ID", " fooey barrey ", 200},
+	{"special characters in channel ID", `!@#$%^&*()-+`, 200},
+	{`channel ID = "0"`, "0", 200},
+	{`channel ID = "1"`, "1", 200},
+	{"negative integer string as channel ID", "-66000", 200},
+	{"negative integer as channel ID", -66000, 200},
+	{`channel ID = "True"`, "True", 200},
+	{`channel ID = "False"`, "False", 200},
+	{`channel ID = "true"`, "true", 200},
+	{`channel ID = "false"`, "false", 200},
+	{"channel ID = true", true, 200},
+	{"channel ID = false", false, 200},
+	{`channel ID = "None"`, "None", 200},
+	{`channel ID = "null"`, "null", 200},
+	{`channel ID = "nil"`, "nil", 200},
+	{"channel ID = nil", NilId, 200},
+	{"quoted string as channel ID", `"foo bar"`, 200},
+	{"null character in channel ID", "\x00", 200},
+	{"control characters in channel ID", "\x01\x00\x12\x59", 200},
 }
 
 func TestHeloInvalidIds(t *testing.T) {
@@ -746,7 +762,7 @@ func TestUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -778,8 +794,12 @@ func TestUnregisterRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
+	connId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating connection ID: %#v", err)
+	}
 	// Spool all notifications, including those received on dregistered channels.
-	conn := client.NewConn(socket, true)
+	conn := client.NewConn(socket, connId, true)
 	defer conn.Close()
 	if _, err = conn.WriteHelo(""); err != nil {
 		t.Fatalf("Error writing handshake request: %#v", err)
@@ -883,7 +903,7 @@ func TestPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
@@ -970,7 +990,7 @@ func TestACK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
-	conn, err := client.Dial(origin)
+	conn, _, err := client.Dial(origin)
 	if err != nil {
 		t.Fatalf("Error dialing origin: %#v", err)
 	}
