@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -44,6 +45,10 @@ type BroadcastRouterConfig struct {
 	// Rwtimeout is the maximum amount of time that the router should wait for an
 	// HTTP request to complete. Defaults to 3 seconds.
 	Rwtimeout string
+
+	// IdleConns is the maximum number of idle connections to maintain per host.
+	// Defaults to 50.
+	IdleConns int `toml:"idle_conns" env:"idle_conns"`
 
 	// DefaultHost is the default hostname of the proxy endpoint. No default
 	// value; overrides simplepush.Application.Hostname() if specified.
@@ -92,6 +97,7 @@ func (*BroadcastRouter) ConfigStruct() interface{} {
 		PoolSize:   30,
 		Ctimeout:   "3s",
 		Rwtimeout:  "3s",
+		IdleConns:  50,
 		Listener: ListenerConfig{
 			Addr:            ":3000",
 			MaxConns:        1000,
@@ -147,10 +153,11 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	r.poolSize = conf.PoolSize
 
 	r.rclient = &http.Client{
+		Timeout: r.rwtimeout,
 		Transport: &http.Transport{
-			Dial: TimeoutDialer(r.ctimeout, r.rwtimeout),
-			ResponseHeaderTimeout: r.rwtimeout,
-			TLSClientConfig:       new(tls.Config),
+			Dial:                r.dial,
+			MaxIdleConnsPerHost: conf.IdleConns,
+			TLSClientConfig:     new(tls.Config),
 		},
 	}
 
@@ -249,6 +256,16 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 invalidBody:
 	http.Error(resp, "Invalid body", http.StatusNotAcceptable)
 	r.metrics.Increment("updates.routed.invalid")
+}
+
+func (r *BroadcastRouter) dial(netw, addr string) (c net.Conn, err error) {
+	c, err = net.DialTimeout(netw, addr, r.ctimeout)
+	if err != nil {
+		r.metrics.Increment("router.dial.error")
+		return nil, err
+	}
+	r.metrics.Increment("router.dial.success")
+	return c, nil
 }
 
 func (r *BroadcastRouter) SetLocator(locator Locator) error {
@@ -449,6 +466,9 @@ func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{}
 		return
 	}
 	defer resp.Body.Close()
+	// Discard the response body. If the body is not fully consumed, the HTTP
+	// client will not reuse the underlying TCP connection.
+	io.Copy(ioutil.Discard, resp.Body)
 	if resp.StatusCode != 200 {
 		if r.logger.ShouldLog(DEBUG) {
 			r.logger.Debug("router", "Denied",
