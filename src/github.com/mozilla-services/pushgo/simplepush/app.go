@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -324,20 +325,17 @@ func (a *Application) RemoveClient(uaid string) {
 }
 
 func (a *Application) Stop() {
-	if a.server != nil {
-		a.server.Close()
+	plugins := []io.Closer{
+		a.server,   // Stop the WebSocket and update listeners.
+		a.balancer, // Deregister from the balancer.
+		a.router,   // Stop the routing listener and locator.
+		a.store,    // Close database connections.
+		a.log,      // Shut down the logger.
 	}
-	if a.balancer != nil {
-		a.balancer.Close()
-	}
-	if a.router != nil {
-		a.router.Close()
-	}
-	if a.store != nil {
-		a.store.Close()
-	}
-	if a.log != nil {
-		a.log.Close()
+	for _, c := range plugins {
+		if c != nil {
+			c.Close()
+		}
 	}
 }
 
