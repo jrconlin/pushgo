@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -26,17 +25,13 @@ var (
  * the aws meta server?
  */
 func GetAWSPublicHostname() (hostname string, err error) {
-	req := &http.Request{Method: "GET",
-		URL: &url.URL{
-			Scheme: "http",
-			Host:   "169.254.169.254",
-			Path:   "/latest/meta-data/public-hostname"}}
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := http.Get(
+		"http://169.254.169.254/latest/meta-data/public-hostname")
 	if err != nil {
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		err = fmt.Errorf("Unexpected status code: %d", resp.StatusCode)
 		return
 	}
 	hostBytes, err := ioutil.ReadAll(resp.Body)
