@@ -73,11 +73,10 @@ func Test_UpdateHandler(t *testing.T) {
 
 	handler, app := newTestHandler(t)
 	noPush := &PushWS{
-		Uaid:     uaid,
-		deviceID: []byte(chid),
-		Socket:   nil,
-		Born:     time.Now(),
+		Socket: nil,
+		Born:   time.Now(),
 	}
+	noPush.SetUAID(uaid)
 
 	worker := &NoWorker{Socket: noPush,
 		Logger: app.Logger(),
