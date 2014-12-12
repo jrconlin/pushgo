@@ -175,11 +175,18 @@ func (r MultipleRegister) MarshalJSON() ([]byte, error) {
 
 func decodeUnregisterReply(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &client.ServerError{"unregister", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{
+			MessageType: "unregister",
+			Origin:      c.Origin(),
+			Message:     errorText,
+			StatusCode:  statusCode}
 	}
 	channelId, hasChannelId := fields["channelID"].(string)
 	if !hasChannelId {
-		return nil, &client.IncompleteError{"register", c.Origin(), "channelID"}
+		return nil, &client.IncompleteError{
+			MessageType: "register",
+			Origin:      c.Origin(),
+			Field:       "channelID"}
 	}
 	reply := ServerUnregister{
 		StatusCode: statusCode,
@@ -194,7 +201,10 @@ func decodeServerInvalidACK(c *client.Conn, fields client.Fields, statusCode int
 	}
 	updates, hasUpdates := fields["updates"].([]interface{})
 	if !hasUpdates {
-		return nil, &client.IncompleteError{"ack", c.Origin(), "updates"}
+		return nil, &client.IncompleteError{
+			MessageType: "ack",
+			Origin:      c.Origin(),
+			Field:       "updates"}
 	}
 	reply := ServerInvalidACK{
 		Updates:    make([]client.Update, len(updates)),
@@ -955,7 +965,10 @@ func TestPrematureACK(t *testing.T) {
 	defer conn.Purge()
 	conn.RegisterDecoder("ack", client.DecoderFunc(decodeServerInvalidACK))
 	updates := []client.Update{
-		client.Update{channelId, time.Now().UTC().Unix()},
+		client.Update{
+			ChannelId: channelId,
+			Version:   time.Now().UTC().Unix(),
+		},
 	}
 	request := ClientInvalidACK{client.NewACK(updates, true)}
 	reply, err := conn.WriteRequest(request)
