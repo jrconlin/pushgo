@@ -81,11 +81,13 @@ var DefaultDecoders = Decoders{
 	"notification": DecoderFunc(decodeNotification),
 }
 
-func Dial(origin string) (conn *Conn, deviceId string, err error) {
+func Dial(origin string, channelIds ...string) (conn *Conn,
+	deviceId string, err error) {
+
 	if deviceId, err = id.Generate(); err != nil {
 		return nil, "", err
 	}
-	if conn, err = DialId(origin, &deviceId); err != nil {
+	if conn, err = DialId(origin, &deviceId, channelIds...); err != nil {
 		return nil, "", err
 	}
 	return conn, deviceId, nil

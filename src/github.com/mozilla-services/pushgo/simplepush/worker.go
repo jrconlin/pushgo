@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -41,23 +40,6 @@ type WorkerWS struct {
 }
 
 type WorkerState int
-
-// replaceWorkers controls client reconnect behavior. By default, clients that
-// present already-connected device IDs will be issued new IDs. This can be
-// overridden to disconnect existing clients.
-var replaceWorkers = int32(0)
-
-func setReplaceEnabled(v bool) {
-	if v {
-		atomic.StoreInt32(&replaceWorkers, 1)
-	} else {
-		atomic.StoreInt32(&replaceWorkers, 0)
-	}
-}
-
-func replaceEnabled() bool {
-	return atomic.LoadInt32(&replaceWorkers) == 1
-}
 
 const (
 	WorkerInactive WorkerState = 0
@@ -428,13 +410,6 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	}
 	client, clientConnected = self.app.GetClient(request.DeviceID)
 	if clientConnected {
-		if !replaceEnabled() {
-			if logWarning {
-				self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-					LogFields{"rid": self.id, "uaid": request.DeviceID})
-			}
-			goto forceReset
-		}
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("worker", "UAID collision; disconnecting previous client",
 				LogFields{"rid": self.id, "uaid": request.DeviceID})

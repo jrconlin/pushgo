@@ -165,12 +165,55 @@ func TestPushReconnect(t *testing.T) {
 	}
 	addExistsHook(deviceId, true)
 	defer removeExistsHook(deviceId)
-	// Allow the client to reconnect if its previous entry has not been removed
-	// from the map.
-	setReplaceEnabled(true)
-	defer setReplaceEnabled(false)
 	if err = reconnect(origin, deviceId, channelId, endpoint); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDupeDisconnect(t *testing.T) {
+	channelId, err := id.Generate()
+	if err != nil {
+		t.Fatalf("Error generating channel ID: %#v", err)
+	}
+	origin, err := Server.Origin()
+	if err != nil {
+		t.Fatalf("Error initializing test server: %s", err)
+	}
+	conn, deviceId, err := client.Dial(origin, channelId)
+	if err != nil {
+		t.Fatalf("Error dialing origin: %s", err)
+	}
+	defer conn.Close()
+	stopChan := make(chan bool)
+	defer close(stopChan)
+	errChan := make(chan error)
+	go func() {
+		var err error
+		select {
+		case <-conn.CloseNotify():
+		case <-time.After(5 * time.Second):
+			err = fmt.Errorf("Initial connection for %q not closed", deviceId)
+		}
+		select {
+		case <-stopChan:
+		case errChan <- err:
+		}
+	}()
+	go func(dupeId string) {
+		dupeConn, err := client.DialId(origin, &dupeId, channelId)
+		if err != nil {
+			err = fmt.Errorf("Error reconnecting to origin: %s", err)
+		}
+		defer dupeConn.Close()
+		select {
+		case <-stopChan:
+		case errChan <- err:
+		}
+	}(deviceId)
+	for i := 0; i < 2; i++ {
+		if err := <-errChan; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
