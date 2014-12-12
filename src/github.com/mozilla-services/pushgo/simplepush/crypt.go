@@ -32,6 +32,8 @@ func genKey(strength int) ([]byte, error) {
 	return k, nil
 }
 
+// Encode is destructive to value. If you want to continue to use the unencoded
+// value array, pass a copy.
 func Encode(key, value []byte) (string, error) {
 	// Keys can be 16, 24 or 32 []byte strings of cryptographically random
 	// crap.
