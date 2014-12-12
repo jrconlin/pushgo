@@ -180,6 +180,13 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 	routeMux.HandleFunc("/route/{uaid}", r.RouteHandler)
 
 	routeSrv := &http.Server{
+		ConnState: func(c net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				r.metrics.Increment("router.socket.connect")
+			} else if state == http.StateClosed {
+				r.metrics.Increment("router.socket.disconnect")
+			}
+		},
 		Handler:  &LogHandler{routeMux, r.logger},
 		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)}
 	errChan <- routeSrv.Serve(routeLn)

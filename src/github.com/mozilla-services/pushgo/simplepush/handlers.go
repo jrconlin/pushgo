@@ -363,11 +363,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		now := time.Now()
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
-		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
-		self.metrics.Increment("socket.disconnect")
+		self.metrics.Timer("client.socket.lifespan", now.Sub(sock.Born))
+		self.metrics.Increment("client.socket.disconnect")
 	}()
 
-	self.metrics.Increment("socket.connect")
+	self.metrics.Increment("client.socket.connect")
 
 	NewWorker(self.app, requestID).Run(&sock)
 	if self.logger.ShouldLog(INFO) {
