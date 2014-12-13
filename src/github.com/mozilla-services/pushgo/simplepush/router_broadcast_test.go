@@ -77,44 +77,6 @@ func TestBroadcastRouter(t *testing.T) {
 			mckLocator.EXPECT().Close()
 			router.Close()
 		})
-
-		/*
-			Convey("Should succeed self-routing to a valid uaid", func() {
-				mockWorker := NewMockWorker(mockCtrl)
-				client := &Client{mockWorker, &PushWS{}, uaid}
-				app.AddClient(uaid, client)
-
-				thisNode := router.URL()
-				thisNodeList := []string{thisNode}
-
-				errChan := make(chan error, 10)
-				mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true)
-				mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
-				go router.Start(errChan)
-				<-time.After(time.Duration(1) * time.Second)
-
-				mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
-				mckStat.EXPECT().Increment("updates.routed.incoming")
-				mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-				mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
-				mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
-				mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
-					gomock.Any()).AnyTimes()
-				mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-					"").Return(nil)
-				mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
-				mckStat.EXPECT().Increment("updates.routed.received")
-				mckStat.EXPECT().Increment("router.broadcast.hit")
-				mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
-				mckStat.EXPECT().Timer("router.handled", gomock.Any())
-
-				err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
-				So(err, ShouldBeNil)
-
-				mckLocator.EXPECT().Close()
-				router.Close()
-			})
-		*/
 	})
 }
 
