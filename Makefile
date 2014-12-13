@@ -70,14 +70,14 @@ test-mocks: $(HERE)/mockgen
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
 	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_router_test.go -package="simplepush"
-	# Note that to generate the log mock, the HasConfigStruct needs to be manually
+	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
 	# copied into log.go while this is run, then the mocked config struct needs to be
 	# removed from the mock_log_test.go file.
 	# Issue: https://code.google.com/p/gomock/issues/detail?id=16
 	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/log.go \
 	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_log_test.go -package="simplepush"
+	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
+	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_router_test.go -package="simplepush"
 
 test-gomc:
 	GOPATH=$(GOPATH) go test \
