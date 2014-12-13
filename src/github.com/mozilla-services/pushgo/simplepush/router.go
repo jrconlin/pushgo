@@ -49,7 +49,7 @@ type Router interface {
 	// Return the Locator that was set
 	Locator() Locator
 
-	// Unique identifier used by locators for this node
+	// Unique identifier used by locator's for this node
 	URL() string
 
 	// Indicate status of the router, error if there's a problem

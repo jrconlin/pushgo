@@ -103,6 +103,8 @@ func (*BroadcastRouter) ConfigStruct() interface{} {
 
 func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*BroadcastRouterConfig)
+
+	r.app = app
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 	r.maxDataLen = conf.MaxDataLen
