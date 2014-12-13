@@ -135,7 +135,7 @@ func (a *Application) SetPropPinger(ping PropPinger) (err error) {
 	return
 }
 
-func (a *Application) SetMetrics(metrics *Metrics) error {
+func (a *Application) SetMetrics(metrics Statistician) error {
 	a.metrics = metrics
 	return nil
 }
