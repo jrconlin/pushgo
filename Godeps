@@ -20,3 +20,6 @@ github.com/gorilla/mux 4b8fbc56f3b2400a7c7ea3dba9b3539787c486b6
 github.com/ianoshen/gomc 7b9f299f292d3dd707fe2749d966968c9bf1e128
 github.com/kitcambridge/envconf 2612e9eac7b8e3a7662d908d034cd17fbba52057
 github.com/mozilla-services/heka/client 7277e07e2a11527e7f570d57c9c84063d055ef7f
+github.com/rafrombrc/gomock/gomock c922279faf77f29ce5781e96eb0711837fcb477c
+github.com/smartystreets/goconvey 728b3f160cb397ba18120323ed26777ea872304e
+github.com/jacobsa/oglematchers
