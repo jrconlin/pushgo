@@ -14,8 +14,6 @@ import (
 	"sync"
 	"text/template"
 	"time"
-
-	"github.com/mozilla-services/pushgo/id"
 )
 
 // -- SERVER this handles REST requests and coordinates between connected
@@ -187,16 +185,17 @@ func (self *Serv) hostPort(ln net.Listener) (host string, port int) {
 
 // A client connects!
 func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
-	var uaid string
 
 	args := cmd.Arguments
+	uaid := args["uaid"].(string)
+
 	if self.logger.ShouldLog(INFO) {
 		chidss := ""
 		if chids, ok := args["channelIDs"]; ok {
 			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
 		}
 		self.logger.Info("server", "handling 'hello'",
-			LogFields{"uaid": args["uaid"].(string),
+			LogFields{"uaid": uaid,
 				"channelIDs": chidss})
 	}
 
@@ -204,25 +203,6 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	// Look up the appropriate server (based on UAID)
 	// return a response that looks like:
 	// { uaid: UAIDValue, status: 302, redirect: NewWS_URL }
-
-	// New connects overwrite previous connections.
-	// Raw client
-	if args["uaid"] == "" {
-		uaid, _ = id.Generate()
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server",
-				"Generating new UAID",
-				LogFields{"uaid": uaid})
-		}
-	} else {
-		uaid = args["uaid"].(string)
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server",
-				"Using existing UAID",
-				LogFields{"uaid": uaid})
-		}
-		delete(args, "uaid")
-	}
 
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
 		if err := self.prop.Register(uaid, connect); err != nil {
@@ -236,7 +216,6 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
-	sock.Uaid = uaid
 	client := &Client{
 		Worker: worker,
 		PushWS: sock,
@@ -248,7 +227,6 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
-	args["uaid"] = uaid
 	arguments = args
 	result = 200
 	return result, arguments
@@ -264,7 +242,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	now := time.Now()
-	uaid := sock.Uaid
+	uaid := sock.UAID()
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
 			LogFields{"uaid": uaid})
@@ -296,8 +274,9 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	args := cmd.Arguments
 	args["status"] = 200
 	// Generate the call back URL
+	uaid := sock.UAID()
 	chid, _ := args["channelID"].(string)
-	token, ok := self.store.IDsToKey(sock.Uaid, chid)
+	token, ok := self.store.IDsToKey(uaid, chid)
 	if !ok {
 		return 500, nil
 	}
@@ -307,12 +286,11 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		if token, err = Encode(self.key, btoken); err != nil {
 			if self.logger.ShouldLog(ERROR) {
 				self.logger.Error("server", "Token Encoding error",
-					LogFields{"uaid": sock.Uaid,
+					LogFields{"uaid": uaid,
 						"channelID": chid})
 			}
 			return 500, nil
 		}
-
 	}
 
 	// cheezy variable replacement.
@@ -335,7 +313,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("server",
 			"Generated Push Endpoint",
-			LogFields{"uaid": sock.Uaid,
+			LogFields{"uaid": uaid,
 				"channelID": chid,
 				"token":     token,
 				"endpoint":  args["push.endpoint"].(string)})
@@ -360,7 +338,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 						"stack": string(stack[:n])})
 			}
 			if len(uaid) > 0 && self.prop != nil {
-				self.prop.Send(uaid, version)
+				self.prop.Send(uaid, version, data)
 			}
 		}
 		return

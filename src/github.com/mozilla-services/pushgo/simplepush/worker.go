@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -41,23 +40,6 @@ type WorkerWS struct {
 }
 
 type WorkerState int
-
-// replaceWorkers controls client reconnect behavior. By default, clients that
-// present already-connected device IDs will be issued new IDs. This can be
-// overridden to disconnect existing clients.
-var replaceWorkers = int32(0)
-
-func setReplaceEnabled(v bool) {
-	if v {
-		atomic.StoreInt32(&replaceWorkers, 1)
-	} else {
-		atomic.StoreInt32(&replaceWorkers, 0)
-	}
-}
-
-func replaceEnabled() bool {
-	return atomic.LoadInt32(&replaceWorkers) == 1
-}
 
 const (
 	WorkerInactive WorkerState = 0
@@ -258,7 +240,7 @@ func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret 
 func (self *WorkerWS) Run(sock *PushWS) {
 	time.AfterFunc(self.helloTimeout,
 		func() {
-			if sock.Uaid == "" {
+			if sock.UAID() == "" {
 				if self.logger.ShouldLog(DEBUG) {
 					self.logger.Debug("dash", "Worker Idle connection. Closing socket",
 						LogFields{"rid": self.id})
@@ -312,11 +294,11 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	deviceID, _, err := self.handshake(sock, request)
+	uaid, _, err := self.handshake(sock, request)
 	if err != nil {
 		return err
 	}
-	sock.Uaid = deviceID
+	sock.SetUAID(uaid)
 
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
@@ -326,7 +308,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 		Command: HELLO,
 		Arguments: JsMap{
 			"worker":  self,
-			"uaid":    sock.Uaid,
+			"uaid":    uaid,
 			"chids":   request.ChannelIDs,
 			"connect": []byte(request.PingData),
 		},
@@ -336,14 +318,14 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
-			LogFields{"rid": self.id, "cmd": "hello", "uaid": sock.Uaid})
+			LogFields{"rid": self.id, "cmd": "hello", "uaid": uaid})
 	}
 	// websocket.JSON.Send(sock.Socket, JsMap{
 	// 	"messageType": header.Type,
 	// 	"status":      status,
-	// 	"uaid":        sock.Uaid})
+	// 	"uaid":        uaid})
 	_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":%d,"uaid":"%s"}`,
-		header.Type, status, sock.Uaid)
+		header.Type, status, uaid)
 	if err != nil {
 		if logWarning {
 			self.logger.Warn("dash", "Error writing client handshake", LogFields{
@@ -368,7 +350,7 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	deviceID string, canRedirect bool, err error) {
 
 	logWarning := self.logger.ShouldLog(WARNING)
-	currentID := sock.Uaid
+	currentID := sock.UAID()
 
 	if request.ChannelIDs == nil {
 		// Must include "channelIDs" (even if empty)
@@ -428,13 +410,6 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	}
 	client, clientConnected = self.app.GetClient(request.DeviceID)
 	if clientConnected {
-		if !replaceEnabled() {
-			if logWarning {
-				self.logger.Warn("worker", "UAID collision; resetting UAID for device",
-					LogFields{"rid": self.id, "uaid": request.DeviceID})
-			}
-			goto forceReset
-		}
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("worker", "UAID collision; disconnecting previous client",
 				LogFields{"rid": self.id, "uaid": request.DeviceID})
@@ -472,7 +447,8 @@ func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (
 			err = ErrInvalidParams
 		}
 	}()
-	if sock.Uaid == "" {
+	uaid := sock.UAID()
+	if uaid == "" {
 		return ErrInvalidCommand
 	}
 	request := new(ACKRequest)
@@ -484,12 +460,12 @@ func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (
 	}
 	self.metrics.Increment("updates.client.ack")
 	for _, update := range request.Updates {
-		if err = sock.Store.Drop(sock.Uaid, update.ChannelID); err != nil {
+		if err = sock.Store.Drop(uaid, update.ChannelID); err != nil {
 			goto logError
 		}
 	}
 	for _, channelID := range request.Expired {
-		if err = sock.Store.Drop(sock.Uaid, channelID); err != nil {
+		if err = sock.Store.Drop(uaid, channelID); err != nil {
 			goto logError
 		}
 	}
@@ -521,14 +497,15 @@ func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []by
 		}
 	}()
 
-	if sock.Uaid == "" {
+	uaid := sock.UAID()
+	if uaid == "" {
 		return ErrInvalidCommand
 	}
 	request := new(RegisterRequest)
 	if err = json.Unmarshal(message, request); err != nil || !id.Valid(request.ChannelID) {
 		return ErrInvalidParams
 	}
-	if err = sock.Store.Register(sock.Uaid, request.ChannelID, 0); err != nil {
+	if err = sock.Store.Register(uaid, request.ChannelID, 0); err != nil {
 		if self.logger.ShouldLog(WARNING) {
 			self.logger.Warn("worker", "Register failed, error updating backing store",
 				LogFields{"rid": self.id, "cmd": "register", "error": ErrStr(err)})
@@ -556,12 +533,12 @@ func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []by
 		self.logger.Debug("worker", "sending response", LogFields{
 			"rid":          self.id,
 			"cmd":          "register",
-			"uaid":         sock.Uaid,
+			"uaid":         uaid,
 			"code":         strconv.FormatInt(int64(statusCode), 10),
 			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	websocket.JSON.Send(sock.Socket, RegisterReply{header.Type, sock.Uaid, statusCode, request.ChannelID, endpoint})
+	websocket.JSON.Send(sock.Socket, RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
 	return err
 }
@@ -580,7 +557,8 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 			err = ErrInvalidParams
 		}
 	}()
-	if sock.Uaid == "" {
+	uaid := sock.UAID()
+	if uaid == "" {
 		if logWarning {
 			self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
 				LogFields{"rid": self.id})
@@ -599,7 +577,7 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 		return ErrNoParams
 	}
 	// Always return success for an UNREG.
-	if err = sock.Store.Unregister(sock.Uaid, request.ChannelID); err != nil {
+	if err = sock.Store.Unregister(uaid, request.ChannelID); err != nil {
 		if logWarning {
 			self.logger.Warn("worker", "Unregister failed, error updating backing store",
 				LogFields{"rid": self.id, "error": ErrStr(err)})
@@ -619,17 +597,18 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 	timer := time.Now()
 	logWarning := self.logger.ShouldLog(WARNING)
 	messageType := "notification"
+	uaid := sock.UAID()
 	defer func(timer time.Time, sock *PushWS) {
 		now := time.Now()
 		if sock.Logger.ShouldLog(INFO) {
 			sock.Logger.Info("timer",
 				"Client flush completed",
 				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
-					"uaid": sock.Uaid})
+					"uaid": uaid})
 		}
 		self.metrics.Timer("client.flush", now.Sub(timer))
 	}(timer, sock)
-	if sock.Uaid == "" {
+	if uaid == "" {
 		if logWarning {
 			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
 				LogFields{"rid": self.id})
@@ -648,10 +627,10 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 	// if we have a channel, don't flush. we can get them later in the ACK
 	if len(channel) == 0 {
 		var expired []string
-		if updates, expired, err = sock.Store.FetchAll(sock.Uaid, time.Unix(lastAccessed, 0)); err != nil {
+		if updates, expired, err = sock.Store.FetchAll(uaid, time.Unix(lastAccessed, 0)); err != nil {
 			if logWarning {
 				self.logger.Warn("worker", "Failed to flush Update to client.",
-					LogFields{"rid": self.id, "uaid": sock.Uaid, "error": err.Error()})
+					LogFields{"rid": self.id, "uaid": uaid, "error": err.Error()})
 			}
 			return err
 		}
@@ -675,7 +654,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 			prefix = "+>"
 		}
 		for index, update := range updates {
-			logStrings[index] = fmt.Sprintf("%s %s.%s = %d", prefix, sock.Uaid, update.ChannelID, update.Version)
+			logStrings[index] = fmt.Sprintf("%s %s.%s = %d", prefix, uaid, update.ChannelID, update.Version)
 			self.metrics.Increment("updates.sent")
 		}
 	}
@@ -704,7 +683,7 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 	if self.app.pushLongPongs {
 		websocket.JSON.Send(sock.Socket, PingReply{header.Type, 200})
 	} else {
-		websocket.Message.Send(sock.Socket, []byte("{}"))
+		websocket.Message.Send(sock.Socket, "{}")
 	}
 	self.metrics.Increment("updates.client.ping")
 	return nil
@@ -715,10 +694,10 @@ func (self *WorkerWS) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error
 	/*
 	   // If needed...
 	   sock.Scmd <- PushCommand{Command: PURGE,
-	       Arguments:JsMap{"uaid": sock.Uaid}}
+	       Arguments:JsMap{"uaid": sock.UAID()}}
 	   result := <-sock.Scmd
 	*/
-	websocket.Message.Send(sock.Socket, []byte("{}"))
+	websocket.Message.Send(sock.Socket, "{}")
 	return nil
 }
 

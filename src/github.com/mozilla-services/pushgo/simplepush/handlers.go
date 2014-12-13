@@ -280,7 +280,7 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 	if pinger == nil {
 		goto sendUpdate
 	}
-	if ok, err = pinger.Send(uaid, version); err != nil {
+	if ok, err = pinger.Send(uaid, version, data); err != nil {
 		if logWarning {
 			self.logger.Warn("update", "Could not send proprietary ping", LogFields{
 				"rid": requestID, "uaid": uaid, "error": err.Error()})
@@ -350,8 +350,7 @@ sendUpdate:
 
 func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 	requestID := ws.Request().Header.Get(HeaderID)
-	sock := PushWS{Uaid: "",
-		Socket: ws,
+	sock := PushWS{Socket: ws,
 		Store:  self.store,
 		Logger: self.logger,
 		Born:   time.Now()}

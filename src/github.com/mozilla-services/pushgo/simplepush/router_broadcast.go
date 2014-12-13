@@ -478,12 +478,11 @@ func (r *BroadcastRouter) runLoop() {
 	}
 }
 
-func pipeTo(dest io.WriteCloser, src io.WriterTo) (err error) {
-	if _, err = src.WriteTo(dest); err != nil {
-		return
-	}
-	return dest.Close()
-}
+func pipeTo(dest *io.PipeWriter, src io.WriterTo) (err error) {
+    if _, err = src.WriteTo(dest); err != nil {
+        return dest.CloseWithError(err)
+    }
+    return dest.Close()
 
 func init() {
 	AvailableRouters["broadcast"] = func() HasConfigStruct {

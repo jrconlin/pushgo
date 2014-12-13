@@ -9,22 +9,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/mozilla-services/pushgo/retry"
 )
 
 type PropPinger interface {
 	HasConfigStruct
 	Register(uaid string, pingData []byte) error
-	Send(uaid string, vers int64) (ok bool, err error)
+	Send(uaid string, vers int64, data string) (ok bool, err error)
 	CanBypassWebsocket() bool
 	Status() (bool, error)
+	Close() error
 }
 
-var UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
-var ConfigurationErr = errors.New("Configuration Error")
-var ProtocolErr = errors.New("A protocol error occurred. See logs for details.")
+var (
+	UnsupportedProtocolErr = errors.New("Unsupported Ping Request")
+	ConfigurationErr       = errors.New("Configuration Error")
+	ProtocolErr            = errors.New("A protocol error occurred. See logs for details.")
+	PingerClosedErr        = &PingerError{"Pinger closed", false}
+)
 
 var AvailablePings = make(AvailableExtensions)
 
@@ -33,6 +41,22 @@ func init() {
 	AvailablePings["udp"] = func() HasConfigStruct { return new(UDPPing) }
 	AvailablePings["gcm"] = func() HasConfigStruct { return new(GCMPing) }
 	AvailablePings.SetDefault("noop")
+}
+
+// IsPingerTemporary indicates whether the given error is a temporary
+// pinger error.
+func IsPingerTemporary(err error) bool {
+	pingErr, ok := err.(*PingerError)
+	return !ok || pingErr.Temporary
+}
+
+type PingerError struct {
+	Message   string
+	Temporary bool
+}
+
+func (err *PingerError) Error() string {
+	return err.Message
 }
 
 // NoOp ping
@@ -66,12 +90,16 @@ func (r *NoopPing) CanBypassWebsocket() bool {
 }
 
 // try to send the ping.
-func (r *NoopPing) Send(string, int64) (bool, error) {
+func (r *NoopPing) Send(string, int64, string) (bool, error) {
 	return false, nil
 }
 
 func (r *NoopPing) Status() (bool, error) {
 	return true, nil
+}
+
+func (r *NoopPing) Close() error {
+	return nil
 }
 
 //===
@@ -117,7 +145,7 @@ func (r *UDPPing) CanBypassWebsocket() bool {
 
 // Send the version info to the Proprietary ping URL provided
 // by the carrier.
-func (r *UDPPing) Send(string, int64) (bool, error) {
+func (r *UDPPing) Send(string, int64, string) (bool, error) {
 	// Obviously, this needs to be filled out with the appropriate
 	// setup and calls to communicate to the remote server.
 	// Since UDP is not actually defined, we're returning this
@@ -129,9 +157,19 @@ func (r *UDPPing) Status() (bool, error) {
 	return false, UnsupportedProtocolErr
 }
 
+func (r *UDPPing) Close() error {
+	return nil
+}
+
 // ===
 // Google Cloud Messaging Proprietary Ping interface
 // NOTE: This is still experimental.
+func NewGCMPing() *GCMPing {
+	return &GCMPing{
+		closeSignal: make(chan bool),
+	}
+}
+
 type GCMPing struct {
 	logger      *SimpleLogger
 	metrics     Statistician
@@ -142,16 +180,19 @@ type GCMPing struct {
 	dryRun      bool
 	apiKey      string
 	ttl         uint64
-	lastErr     error
-	errLock     sync.RWMutex
+	rh          *retry.Helper
+	closeLock   sync.Mutex
+	closeSignal chan bool
+	isClosed    bool
 }
 
 type GCMPingConfig struct {
 	APIKey      string `toml:"api_key" env:"api_key"` //GCM Dev API Key
 	CollapseKey string `toml:"collapse_key" env:"collapse_key"`
 	DryRun      bool   `toml:"dry_run" env:"dry_run"`
-	TTL         string `toml:"ttl" env:"ttl"`
-	URL         string `toml:"url" env:"url"` //GCM URL
+	TTL         string
+	URL         string //GCM URL
+	Retry       retry.Config
 }
 
 type GCMRequest struct {
@@ -159,23 +200,15 @@ type GCMRequest struct {
 	CollapseKey string    `json:"collapse_key"`
 	TTL         uint64    `json:"time_to_live"`
 	DryRun      bool      `json:"dry_run"`
+	Data        *GCMData  `json:"data,omitempty"`
 }
 
 type GCMPingData struct {
 	RegID string `json:"regid"`
 }
 
-type GCMError int
-
-func (err GCMError) Error() string {
-	switch err {
-	case 400:
-		return "Invalid request payload"
-	case 401:
-		return "Error authenticating sender account"
-	default:
-		return fmt.Sprintf("Unexpected status code: %d", err)
-	}
+type GCMData struct {
+	Msg string `json:"msg"`
 }
 
 func (r *GCMPing) ConfigStruct() interface{} {
@@ -185,10 +218,16 @@ func (r *GCMPing) ConfigStruct() interface{} {
 		CollapseKey: "simplepush",
 		DryRun:      false,
 		TTL:         "72h",
+		Retry: retry.Config{
+			Retries:   5,
+			Delay:     "200ms",
+			MaxDelay:  "5s",
+			MaxJitter: "400ms",
+		},
 	}
 }
 
-func (r *GCMPing) Init(app *Application, config interface{}) error {
+func (r *GCMPing) Init(app *Application, config interface{}) (err error) {
 	r.logger = app.Logger()
 	r.metrics = app.Metrics()
 	r.store = app.Store()
@@ -199,17 +238,25 @@ func (r *GCMPing) Init(app *Application, config interface{}) error {
 	r.dryRun = conf.DryRun
 
 	if r.apiKey = conf.APIKey; len(r.apiKey) == 0 {
-		r.logger.Panic("gcmping", "Missing GCM API key", nil)
+		r.logger.Panic("propping", "Missing GCM API key", nil)
 		return ConfigurationErr
 	}
 
 	ttl, err := time.ParseDuration(conf.TTL)
 	if err != nil {
-		r.logger.Panic("gcmping", "Could not parse TTL",
+		r.logger.Panic("propping", "Could not parse TTL",
 			LogFields{"error": err.Error(), "ttl": conf.TTL})
 		return err
 	}
 	r.ttl = uint64(ttl / time.Second)
+
+	if r.rh, err = conf.Retry.NewHelper(); err != nil {
+		r.logger.Panic("propping", "Error configuring retry helper",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	r.rh.CloseNotifier = r
+	r.rh.CanRetry = IsPingerTemporary
 
 	r.client = new(http.Client)
 	return nil
@@ -223,17 +270,59 @@ func (r *GCMPing) CanBypassWebsocket() bool {
 }
 
 func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
-	ping := new(GCMPingData)
-	if err = json.Unmarshal(pingData, ping); err != nil {
+	if err = r.store.PutPing(uaid, pingData); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("propping", "Could not store GCM registration data",
+				LogFields{"error": err.Error()})
+		}
 		return err
 	}
-	if len(ping.RegID) == 0 {
+	return nil
+}
+
+func (r *GCMPing) retryAfter(header string) (ok bool) {
+	d, ok := ParseRetryAfter(header)
+	if !ok {
+		return true
+	}
+	select {
+	case <-r.closeSignal:
+		return false
+	case <-time.After(d):
+	}
+	return true
+}
+
+func (r *GCMPing) Send(uaid string, vers int64, data string) (ok bool, err error) {
+	pingData, err := r.store.FetchPing(uaid)
+	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("gcmping",
-				"No user registration ID present. Cannot send message",
-				nil)
+			r.logger.Error("propping", "Could not fetch GCM registration data",
+				LogFields{"error": err.Error(), "uaid": uaid})
 		}
-		return ConfigurationErr
+		return false, err
+	}
+	if len(pingData) == 0 {
+		if r.logger.ShouldLog(INFO) {
+			r.logger.Info("propping", "No GCM registration data for device",
+				LogFields{"uaid": uaid})
+		}
+		return false, nil
+	}
+	ping := new(GCMPingData)
+	if err = json.Unmarshal(pingData, ping); err != nil {
+		if r.logger.ShouldLog(WARNING) {
+			r.logger.Warn("propping", "Could not parse GCM registration data",
+				LogFields{"error": err.Error(), "uaid": uaid})
+		}
+		return false, err
+	}
+	if len(ping.RegID) == 0 {
+		if r.logger.ShouldLog(INFO) {
+			r.logger.Info("propping", "Missing GCM registration ID",
+				LogFields{"uaid": uaid})
+		}
+		return false, nil
 	}
 	request := &GCMRequest{
 		// google docs lie. You MUST send the regid as an array, even if it's one
@@ -242,83 +331,75 @@ func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
 		CollapseKey: r.collapseKey,
 		TTL:         r.ttl,
 		DryRun:      r.dryRun,
+		Data: &GCMData{
+			Msg: data,
+		},
 	}
-	requestData, err := json.Marshal(request)
+	body, err := json.Marshal(request)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("gcmping", "Could not marshal connection string for storage",
-				LogFields{"error": err.Error()})
-		}
-		return err
-	}
-	if err = r.store.PutPing(uaid, requestData); err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("gcmping", "Could not store connect",
-				LogFields{"error": err.Error()})
-		}
-		return err
-	}
-	return nil
-}
-
-func (r *GCMPing) Send(uaid string, vers int64) (ok bool, err error) {
-	pingData, err := r.store.FetchPing(uaid)
-	if err != nil {
-		return false, err
-	}
-	if len(pingData) == 0 {
-		return false, nil
-	}
-	req, err := http.NewRequest("POST", r.url, bytes.NewBuffer(pingData))
-	if err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("propping",
-				"Could not create request for GCM Post",
-				LogFields{"error": err.Error()})
+			r.logger.Error("propping", "Could not marshal GCM request",
+				LogFields{"error": err.Error(), "uaid": uaid})
 		}
 		return false, err
 	}
-	req.Header.Add("Authorization", "key="+r.apiKey)
-	req.Header.Add("Content-Type", "application/json")
-	r.metrics.Increment("propretary.ping.gcm")
-	resp, err := r.client.Do(req)
-	defer resp.Body.Close()
+	sendOnce := func() (err error) {
+		req, err := http.NewRequest("POST", r.url, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Add("Authorization", fmt.Sprintf("key=%s", r.apiKey))
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := r.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		// Consume the response body so the underlying TCP connection can be reused.
+		io.Copy(ioutil.Discard, resp.Body)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil
+		}
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+			ok := r.retryAfter(resp.Header.Get("Retry-After"))
+			if !ok {
+				return PingerClosedErr
+			}
+			return &PingerError{fmt.Sprintf(
+				"Retrying after receiving status code: %d", resp.StatusCode), true}
+		}
+		return &PingerError{fmt.Sprintf(
+			"Unexpected status code: %d", resp.StatusCode), false}
+	}
+	retries, err := r.rh.RetryFunc(sendOnce)
+	r.metrics.IncrementBy("ping.gcm.retry", int64(retries))
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("propping",
-				"Failed to send GCM message",
-				LogFields{"error": err.Error()})
+			r.logger.Error("propping", "Failed to send GCM message",
+				LogFields{"error": err.Error(), "uaid": uaid})
 		}
+		r.metrics.Increment("ping.gcm.error")
 		return false, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		if r.logger.ShouldLog(WARNING) {
-			r.logger.Warn("propping",
-				"GCM returned non success message",
-				LogFields{"error": resp.Status})
-		}
-		r.setLastErr(GCMError(resp.StatusCode))
-		return false, ProtocolErr
-	}
+	r.metrics.Increment("ping.gcm.success")
 	return true, nil
 }
 
 func (r *GCMPing) Status() (ok bool, err error) {
-	if err = r.getLastErr(); err != nil {
-		return false, err
-	}
 	return true, nil
 }
 
-func (r *GCMPing) setLastErr(err error) {
-	r.errLock.Lock()
-	r.lastErr = err
-	r.errLock.Unlock()
+func (r *GCMPing) CloseNotify() <-chan bool {
+	return r.closeSignal
 }
 
-func (r *GCMPing) getLastErr() (err error) {
-	r.errLock.RLock()
-	err = r.lastErr
-	r.errLock.RUnlock()
-	return
+func (r *GCMPing) Close() error {
+	r.closeLock.Lock()
+	defer r.closeLock.Unlock()
+	if r.isClosed {
+		return nil
+	}
+	r.isClosed = true
+	close(r.closeSignal)
+	return nil
 }
