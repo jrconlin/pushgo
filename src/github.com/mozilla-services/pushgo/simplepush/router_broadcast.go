@@ -167,7 +167,7 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 			LogFields{"addr": routeLn.Addr().String()})
 	}
 
-	routeSrv := &http.Server{
+	routeSrv := NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				r.metrics.Increment("router.socket.connect")
@@ -176,7 +176,7 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 			}
 		},
 		Handler:  &LogHandler{r.routerMux, r.logger},
-		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)}
+		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)})
 	errChan <- routeSrv.Serve(routeLn)
 }
 

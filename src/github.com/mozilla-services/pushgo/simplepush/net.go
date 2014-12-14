@@ -83,6 +83,78 @@ func (c *LimitConn) Close() error {
 	return err
 }
 
+// NewServeCloser wraps srv and returns a closable HTTP server.
+func NewServeCloser(srv *http.Server) (s *ServeCloser) {
+	s = &ServeCloser{
+		Server: srv,
+		conns:  make(map[net.Conn]bool),
+	}
+	if srv.ConnState != nil {
+		s.stateHook = srv.ConnState
+	}
+	srv.ConnState = s.connState
+	return
+}
+
+// ServeCloser is an HTTP server with graceful shutdown support. Closing a
+// server cancels any pending requests by closing the underlying connections.
+type ServeCloser struct {
+	*http.Server
+	stateHook func(net.Conn, http.ConnState)
+	connsLock sync.Mutex // Protects conns.
+	conns     map[net.Conn]bool
+	closed    int32 // Accessed atomically.
+}
+
+// Close stops the server.
+func (s *ServeCloser) Close() error {
+	if !atomic.CompareAndSwapInt32(&s.closed, 0, 1) {
+		return nil
+	}
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	for c := range s.conns {
+		delete(s.conns, c)
+		c.Close()
+	}
+	return nil
+}
+
+func (s *ServeCloser) addConn(c net.Conn) {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		c.Close()
+		return
+	}
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	s.conns[c] = true
+}
+
+func (s *ServeCloser) removeConn(c net.Conn) {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		c.Close()
+		return
+	}
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	delete(s.conns, c)
+}
+
+func (s *ServeCloser) connState(c net.Conn, state http.ConnState) {
+	switch state {
+	case http.StateNew:
+		// Track new connections.
+		s.addConn(c)
+	case http.StateClosed, http.StateHijacked:
+		// Remove closed and hijacked connections. Clients must track hijacked
+		// connections separately.
+		s.removeConn(c)
+	}
+	if s.stateHook != nil {
+		s.stateHook(c, state)
+	}
+}
+
 // LimitListener restricts the number of concurrent connections accepted by the
 // underlying listener, and sets a keep-alive timer on accepted connections.
 // Based on tcpKeepAliveListener from package net/http, copyright 2009,

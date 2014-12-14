@@ -244,6 +244,7 @@ func (a *Application) RemoveClient(uaid string) {
 func (a *Application) Stop() {
 	plugins := []io.Closer{
 		a.server,   // Stop the WebSocket and update listeners.
+		a.handlers, // Disconnect existing clients.
 		a.balancer, // Deregister from the balancer.
 		a.router,   // Stop the routing listener and locator.
 		a.store,    // Close database connections.

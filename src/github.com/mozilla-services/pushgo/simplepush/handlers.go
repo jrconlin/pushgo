@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -23,6 +25,12 @@ import (
 type HandlerConfig struct {
 	Origins    []string
 	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
+}
+
+func NewHandler() *Handler {
+	return &Handler{
+		sockets: make(map[*websocket.Conn]bool),
+	}
 }
 
 type Handler struct {
@@ -38,6 +46,9 @@ type Handler struct {
 	maxDataLen  int
 	clientMux   *mux.Router
 	endpointMux *mux.Router
+	socketsLock sync.Mutex // Protects sockets.
+	sockets     map[*websocket.Conn]bool
+	closed      int32 // Accessed atomically.
 }
 
 type StatusReport struct {
@@ -109,9 +120,9 @@ func (h *Handler) Start(errChan chan<- error) {
 			h.logger.Info("app", "Starting WebSocket server",
 				LogFields{"addr": clientLn.Addr().String()})
 		}
-		clientSrv := &http.Server{
+		clientSrv := NewServeCloser(&http.Server{
 			Handler:  &LogHandler{h.clientMux, h.logger},
-			ErrorLog: log.New(&LogWriter{h.logger.Logger, "worker", ERROR}, "", 0)}
+			ErrorLog: log.New(&LogWriter{h.logger.Logger, "worker", ERROR}, "", 0)})
 		errChan <- clientSrv.Serve(clientLn)
 	}()
 
@@ -121,7 +132,7 @@ func (h *Handler) Start(errChan chan<- error) {
 			h.logger.Info("app", "Starting update server",
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
-		endpointSrv := &http.Server{
+		endpointSrv := NewServeCloser(&http.Server{
 			ConnState: func(c net.Conn, state http.ConnState) {
 				if state == http.StateNew {
 					h.metrics.Increment("endpoint.socket.connect")
@@ -130,7 +141,7 @@ func (h *Handler) Start(errChan chan<- error) {
 				}
 			},
 			Handler:  &LogHandler{h.endpointMux, h.logger},
-			ErrorLog: log.New(&LogWriter{h.logger.Logger, "endpoint", ERROR}, "", 0)}
+			ErrorLog: log.New(&LogWriter{h.logger.Logger, "endpoint", ERROR}, "", 0)})
 		errChan <- endpointSrv.Serve(endpointLn)
 	}()
 }
@@ -452,6 +463,9 @@ sendUpdate:
 }
 
 func (h *Handler) PushSocketHandler(ws *websocket.Conn) {
+	h.addSocket(ws)
+	defer h.removeSocket(ws)
+
 	requestID := ws.Request().Header.Get(HeaderID)
 	sock := PushWS{Socket: ws,
 		Store:  h.store,
@@ -486,6 +500,40 @@ func (r *Handler) SetPropPinger(ping PropPinger) (err error) {
 
 func (r *Handler) PropPinger() PropPinger {
 	return r.propping
+}
+
+func (h *Handler) addSocket(ws *websocket.Conn) {
+	if atomic.LoadInt32(&h.closed) == 1 {
+		ws.Close()
+		return
+	}
+	h.socketsLock.Lock()
+	defer h.socketsLock.Unlock()
+	h.sockets[ws] = true
+}
+
+func (h *Handler) removeSocket(ws *websocket.Conn) {
+	if atomic.LoadInt32(&h.closed) == 1 {
+		ws.Close()
+		return
+	}
+	h.socketsLock.Lock()
+	defer h.socketsLock.Unlock()
+	delete(h.sockets, ws)
+}
+
+func (h *Handler) Close() error {
+	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
+		return nil
+	}
+	h.socketsLock.Lock()
+	defer h.socketsLock.Unlock()
+	for ws := range h.sockets {
+		delete(h.sockets, ws)
+		ws.Close()
+		// TODO: Sleep between disconnects.
+	}
+	return nil
 }
 
 func validPK(pk string) bool {

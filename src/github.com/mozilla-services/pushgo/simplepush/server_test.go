@@ -169,7 +169,7 @@ func (t *TestServer) load() (*Application, error) {
 			return serv, nil
 		},
 		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			handlers := new(Handler)
+			handlers := NewHandler()
 			if err := handlers.Init(app, handlers.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
 			}
