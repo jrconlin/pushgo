@@ -62,12 +62,17 @@ func TestBroadcastRouter(t *testing.T) {
 	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
 	go router.Start(errChan)
 
+	mckStat.EXPECT().Increment("router.socket.connect").AnyTimes()
+	mckStat.EXPECT().Increment("router.socket.disconnect").AnyTimes()
+
 	Convey("Should fail to route a non-existent uaid", t, func() {
 
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return([]string{}, nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).Times(2)
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any()).Times(2)
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.miss").Times(1)
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
 		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
@@ -80,6 +85,8 @@ func TestBroadcastRouter(t *testing.T) {
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).Times(2)
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any()).Times(2)
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.error").Times(1)
 		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldEqual, myErr)
@@ -104,6 +111,8 @@ func TestBroadcastRouter(t *testing.T) {
 			"").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.hit")
 		mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
 		mckStat.EXPECT().Timer("router.handled", gomock.Any())
@@ -173,6 +182,9 @@ func BenchmarkRouter(b *testing.B) {
 	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
 	go router.Start(errChan)
 	<-time.After(time.Duration(1) * time.Second)
+
+	mckStat.EXPECT().Increment("router.socket.connect").AnyTimes()
+	mckStat.EXPECT().Increment("router.socket.disconnect").AnyTimes()
 
 	for i := 0; i < b.N; i++ {
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
