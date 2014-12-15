@@ -130,7 +130,7 @@ test:
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 bench:
-	GOPATH=$(GOPATH) go test -v -bench=Router -benchmem \
+	GOPATH=$(GOPATH) go test -v -bench=Router -benchmem -benchtime=2s \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:

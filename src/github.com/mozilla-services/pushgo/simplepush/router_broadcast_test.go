@@ -118,12 +118,6 @@ func TestBroadcastRouter(t *testing.T) {
 }
 
 func BenchmarkRouter(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		runBench(b)
-	}
-}
-
-func runBench(b *testing.B) {
 	mockCtrl := gomock.NewController(b)
 	defer mockCtrl.Finish()
 
@@ -181,19 +175,21 @@ func runBench(b *testing.B) {
 	go router.Start(errChan)
 	<-time.After(time.Duration(1) * time.Second)
 
-	mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
-	mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
-	mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
-	mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
-	mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-	mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
-	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
-	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
-		gomock.Any()).AnyTimes()
-	mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-		"").Return(nil)
+	for i := 0; i < b.N; i++ {
+		mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
+		mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
+		mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
+		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
+		mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
+		mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any()).AnyTimes()
+		mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
+			"").Return(nil)
 
-	router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+	}
 
 	mckLocator.EXPECT().Close()
 	router.Close()
