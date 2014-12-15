@@ -36,6 +36,7 @@ type TestServer struct {
 	LogLevel     int32
 	Contacts     []string
 	Redirects    []string
+	Threshold    float64
 	NewStore     func() (store ConfigStore, configStruct interface{}, err error)
 	app          *Application
 	lastErr      error
@@ -150,6 +151,7 @@ func (t *TestServer) load() (*Application, error) {
 			balancer := new(StaticBalancer)
 			balancerConf := balancer.ConfigStruct().(*StaticBalancerConf)
 			balancerConf.Redirects = t.Redirects
+			balancerConf.Threshold = t.Threshold
 			if err := balancer.Init(app, balancerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing balancer: %#v", err)
 			}
