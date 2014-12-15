@@ -1,3 +1,5 @@
 .hg
 .godeps/
 bin/
+libmemcached-1.0.18/
+pkg/

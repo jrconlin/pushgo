@@ -47,7 +47,7 @@ func newTestHandler(t *testing.T) (*Handler, *Application) {
 	server.Init(app, server.ConfigStruct())
 	app.SetServer(server)
 	locator := &NoLocator{logger: tlogger}
-	router := NewRouter()
+	router := NewBroadcastRouter()
 	router.Init(app, router.ConfigStruct())
 	router.SetLocator(locator)
 	app.SetRouter(router)
