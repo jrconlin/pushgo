@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -72,6 +73,17 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
 		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldBeNil)
+	})
+
+	Convey("Should fail to route if contacts errors", t, func() {
+		myErr := errors.New("Oops")
+		mckLocator.EXPECT().Contacts(gomock.Any()).Return([]string{}, myErr)
+		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).Times(2)
+		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any()).Times(2)
+		mckStat.EXPECT().Increment("router.broadcast.error").Times(1)
+		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		So(err, ShouldEqual, myErr)
 	})
 
 	Convey("Should succeed self-routing to a valid uaid", t, func() {
