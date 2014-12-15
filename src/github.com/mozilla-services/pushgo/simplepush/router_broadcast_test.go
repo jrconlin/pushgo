@@ -6,7 +6,6 @@ package simplepush
 
 import (
 	"errors"
-	"strconv"
 	"testing"
 	"time"
 
@@ -41,7 +40,7 @@ func TestBroadcastRouter(t *testing.T) {
 	router := NewBroadcastRouter()
 	defaultConfig := router.ConfigStruct()
 	conf := defaultConfig.(*BroadcastRouterConfig)
-	conf.Listener.Addr = ":8000"
+	conf.Listener.Addr = ""
 	router.Init(app, conf)
 	app.SetRouter(router)
 
@@ -51,8 +50,8 @@ func TestBroadcastRouter(t *testing.T) {
 	defSrvConfig := srv.ConfigStruct()
 	srvConfig := defSrvConfig.(*ServerConfig)
 
-	srvConfig.Client.Addr = ":10990"
-	srvConfig.Endpoint.Addr = ":10899"
+	srvConfig.Client.Addr = ""
+	srvConfig.Endpoint.Addr = ""
 	srv.Init(app, defSrvConfig)
 	app.SetServer(srv)
 
@@ -144,7 +143,7 @@ func BenchmarkRouter(b *testing.B) {
 	router := NewBroadcastRouter()
 	defaultConfig := router.ConfigStruct()
 	conf := defaultConfig.(*BroadcastRouterConfig)
-	conf.Listener.Addr = ":" + strconv.Itoa(8300+b.N)
+	conf.Listener.Addr = ""
 	router.Init(app, conf)
 	app.SetRouter(router)
 
@@ -154,8 +153,8 @@ func BenchmarkRouter(b *testing.B) {
 	defSrvConfig := srv.ConfigStruct()
 	srvConfig := defSrvConfig.(*ServerConfig)
 
-	srvConfig.Client.Addr = ":" + strconv.Itoa(13100+b.N)
-	srvConfig.Endpoint.Addr = ":" + strconv.Itoa(13900+b.N)
+	srvConfig.Client.Addr = ""
+	srvConfig.Endpoint.Addr = ""
 	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 	srv.Init(app, defSrvConfig)
 	app.SetServer(srv)
