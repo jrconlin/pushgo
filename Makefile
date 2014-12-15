@@ -56,6 +56,29 @@ $(TARGET):
 	GOPATH=$(GOPATH) go build \
 		-ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
+$(HERE)/mockgen:
+	GOPATH=$(GOPATH) go build github.com/rafrombrc/gomock/mockgen
+
+test-mocks: $(HERE)/mockgen
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/config.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_config_test.go -package="simplepush"
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/worker.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_worker_test.go -package="simplepush"
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/storage.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_store_test.go -package="simplepush"
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/locator.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
+	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
+	# copied into log.go while this is run, then the mocked config struct needs to be
+	# removed from the mock_log_test.go file.
+	# Issue: https://code.google.com/p/gomock/issues/detail?id=16
+	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/log.go \
+	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_log_test.go -package="simplepush"
+	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
+	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_router_test.go -package="simplepush"
+
 test-gomc:
 	GOPATH=$(GOPATH) go test \
 		-tags "memcached_server_test libmemcached" \
@@ -103,7 +126,11 @@ travis-cov: test-cov
 		-service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
 test:
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) go test -v \
+		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
+
+bench:
+	GOPATH=$(GOPATH) go test -v -bench=Router -benchmem -benchtime=5s \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:

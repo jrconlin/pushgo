@@ -56,7 +56,7 @@ type Application struct {
 	clientCount        *int32
 	server             *Serv
 	store              Store
-	router             *Router
+	router             Router
 	handlers           *Handler
 	propping           PropPinger
 }
@@ -135,7 +135,7 @@ func (a *Application) SetPropPinger(ping PropPinger) (err error) {
 	return
 }
 
-func (a *Application) SetMetrics(metrics *Metrics) error {
+func (a *Application) SetMetrics(metrics Statistician) error {
 	a.metrics = metrics
 	return nil
 }
@@ -145,7 +145,7 @@ func (a *Application) SetStore(store Store) error {
 	return nil
 }
 
-func (a *Application) SetRouter(router *Router) error {
+func (a *Application) SetRouter(router Router) error {
 	a.router = router
 	return nil
 }
@@ -176,9 +176,6 @@ func (a *Application) Run() (errChan chan error) {
 	endpointMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
 	endpointMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
 
-	routeMux := mux.NewRouter()
-	routeMux.HandleFunc("/route/{uaid}", a.handlers.RouteHandler)
-
 	// Weigh the anchor!
 	go func() {
 		clientLn := a.server.ClientListener()
@@ -204,17 +201,7 @@ func (a *Application) Run() (errChan chan error) {
 		errChan <- endpointSrv.Serve(endpointLn)
 	}()
 
-	go func() {
-		routeLn := a.router.Listener()
-		if a.log.ShouldLog(INFO) {
-			a.log.Info("app", "Starting router",
-				LogFields{"addr": routeLn.Addr().String()})
-		}
-		routeSrv := &http.Server{
-			Handler:  &LogHandler{routeMux, a.log},
-			ErrorLog: log.New(&LogWriter{a.log.Logger, "router", ERROR}, "", 0)}
-		errChan <- routeSrv.Serve(routeLn)
-	}()
+	go a.router.Start(errChan)
 
 	return errChan
 }
@@ -240,7 +227,7 @@ func (a *Application) Metrics() Statistician {
 	return a.metrics
 }
 
-func (a *Application) Router() *Router {
+func (a *Application) Router() Router {
 	return a.router
 }
 

@@ -75,6 +75,7 @@ type Serv struct {
 	maxEndpointConns int
 	metrics          Statistician
 	store            Store
+	router           Router
 	key              []byte
 	template         *template.Template
 	prop             PropPinger
@@ -109,6 +110,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 	self.prop = app.PropPinger()
 	self.key = app.TokenKey()
 	self.hostname = app.Hostname()
+	self.router = app.Router()
 
 	if self.template, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
 		self.logger.Panic("server", "Could not parse push endpoint template",
@@ -220,6 +222,7 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 		UAID:   uaid,
 	}
 	self.app.AddClient(uaid, client)
+	self.router.Register(uaid)
 	self.logger.Info("dash", "Client registered", nil)
 
 	// We don't register the list of known ChannelIDs since we echo
@@ -251,6 +254,7 @@ func (self *Serv) Bye(sock *PushWS) {
 				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
 	}
 	if !sock.IsClosed() {
+		self.router.Unregister(uaid)
 		self.app.RemoveClient(uaid)
 	}
 	sock.Close()
