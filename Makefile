@@ -15,7 +15,11 @@ TARGET = simplepush
 COVER_MODE = count
 COVER_PATH = $(HERE)/.coverage
 
-VERSION=$(shell git describe --tags --always HEAD 2>/dev/null)
+VERSION = $(strip $(shell [ -e $(HERE)/GITREF ] && cat $(HERE)/GITREF 2>/dev/null))
+ifeq ($(VERSION),)
+	VERSION = $(strip $(shell git describe --tags --always HEAD 2>/dev/null))
+endif
+
 ifneq ($(strip $(VERSION)),)
 	GOLDFLAGS := -X $(PACKAGE)/simplepush.VERSION $(VERSION) $(GOLDFLAGS)
 endif
