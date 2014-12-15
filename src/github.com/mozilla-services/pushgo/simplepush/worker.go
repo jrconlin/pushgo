@@ -323,7 +323,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			self.logger.Debug("worker", "Redirecting client", LogFields{
 				"rid": self.id, "cmd": header.Type, "origin": origin})
 		}
-		_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","uaid":"%s","status":302,"redirect":"%s"}`,
+		_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
 			header.Type, uaid, origin)
 		self.stopped = true
 		return err
