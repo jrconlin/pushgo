@@ -217,11 +217,17 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 	return nil
 }
 
+func (b *EtcdBalancer) shouldRedirect() (currentConns int64, ok bool) {
+	currentConns = int64(b.connCount())
+	ok = float64(currentConns+1)/float64(b.maxConns) >= b.threshold
+	return
+}
+
 // RedirectURL returns the absolute URL of an available peer. Implements
 // Balancer.RedirectURL().
 func (b *EtcdBalancer) RedirectURL() (url string, ok bool, err error) {
-	currentConns := int64(b.connCount())
-	if float64(currentConns)/float64(b.maxConns) < b.threshold {
+	currentConns, ok := b.shouldRedirect()
+	if !ok {
 		return "", false, nil
 	}
 	b.fetchLock.RLock()

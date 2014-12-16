@@ -40,12 +40,17 @@ func (b *StaticBalancer) Init(app *Application, config interface{}) error {
 func (*StaticBalancer) Close() error          { return nil }
 func (*StaticBalancer) Status() (bool, error) { return true, nil }
 
+func (b *StaticBalancer) shouldRedirect() (currentWorkers int64, ok bool) {
+	currentWorkers = int64(b.workerCount())
+	ok = float64(currentWorkers+1)/float64(b.maxWorkers) >= b.threshold
+	return
+}
+
 func (b *StaticBalancer) RedirectURL() (url string, ok bool, err error) {
 	if len(b.redirects) == 0 {
 		return
 	}
-	currentWorkers := b.workerCount()
-	if float64(currentWorkers)/float64(b.maxWorkers) < b.threshold {
+	if _, ok = b.shouldRedirect(); !ok {
 		return
 	}
 	b.Lock()
