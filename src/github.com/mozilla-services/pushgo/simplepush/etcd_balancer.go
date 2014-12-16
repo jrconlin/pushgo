@@ -79,7 +79,7 @@ type EtcdBalancer struct {
 	connCount func() int
 
 	fetchLock sync.RWMutex // Protects the following fields.
-	peers     EtcdPeers
+	peers     *EtcdPeers
 	fetchErr  error
 	lastFetch time.Time
 
@@ -101,37 +101,40 @@ type EtcdPeer struct {
 	FreeConns int64
 }
 
-// EtcdPeers is a list of peers sorted by free connection count.
-type EtcdPeers []EtcdPeer
+type EtcdPeers struct {
+	peers []EtcdPeer // A list of peers sorted by free connection count.
+	sum   int64      // The total number of free connections.
+}
 
-func (p EtcdPeers) Len() int           { return len(p) }
-func (p EtcdPeers) Less(i, j int) bool { return p[i].FreeConns < p[j].FreeConns }
-func (p EtcdPeers) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p *EtcdPeers) Len() int           { return len(p.peers) }
+func (p *EtcdPeers) Less(i, j int) bool { return p.peers[j].FreeConns < p.peers[i].FreeConns }
+func (p *EtcdPeers) Swap(i, j int)      { p.peers[i], p.peers[j] = p.peers[j], p.peers[i] }
 
-func (p EtcdPeers) Sum() (sum int64) {
-	for _, n := range p {
-		sum += n.FreeConns
-	}
-	return sum
+// Append adds peer to the peer list.
+func (p *EtcdPeers) Append(peer EtcdPeer) {
+	p.peers = append(p.peers, peer)
+	p.sum += peer.FreeConns
 }
 
 // Choose returns a weighted random choice from the peer list.
-func (p EtcdPeers) Choose() (peer EtcdPeer, ok bool) {
-	if len(p) == 0 {
+func (p *EtcdPeers) Choose() (peer EtcdPeer, ok bool) {
+	if len(p.peers) == 0 || p.sum <= 0 {
 		ok = false
 		return
 	}
-	sum := p.Sum()
-	if sum == 0 {
-		ok = false
-		return
+	if len(p.peers) == 1 {
+		return p.peers[0], true
 	}
-	if len(p) == 1 {
-		return p[0], true
+	w := rand.Int63n(p.sum)
+	var count int64
+	i := 0
+	for ; i < len(p.peers); i++ {
+		count += p.peers[i].FreeConns
+		if count > w {
+			break
+		}
 	}
-	w := rand.Int63n(sum)
-	i := sort.Search(len(p)-1, func(i int) bool { return p[i].FreeConns >= w })
-	return p[i], true
+	return p.peers[i], true
 }
 
 func NewEtcdBalancer() *EtcdBalancer {
@@ -317,8 +320,9 @@ func (b *EtcdBalancer) parseKey(key string) (scheme, host string, err error) {
 	return parts[0], parts[1], nil
 }
 
-func (b *EtcdBalancer) filterPeers(root *etcd.Node) (peers EtcdPeers, err error) {
+func (b *EtcdBalancer) filterPeers(root *etcd.Node) (peers *EtcdPeers, err error) {
 	logWarning := b.log.ShouldLog(WARNING)
+	peers = new(EtcdPeers)
 	walkFn := func(n *etcd.Node) error {
 		if len(n.Value) == 0 {
 			// Ignore empty nodes.
@@ -349,7 +353,7 @@ func (b *EtcdBalancer) filterPeers(root *etcd.Node) (peers EtcdPeers, err error)
 			// Ignore full peers.
 			return nil
 		}
-		peers = append(peers, EtcdPeer{
+		peers.Append(EtcdPeer{
 			URL:       fmt.Sprintf("%s://%s", scheme, host),
 			FreeConns: freeConns})
 		return nil
@@ -361,7 +365,7 @@ func (b *EtcdBalancer) filterPeers(root *etcd.Node) (peers EtcdPeers, err error)
 }
 
 // Fetch retrieves a list of peer nodes from etcd, sorted by free connections.
-func (b *EtcdBalancer) Fetch() (peers EtcdPeers, err error) {
+func (b *EtcdBalancer) Fetch() (peers *EtcdPeers, err error) {
 	var response *etcd.Response
 	fetchOnce := func() (err error) {
 		response, err = b.client.Get(b.dir, false, true)
