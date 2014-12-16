@@ -4,6 +4,7 @@ BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
 GOPATH = $(DEPS):$(HERE)
+TOOLS = $(shell GOPATH=$(GOPATH) go tool)
 
 PLATFORM=$(shell uname)
 
@@ -23,6 +24,7 @@ endif
 ifneq ($(strip $(VERSION)),)
 	GOLDFLAGS := -X $(PACKAGE)/simplepush.VERSION $(VERSION) $(GOLDFLAGS)
 endif
+
 
 .PHONY: all build clean test $(TARGET) memcached
 
@@ -93,6 +95,13 @@ test-gomemcache:
 		-tags memcached_server_test \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
+check-cov:
+ifneq (cover,$(filter cover,$(TOOLS)))
+	@echo "Go tool 'Cover' not installed."
+	go tool cover
+	false
+endif
+
 clean-cov:
 	rm -rf $(COVER_PATH)
 	rm -f $(addprefix coverage,.out .html)
@@ -100,17 +109,17 @@ clean-cov:
 cov-dir: clean-cov
 	mkdir -p $(COVER_PATH)
 
-retry-cov: cov-dir
+retry-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/retry.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/retry
 
-id-cov: cov-dir
+id-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/id.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/id
 
-simplepush-cov: cov-dir
+simplepush-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
