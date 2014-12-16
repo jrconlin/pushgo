@@ -150,6 +150,12 @@ func (b *EtcdBalancer) ConfigStruct() interface{} {
 		TTL:            "1m",
 		Threshold:      0.95,
 		UpdateInterval: "10s",
+		Retry: retry.Config{
+			Retries:   5,
+			Delay:     "200ms",
+			MaxDelay:  "5s",
+			MaxJitter: "400ms",
+		},
 	}
 }
 
@@ -442,7 +448,7 @@ func (b *EtcdBalancer) checkRetry(cluster *etcd.Cluster, attempt int,
 		b.metrics.Increment("balancer.etcd.error")
 		return &etcd.EtcdError{
 			ErrorCode: etcd.ErrCodeEtcdNotReachable,
-			Message: fmt.Sprintf("Error connecting to etcd after %d retries",
+			Message: fmt.Sprintf("Error connecting to etcd after %d attempts",
 				attempt),
 		}
 	}

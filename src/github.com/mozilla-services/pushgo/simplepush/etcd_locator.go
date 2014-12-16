@@ -192,7 +192,7 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
 		l.metrics.Increment("locator.etcd.error")
 		return &etcd.EtcdError{
 			ErrorCode: etcd.ErrCodeEtcdNotReachable,
-			Message: fmt.Sprintf("Error connecting to etcd after %d retries",
+			Message: fmt.Sprintf("Error connecting to etcd after %d attempts",
 				attempt),
 		}
 	}

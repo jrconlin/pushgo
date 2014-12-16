@@ -46,7 +46,7 @@ func IsEtcdTemporary(err error) bool {
 	case retry.StatusError:
 		return typ >= 500
 	}
-	return false
+	return true
 }
 
 // IsEtcdHealthy indicates whether etcd can respond to requests.
