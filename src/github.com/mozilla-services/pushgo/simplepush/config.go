@@ -79,6 +79,7 @@ const (
 	PluginStore
 	PluginRouter
 	PluginLocator
+	PluginBalancer
 	PluginServer
 	PluginHandlers
 )
@@ -90,6 +91,7 @@ var pluginNames = map[PluginType]string{
 	PluginMetrics:  "metrics",
 	PluginStore:    "store",
 	PluginLocator:  "locator",
+	PluginBalancer: "balancer",
 	PluginServer:   "server",
 	PluginHandlers: "handlers",
 }
@@ -137,7 +139,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Next, metrics, Deps: Logger
+	// Next, metrics.
+	// Deps: PluginLogger.
 	if obj, err = l.loadPlugin(PluginMetrics, app); err != nil {
 		return nil, err
 	}
@@ -146,7 +149,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Next, storage, Deps: Logger, Metrics
+	// Next, storage.
+	// Deps: PluginLogger.
 	if obj, err = l.loadPlugin(PluginStore, app); err != nil {
 		return nil, err
 	}
@@ -155,7 +159,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Load the Proprietary Ping element. Deps: Logger, Metrics, Storage
+	// Load the Proprietary Ping element.
+	// Deps: PluginLogger, PluginMetrics, PluginStore.
 	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
 		return nil, err
 	}
@@ -164,7 +169,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Next, setup the router, Deps: Logger, Metrics
+	// Next, setup the router.
+	// Deps: PluginLogger, PluginMetrics.
 	if obj, err = l.loadPlugin(PluginRouter, app); err != nil {
 		return nil, err
 	}
@@ -173,7 +179,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Set up the node discovery mechanism. Deps: Logger, Metrics, Router.
+	// Set up the node discovery mechanism.
+	// Deps: PluginLogger, PluginMetrics, PluginRouter.
 	if obj, err = l.loadPlugin(PluginLocator, app); err != nil {
 		return nil, err
 	}
@@ -182,12 +189,27 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Finally, setup the handlers, Deps: Logger, Metrics
+	// Set up the server.
+	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginPinger.
 	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
 		return nil, err
 	}
 	serv := obj.(*Serv)
 	app.SetServer(serv)
+
+	// Set up the balancer.
+	// Deps: PluginLogger, PluginMetrics, PluginServer.
+	if obj, err = l.loadPlugin(PluginBalancer, app); err != nil {
+		return nil, err
+	}
+	balancer := obj.(Balancer)
+	if err = app.SetBalancer(balancer); err != nil {
+		return nil, err
+	}
+
+	// Register the endpoint handlers.
+	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginRouter,
+	// PluginPinger, PluginServer.
 	if obj, err = l.loadPlugin(PluginHandlers, app); err != nil {
 		return nil, err
 	}
@@ -349,6 +371,9 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 		},
 		PluginLocator: func(app *Application) (HasConfigStruct, error) {
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, env, configFile)
+		},
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "balancer", AvailableBalancers, env, configFile)
 		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()

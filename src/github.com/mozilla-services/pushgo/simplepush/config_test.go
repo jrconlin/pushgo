@@ -52,6 +52,9 @@ pool_size = 250
 
 [handlers]
 max_data_len = 256
+
+[balancer]
+type = "static"
 `
 
 var env = envconf.New([]string{
@@ -72,6 +75,7 @@ var env = envconf.New([]string{
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
 	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
 	"PUSHGO_HANDLERS_MAX_DATA_LEN=512",
+	"PUSHGO_BALANCER_TYPE=none",
 })
 
 func TestConfigFile(t *testing.T) {
@@ -133,13 +137,17 @@ func TestConfigFile(t *testing.T) {
 	if handlers.maxDataLen != 512 {
 		t.Errorf("Wrong maximum data size: got %d; want 512", handlers.maxDataLen)
 	}
+	balancer := app.Balancer()
+	if _, ok := balancer.(*NoBalancer); !ok {
+		t.Errorf("Balancer type assertion failed: %#v", balancer)
+	}
 }
 
 func TestLoad(t *testing.T) {
 	var (
-		appInst                                                 *Application
-		mockApp, mockMetrics, mockRouter, mockServ, mockHandler *mockPlugin
-		mockLogger, mockStore, mockPing, mockLocator            *mockPlugin
+		appInst                                                    *Application
+		mockApp, mockMetrics, mockRouter, mockServ, mockHandler    *mockPlugin
+		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
 	loader := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
@@ -224,6 +232,17 @@ func TestLoad(t *testing.T) {
 			}
 			return srv, nil
 		},
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger, mockMetrics, mockServ); err != nil {
+				return nil, err
+			}
+			balancer := &NoBalancer{}
+			mockBalancer = newMockPlugin(PluginBalancer, balancer)
+			if err := loadEnvConfig(env, "balancer", app, mockBalancer); err != nil {
+				return nil, fmt.Errorf("Error initializing server: %#v", err)
+			}
+			return balancer, nil
+		},
 		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
 			if err := isReady(mockLogger, mockMetrics); err != nil {
 				return nil, err
@@ -250,9 +269,11 @@ func loadEnvConfig(env envconf.Environment, section string,
 	app *Application, configable HasConfigStruct) (err error) {
 
 	confStruct := configable.ConfigStruct()
-	if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
-		return fmt.Errorf("Error decoding config for section %q: %s",
-			section, err)
+	if confStruct != nil {
+		if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
+			return fmt.Errorf("Error decoding config for section %q: %s",
+				section, err)
+		}
 	}
 	return configable.Init(app, confStruct)
 }

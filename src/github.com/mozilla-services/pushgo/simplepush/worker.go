@@ -294,12 +294,42 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	uaid, _, err := self.handshake(sock, request)
+	uaid, allowRedirect, err := self.handshake(sock, request)
 	if err != nil {
 		return err
 	}
 	sock.SetUAID(uaid)
 
+	if allowRedirect {
+		b := self.app.Balancer()
+		if b == nil {
+			goto registerDevice
+		}
+		origin, shouldRedirect, err := b.RedirectURL()
+		if err != nil {
+			if logWarning {
+				self.logger.Warn("worker", "Failed to redirect client", LogFields{
+					"error": err.Error(), "rid": self.id, "cmd": header.Type})
+			}
+			_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":429}`,
+				header.Type)
+			self.stopped = true
+			return err
+		}
+		if !shouldRedirect {
+			goto registerDevice
+		}
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Redirecting client", LogFields{
+				"rid": self.id, "cmd": header.Type, "origin": origin})
+		}
+		_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
+			header.Type, uaid, origin)
+		self.stopped = true
+		return err
+	}
+
+registerDevice:
 	// register any proprietary connection requirements
 	// alert the master of the new UAID.
 	// It's not a bad idea from a security POV to only send
@@ -347,7 +377,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 }
 
 func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
-	deviceID string, canRedirect bool, err error) {
+	deviceID string, allowRedirect bool, err error) {
 
 	logWarning := self.logger.ShouldLog(WARNING)
 	currentID := sock.UAID()

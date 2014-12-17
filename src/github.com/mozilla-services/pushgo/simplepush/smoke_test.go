@@ -73,7 +73,8 @@ func roundTrip(conn *client.Conn, deviceId, channelId, endpoint string, version 
 					hasUpdate bool
 				)
 				for _, update = range updates {
-					if hasUpdate = update.ChannelId == channelId; hasUpdate {
+					if update.ChannelId == channelId && update.Version >= version {
+						hasUpdate = true
 						break
 					}
 				}

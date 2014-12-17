@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -57,6 +58,7 @@ type Application struct {
 	server             *Serv
 	store              Store
 	router             Router
+	balancer           Balancer
 	handlers           *Handler
 	propping           PropPinger
 }
@@ -150,6 +152,11 @@ func (a *Application) SetRouter(router Router) error {
 	return nil
 }
 
+func (a *Application) SetBalancer(b Balancer) error {
+	a.balancer = b
+	return nil
+}
+
 func (a *Application) SetServer(server *Serv) error {
 	a.server = server
 	return nil
@@ -238,6 +245,10 @@ func (a *Application) Router() Router {
 	return a.router
 }
 
+func (a *Application) Balancer() Balancer {
+	return a.balancer
+}
+
 func (a *Application) Server() *Serv {
 	return a.server
 }
@@ -314,10 +325,18 @@ func (a *Application) RemoveClient(uaid string) {
 }
 
 func (a *Application) Stop() {
-	a.server.Close()
-	a.router.Close()
-	a.store.Close()
-	a.log.Close()
+	plugins := []io.Closer{
+		a.server,   // Stop the WebSocket and update listeners.
+		a.balancer, // Deregister from the balancer.
+		a.router,   // Stop the routing listener and locator.
+		a.store,    // Close database connections.
+		a.log,      // Shut down the logger.
+	}
+	for _, c := range plugins {
+		if c != nil {
+			c.Close()
+		}
+	}
 }
 
 func isSameOrigin(a, b *url.URL) bool {
