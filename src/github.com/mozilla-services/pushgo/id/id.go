@@ -15,23 +15,25 @@ var ErrInvalid = errors.New("Invalid ID")
 
 // GenerateBytes generates a decoded UUID byte slice.
 func GenerateBytes() (bytes []byte, err error) {
-	err = GenerateInto(&bytes)
-	return
+	return Append(bytes)
 }
 
-// GenerateInto writes a UUID into the given byte slice.
-func GenerateInto(bytes *[]byte) (err error) {
-	if cap(*bytes) >= 16 {
-		*bytes = (*bytes)[0:16]
-	} else {
-		*bytes = make([]byte, 16)
+// Append appends a UUID to dest.
+func Append(dest []byte) (bytes []byte, err error) {
+	m := len(dest)
+	n := m + 16
+	if n > cap(dest) {
+		bytes := make([]byte, n)
+		copy(bytes, dest)
+		dest = bytes
 	}
-	if _, err = rand.Read(*bytes); err != nil {
-		return err
+	target := dest[m:n]
+	if _, err = rand.Read(target); err != nil {
+		return nil, err
 	}
-	(*bytes)[6] = ((*bytes)[6] & 0x0f) | 0x40
-	(*bytes)[8] = ((*bytes)[8] & 0x3f) | 0x80
-	return nil
+	target[6] = (target[6] & 0x0f) | 0x40
+	target[8] = (target[8] & 0x3f) | 0x80
+	return dest[:n], nil
 }
 
 // Generate generates a non-hyphenated, hex-encoded UUID string.

@@ -38,7 +38,8 @@ func (h *Header) SetMessageLength(v uint32) {
 }
 
 func (m *Message) Identify() (err error) {
-	return id.GenerateInto(&m.Uuid)
+	m.Uuid, err = id.Append(m.Uuid[:0])
+	return
 }
 
 func (m *Message) SetTimestamp(v int64) {

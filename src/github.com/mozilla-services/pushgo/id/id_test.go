@@ -31,25 +31,25 @@ var validTests = map[string]bool{
 func TestDecodeString(t *testing.T) {
 	hyphenatedBytes, err := DecodeString(hyphenatedId)
 	if err != nil {
-		t.Fatalf("DecodeString() failed to decode valid hyphenated ID %#v: %#v", hyphenatedId, err)
+		t.Fatalf("DecodeString() failed to decode valid hyphenated ID %q: %s", hyphenatedId, err)
 	}
 	if !bytes.Equal(hyphenatedBytes, decodedId) {
 		t.Errorf("DecodeString() decoded hyphenated ID incorrectly: got %#v; want %#v", hyphenatedBytes, decodedId)
 	}
 	decodedBytes, err := DecodeString(encodedId)
 	if err != nil {
-		t.Fatalf("DecodeString() failed to decode valid unhyphenated ID %#v: %#v", encodedId, err)
+		t.Fatalf("DecodeString() failed to decode valid unhyphenated ID %q: %s", encodedId, err)
 	}
 	if !bytes.Equal(decodedBytes, decodedId) {
 		t.Errorf("DecodeString() decoded unhyphenated ID incorrectly: got %#v; want %#v", decodedBytes, decodedId)
 	}
 	_, err = DecodeString(encodedShortId)
 	if err != ErrInvalid {
-		t.Errorf("DecodeString() returned result for invalid short ID %#v: got %#v; want id.ErrInvalid", encodedShortId, err)
+		t.Errorf("DecodeString() returned result for invalid short ID %q: got %#v; want id.ErrInvalid", encodedShortId, err)
 	}
 	_, err = DecodeString(encodedLongId)
 	if err != ErrInvalid {
-		t.Errorf("DecodeString() returned result for invalid long ID %#v: got %#v; want id.ErrInvalid", encodedLongId, err)
+		t.Errorf("DecodeString() returned result for invalid long ID %q: got %#v; want id.ErrInvalid", encodedLongId, err)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestValid(t *testing.T) {
 	for id, isValid := range validTests {
 		result := Valid(id)
 		if result != isValid {
-			t.Errorf("Valid(%#v): got %#v, want %#v", id, result, isValid)
+			t.Errorf("Valid(%q): got %#v, want %#v", id, result, isValid)
 		}
 	}
 }
@@ -65,7 +65,7 @@ func TestValid(t *testing.T) {
 func TestDecode(t *testing.T) {
 	idBytes := make([]byte, 16)
 	if err := Decode(encodedId, idBytes); err != nil {
-		t.Fatalf("Error decoding ID %#v: %#v", encodedId, err)
+		t.Fatalf("Error decoding ID %q: %s", encodedId, err)
 	}
 	if !bytes.Equal(decodedId, idBytes) {
 		t.Errorf("Decode() decoded ID incorrectly: got %#v; want %#v", idBytes, decodedId)
@@ -75,12 +75,36 @@ func TestDecode(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	id, err := Generate()
 	if err != nil {
-		t.Fatalf("Failed to generate ID string: %#v", err)
+		t.Fatalf("Failed to generate ID string: %s", err)
 	}
 	if len(id) != 32 {
-		t.Errorf("Mismatched ID length for %#v: got %#v; want 32", id, len(id))
+		t.Errorf("Mismatched ID length for %#v: got %d; want 32", id, len(id))
 	}
 	if !Valid(id) {
-		t.Errorf("Generate() returned invalid ID: %#v", id)
+		t.Errorf("Generate() returned invalid ID: %q", id)
+	}
+}
+
+func TestAppend(t *testing.T) {
+	dest := []byte{0xca, 0xfe}
+	idBytes, err := Append(dest)
+	if err != nil {
+		t.Errorf("Error appending ID: %s", err)
+	}
+	m := 16 + len(dest)
+	if len(idBytes) != m {
+		t.Errorf("Mismatched ID length: got %d; want %d", len(idBytes), m)
+	}
+	actual := idBytes[0:2]
+	if !bytes.Equal(actual, dest) {
+		t.Errorf("Wrong ID prefix: got %#v; want %#v", actual, dest)
+	}
+	emptyBytes := make([]byte, 0, 16)
+	if idBytes, err = Append(emptyBytes); err != nil {
+		t.Errorf("Error appending ID to pre-allocated slice: %s", err)
+	}
+	if !bytes.Equal(emptyBytes[:16], idBytes) {
+		t.Errorf("Append() did not append to pre-allocated slice: got %#v; want %#v",
+			idBytes, emptyBytes[:16])
 	}
 }
