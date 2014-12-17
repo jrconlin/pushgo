@@ -185,6 +185,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type",
+			"application/x-www-form-urlencoded")
+	}
 	svers := req.FormValue("version")
 	if svers != "" {
 		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {

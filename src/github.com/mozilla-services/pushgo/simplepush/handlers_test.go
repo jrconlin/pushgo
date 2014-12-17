@@ -119,6 +119,25 @@ func Test_UpdateHandler(t *testing.T) {
 	if rep.Version != 1 {
 		t.Error("Returned version does not match expected value")
 	}
+
+	//retry without a Content-Type header
+	resp = httptest.NewRecorder()
+	req.Header.Set("Content-Type", "")
+	tmux.ServeHTTP(resp, req)
+	if resp.Body.String() != "{}" {
+		t.Error("Unexpected response from server")
+	}
+	rep = FlushData{}
+	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
+		t.Errorf("Could not read output buffer %s", err.Error())
+	}
+	if rep.Data != data {
+		t.Error("Returned data does not match expected value")
+	}
+	if rep.Version != 1 {
+		t.Error("Returned version does not match expected value")
+	}
+
 }
 
 func endpointIds(uri *url.URL) (deviceId, channelId string, ok bool) {
