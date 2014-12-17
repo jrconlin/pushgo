@@ -5,8 +5,10 @@
 package simplepush
 
 import (
+	"bytes"
 	"net"
 	"testing"
+	"time"
 	//mc "github.com/bradfitz/gomemcache/memcache"
 )
 
@@ -315,5 +317,63 @@ func Test_Drop(t *testing.T) {
 	err = testGm.Drop(TESTUAID, TESTCHID)
 	if err != nil {
 		t.Errorf("Drop returned error: %v", err)
+	}
+}
+
+func Test_FetchAll(t *testing.T) {
+	testGm, connected := setup(t)
+	if !connected {
+		t.Skip("Skipping Register check, no server.")
+	}
+
+	var err error
+
+	now := time.Now()
+	testGm.Register(TESTUAID, TESTCHID, 12345)
+
+	updates, _, err := testGm.FetchAll(TESTUAID, now)
+	if err != nil {
+		t.Errorf("FetchAll returned error: %v", err)
+	}
+	if len(updates) == 0 {
+		t.Error("FetchAll failed to find record")
+	}
+	if updates[0].ChannelID != TESTCHID || updates[0].Version != 12345 {
+		t.Error("FetchAll returned unexpected record")
+	}
+
+	testGm.Unregister(TESTUAID, TESTCHID)
+	updates, _, err = testGm.FetchAll(TESTUAID, now)
+	if len(updates) != 0 {
+		t.Error("FetchAll found deleted record")
+	}
+	testGm.DropAll(TESTUAID)
+}
+
+func Test_Ping(t *testing.T) {
+	testGm, connected := setup(t)
+	if !connected {
+		t.Skip("Skipping Register check, no server.")
+	}
+
+	var err error
+	pingData := []byte("{stuff: \"This is a bunch of ping data\"}")
+
+	if err = testGm.PutPing(TESTUAID, pingData); err != nil {
+		t.Errorf("PutPing returned an error: %v", err)
+	}
+	rdata, err := testGm.FetchPing(TESTUAID)
+	if err != nil {
+		t.Errorf("FetchPing returned an error: %v", err)
+	}
+	if bytes.Compare(rdata, pingData) != 0 {
+		t.Error("FetchPing did not return the data correctly")
+	}
+
+	if err = testGm.DropPing(TESTUAID); err != nil {
+		t.Errorf("DropPing returned an error: %v", err)
+	}
+	if rdata, err = testGm.FetchPing(TESTUAID); err == nil {
+		t.Error("FetchPing returned deleted ping")
 	}
 }
