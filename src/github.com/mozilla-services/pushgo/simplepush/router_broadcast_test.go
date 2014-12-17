@@ -6,9 +6,11 @@ package simplepush
 
 import (
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/mozilla-services/pushgo/client"
 	"github.com/rafrombrc/gomock/gomock"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -62,12 +64,17 @@ func TestBroadcastRouter(t *testing.T) {
 	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
 	go router.Start(errChan)
 
+	mckStat.EXPECT().Increment("router.socket.connect").AnyTimes()
+	mckStat.EXPECT().Increment("router.socket.disconnect").AnyTimes()
+
 	Convey("Should fail to route a non-existent uaid", t, func() {
 
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return([]string{}, nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).Times(2)
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any()).Times(2)
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.miss").Times(1)
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
 		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
@@ -80,6 +87,8 @@ func TestBroadcastRouter(t *testing.T) {
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).Times(2)
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any()).Times(2)
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.error").Times(1)
 		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldEqual, myErr)
@@ -104,6 +113,8 @@ func TestBroadcastRouter(t *testing.T) {
 			"").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
+		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
+		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.hit")
 		mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
 		mckStat.EXPECT().Timer("router.handled", gomock.Any())
@@ -192,4 +203,108 @@ func BenchmarkRouter(b *testing.B) {
 
 	mckLocator.EXPECT().Close()
 	router.Close()
+}
+
+func TestBroadcastStaticLocator(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping router test in short mode")
+	}
+
+	cServer := &TestServer{Name: "c", LogLevel: 0}
+	cApp, cConn, err := cServer.Dial()
+	if err != nil {
+		t.Fatalf("Error starting test application %q: %s", cServer.Name, err)
+	}
+	defer cApp.Stop()
+	defer cConn.Close()
+	defer cConn.Purge()
+
+	bServer := &TestServer{
+		Name:     "b",
+		LogLevel: 0,
+		Contacts: []string{cApp.Router().URL()},
+	}
+	bApp, bConn, err := bServer.Dial()
+	if err != nil {
+		t.Fatalf("Error starting test application %q: %s", bServer.Name, err)
+	}
+	defer bServer.Stop()
+	defer bConn.Close()
+	defer bConn.Purge()
+
+	aServer := &TestServer{
+		Name:     "a",
+		LogLevel: 0,
+		Contacts: []string{
+			cApp.Router().URL(),
+			bApp.Router().URL(),
+		},
+	}
+	aApp, aConn, err := aServer.Dial()
+	if err != nil {
+		t.Fatalf("Error starting test application %q: %s", aServer.Name, err)
+	}
+	defer aServer.Stop()
+	defer aConn.Close()
+	defer aConn.Purge()
+
+	// Subscribe to a channel on c.
+	cChan, cEndpoint, err := cConn.Subscribe()
+	if err != nil {
+		t.Fatalf("Error subscribing to channel: %s", err)
+	}
+
+	stopChan := make(chan bool)
+	defer close(stopChan)
+	errChan := make(chan error)
+	notifyApp := func(app *Application, channelId, endpoint string, count int) {
+		uri, err := url.Parse(endpoint)
+		if err != nil {
+			select {
+			case <-stopChan:
+			case errChan <- err:
+			}
+			return
+		}
+		uri.Host = app.Server().EndpointListener().Addr().String()
+		for i := 1; i <= count; i++ {
+			if err = client.Notify(uri.String(), int64(i)); err != nil {
+				break
+			}
+		}
+		select {
+		case <-stopChan:
+		case errChan <- err:
+		}
+	}
+
+	// Wait for updates on c.
+	go func() {
+		var err error
+		for i := 0; i < 10; i++ {
+			var updates []client.Update
+			if updates, err = cConn.ReadBatch(); err != nil {
+				break
+			}
+			if err = cConn.AcceptBatch(updates); err != nil {
+				break
+			}
+		}
+		select {
+		case <-stopChan:
+		case errChan <- err:
+		}
+	}()
+
+	// Send an update via a.
+	go notifyApp(aApp, cChan, cEndpoint, 5)
+
+	// Send an update via b.
+	go notifyApp(bApp, cChan, cEndpoint, 5)
+
+	for i := 0; i < 3; i++ {
+		if err := <-errChan; err != nil {
+			t.Fatal(err)
+		}
+	}
 }

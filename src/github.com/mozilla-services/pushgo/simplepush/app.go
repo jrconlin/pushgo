@@ -196,6 +196,13 @@ func (a *Application) Run() (errChan chan error) {
 				LogFields{"addr": endpointLn.Addr().String()})
 		}
 		endpointSrv := &http.Server{
+			ConnState: func(c net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					a.Metrics().Increment("endpoint.socket.connect")
+				} else if state == http.StateClosed {
+					a.Metrics().Increment("endpoint.socket.disconnect")
+				}
+			},
 			Handler:  &LogHandler{endpointMux, a.log},
 			ErrorLog: log.New(&LogWriter{a.log.Logger, "endpoint", ERROR}, "", 0)}
 		errChan <- endpointSrv.Serve(endpointLn)
