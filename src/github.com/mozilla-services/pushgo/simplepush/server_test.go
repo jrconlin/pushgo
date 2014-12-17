@@ -6,8 +6,9 @@ package simplepush
 
 import (
 	"fmt"
-	"net/url"
 	"sync"
+
+	"github.com/mozilla-services/pushgo/client"
 )
 
 const (
@@ -28,15 +29,30 @@ type ConfigStore interface {
 
 type TestServer struct {
 	sync.Mutex
+	Name         string
 	ClientAddr   string
 	EndpointAddr string
 	RouterAddr   string
 	LogLevel     int32
 	Contacts     []string
+	Redirects    []string
+	Threshold    float64
 	NewStore     func() (store ConfigStore, configStruct interface{}, err error)
 	app          *Application
 	lastErr      error
 	isStopping   bool
+}
+
+func (t *TestServer) Stop() {
+	defer t.Unlock()
+	t.Lock()
+	if t.isStopping {
+		return
+	}
+	t.isStopping = true
+	if t.app != nil {
+		t.app.Stop()
+	}
 }
 
 func (t *TestServer) fatal(err error) {
@@ -131,6 +147,16 @@ func (t *TestServer) load() (*Application, error) {
 			}
 			return locator, nil
 		},
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			balancer := new(StaticBalancer)
+			balancerConf := balancer.ConfigStruct().(*StaticBalancerConf)
+			balancerConf.Redirects = t.Redirects
+			balancerConf.Threshold = t.Threshold
+			if err := balancer.Init(app, balancerConf); err != nil {
+				return nil, fmt.Errorf("Error initializing balancer: %#v", err)
+			}
+			return balancer, nil
+		},
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
 			servConf := serv.ConfigStruct().(*ServerConfig)
@@ -179,13 +205,21 @@ func (t *TestServer) Origin() (string, error) {
 	if server == nil {
 		return "", nil
 	}
-	origin, err := url.Parse(server.ClientURL())
-	switch origin.Scheme {
-	case "http":
-		origin.Scheme = "ws"
+	return server.ClientURL(), nil
+}
 
-	case "https":
-		origin.Scheme = "wss"
+func (t *TestServer) Dial(channelIds ...string) (
+	app *Application, conn *client.Conn, err error) {
+
+	if app, err = t.Listen(); err != nil {
+		return
 	}
-	return origin.String(), nil
+	origin, err := t.Origin()
+	if err != nil {
+		return
+	}
+	if conn, _, err = client.Dial(origin, channelIds...); err != nil {
+		return
+	}
+	return
 }

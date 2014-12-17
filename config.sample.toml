@@ -73,6 +73,7 @@ type = "noop"
 #dry_run = false
 #api_key = "YOUR_API_KEY"
 #url = "https://android.googleapis.com/gcm/send"
+#idle_conns = 50
 
 # Carrier-specific UDP pings
 #[propping]
@@ -193,6 +194,8 @@ type = "none"
 #pool_size = 30
 # Maximum allowed data segment (in bytes)
 #max_data_len = 1024
+# Number of idle connections to maintain per host.
+#idle_conns = 50
 
 [router.listener]
 # Default interface and port for shard routing
@@ -236,3 +239,18 @@ type = "static"
 [handlers]
 # Maximum allowed data segment (in bytes)
 #max_data_len = 1024
+
+[balancer]
+type = "none"
+
+#[balancer]
+#type = "etcd"
+#servers = ["http://localhost:4001"]
+# The maximum amount of time that published client counts will be
+# considered valid.
+#ttl = "5m"
+# The connected client threshold. Once exceeded, connecting clients will be
+# redirected to hosts with the fewest connections.
+#threshold = 0.95
+# The client count publication interval.
+#update_interval = "1m"

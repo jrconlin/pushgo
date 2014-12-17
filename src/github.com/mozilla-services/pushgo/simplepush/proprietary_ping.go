@@ -192,6 +192,7 @@ type GCMPingConfig struct {
 	DryRun      bool   `toml:"dry_run" env:"dry_run"`
 	TTL         string
 	URL         string //GCM URL
+	IdleConns   int    `toml:"idle_conns" env:"idle_conns"`
 	Retry       retry.Config
 }
 
@@ -218,6 +219,7 @@ func (r *GCMPing) ConfigStruct() interface{} {
 		CollapseKey: "simplepush",
 		DryRun:      false,
 		TTL:         "72h",
+		IdleConns:   50,
 		Retry: retry.Config{
 			Retries:   5,
 			Delay:     "200ms",
@@ -258,7 +260,11 @@ func (r *GCMPing) Init(app *Application, config interface{}) (err error) {
 	r.rh.CloseNotifier = r
 	r.rh.CanRetry = IsPingerTemporary
 
-	r.client = new(http.Client)
+	r.client = &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: conf.IdleConns,
+		},
+	}
 	return nil
 }
 

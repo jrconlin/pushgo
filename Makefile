@@ -4,6 +4,7 @@ BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
 GOPATH = $(DEPS):$(HERE)
+TOOLS = $(shell GOPATH=$(GOPATH) go tool)
 
 PLATFORM=$(shell uname)
 
@@ -15,10 +16,15 @@ TARGET = simplepush
 COVER_MODE = count
 COVER_PATH = $(HERE)/.coverage
 
-VERSION=$(shell git describe --tags --always HEAD 2>/dev/null)
+VERSION = $(strip $(shell [ -e $(HERE)/GITREF ] && cat $(HERE)/GITREF 2>/dev/null))
+ifeq ($(VERSION),)
+	VERSION = $(strip $(shell git describe --tags --always HEAD 2>/dev/null))
+endif
+
 ifneq ($(strip $(VERSION)),)
 	GOLDFLAGS := -X $(PACKAGE)/simplepush.VERSION $(VERSION) $(GOLDFLAGS)
 endif
+
 
 .PHONY: all build clean test $(TARGET) memcached
 
@@ -70,6 +76,8 @@ test-mocks: $(HERE)/mockgen
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
 	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
+	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/balancer.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_balancer_test.go -package="simplepush"
 	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
 	# copied into log.go while this is run, then the mocked config struct needs to be
 	# removed from the mock_log_test.go file.
@@ -89,6 +97,13 @@ test-gomemcache:
 		-tags memcached_server_test \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
+check-cov:
+ifneq (cover,$(filter cover,$(TOOLS)))
+	@echo "Go tool 'Cover' not installed."
+	go tool cover
+	false
+endif
+
 clean-cov:
 	rm -rf $(COVER_PATH)
 	rm -f $(addprefix coverage,.out .html)
@@ -96,17 +111,17 @@ clean-cov:
 cov-dir: clean-cov
 	mkdir -p $(COVER_PATH)
 
-retry-cov: cov-dir
+retry-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/retry.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/retry
 
-id-cov: cov-dir
+id-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/id.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/id
 
-simplepush-cov: cov-dir
+simplepush-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) go test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush

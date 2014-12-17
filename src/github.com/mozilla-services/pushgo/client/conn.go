@@ -100,9 +100,7 @@ func DialId(origin string, deviceId *string, channelIds ...string) (*Conn, error
 	}
 	actualId, err := conn.WriteHelo(*deviceId, channelIds...)
 	if err != nil {
-		if err := conn.Close(); err != nil {
-			return nil, err
-		}
+		conn.Close()
 		return nil, err
 	}
 	*deviceId = actualId

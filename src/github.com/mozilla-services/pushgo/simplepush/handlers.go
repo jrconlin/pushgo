@@ -26,6 +26,7 @@ type Handler struct {
 	logger     *SimpleLogger
 	store      Store
 	router     Router
+	balancer   Balancer
 	metrics    Statistician
 	tokenKey   []byte
 	propping   PropPinger
@@ -40,6 +41,7 @@ type StatusReport struct {
 	Store            PluginStatus `json:"store"`
 	Pinger           PluginStatus `json:"pinger"`
 	Locator          PluginStatus `json:"locator"`
+	Balancer         PluginStatus `json:"balancer"`
 	Goroutines       int          `json:"goroutines"`
 	Version          string       `json:"version"`
 }
@@ -61,6 +63,7 @@ func (self *Handler) Init(app *Application, config interface{}) error {
 	self.store = app.Store()
 	self.metrics = app.Metrics()
 	self.router = app.Router()
+	self.balancer = app.Balancer()
 	self.tokenKey = app.TokenKey()
 	self.SetPropPinger(app.PropPinger())
 	self.maxDataLen = config.(*HandlerConfig).MaxDataLen
@@ -112,9 +115,12 @@ func (self *Handler) RealStatusHandler(resp http.ResponseWriter,
 	if locator := self.router.Locator(); locator != nil {
 		status.Locator.Healthy, status.Locator.Error = locator.Status()
 	}
+	if balancer := self.balancer; balancer != nil {
+		status.Balancer.Healthy, status.Balancer.Error = balancer.Status()
+	}
 
 	status.Healthy = status.Store.Healthy && status.Pinger.Healthy &&
-		status.Locator.Healthy
+		status.Locator.Healthy && status.Balancer.Healthy
 
 	status.Clients = self.app.ClientCount()
 	status.Goroutines = runtime.NumGoroutine()
@@ -179,6 +185,10 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type",
+			"application/x-www-form-urlencoded")
+	}
 	svers := req.FormValue("version")
 	if svers != "" {
 		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
@@ -363,11 +373,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		now := time.Now()
 		// Clean-up the resources
 		self.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
-		self.metrics.Timer("socket.lifespan", now.Sub(sock.Born))
-		self.metrics.Increment("socket.disconnect")
+		self.metrics.Timer("client.socket.lifespan", now.Sub(sock.Born))
+		self.metrics.Increment("client.socket.disconnect")
 	}()
 
-	self.metrics.Increment("socket.connect")
+	self.metrics.Increment("client.socket.connect")
 
 	NewWorker(self.app, requestID).Run(&sock)
 	if self.logger.ShouldLog(INFO) {
