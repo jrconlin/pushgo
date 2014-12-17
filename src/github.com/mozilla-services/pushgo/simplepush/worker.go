@@ -294,18 +294,18 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	uaid, canRedirect, err := self.handshake(sock, request)
+	uaid, allowRedirect, err := self.handshake(sock, request)
 	if err != nil {
 		return err
 	}
 	sock.SetUAID(uaid)
 
-	if canRedirect {
+	if allowRedirect {
 		b := self.app.Balancer()
 		if b == nil {
 			goto registerDevice
 		}
-		origin, ok, err := b.RedirectURL()
+		origin, shouldRedirect, err := b.RedirectURL()
 		if err != nil {
 			if logWarning {
 				self.logger.Warn("worker", "Failed to redirect client", LogFields{
@@ -316,7 +316,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			self.stopped = true
 			return err
 		}
-		if !ok {
+		if !shouldRedirect {
 			goto registerDevice
 		}
 		if self.logger.ShouldLog(DEBUG) {
@@ -377,7 +377,7 @@ registerDevice:
 }
 
 func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
-	deviceID string, canRedirect bool, err error) {
+	deviceID string, allowRedirect bool, err error) {
 
 	logWarning := self.logger.ShouldLog(WARNING)
 	currentID := sock.UAID()
