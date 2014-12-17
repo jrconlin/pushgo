@@ -13,13 +13,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mozilla-services/heka/client"
 	"github.com/mozilla-services/pushgo/id"
 )
 
@@ -59,17 +57,6 @@ const (
 )
 
 type LogFields map[string]string
-
-func (l LogFields) Names() (names []string) {
-	names = make([]string, len(l))
-	i := 0
-	for name := range l {
-		names[i] = name
-		i++
-	}
-	sort.Strings(names)
-	return
-}
 
 type Logger interface {
 	HasConfigStruct
@@ -175,34 +162,25 @@ func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) 
 		return fmt.Errorf("NetworkLogger: Missing remote address")
 	}
 
+	var conn net.Conn
+	if conf.UseTLS {
+		conn, err = tls.Dial(conf.Proto, conf.Addr, nil)
+	} else {
+		conn, err = net.Dial(conf.Proto, conf.Addr)
+	}
+	if err != nil {
+		return err
+	}
 	switch conf.Format {
 	case "json", "protobuf":
-		var sender client.Sender
-		if conf.UseTLS {
-			sender, err = client.NewTlsSender(conf.Proto, conf.Addr, nil)
-		} else {
-			sender, err = client.NewNetworkSender(conf.Proto, conf.Addr)
-		}
-		if err != nil {
-			return err
-		}
 		hostname := app.Hostname()
 		if conf.Format == "json" {
-			nl.LogEmitter = NewJSONEmitter(sender, conf.EnvVersion, hostname, conf.Name)
+			nl.LogEmitter = NewJSONEmitter(conn, conf.EnvVersion, hostname, conf.Name)
 		} else {
-			nl.LogEmitter = NewProtobufEmitter(sender, conf.EnvVersion, hostname, conf.Name)
+			nl.LogEmitter = NewProtobufEmitter(conn, conf.EnvVersion, hostname, conf.Name)
 		}
 
 	case "text":
-		var conn net.Conn
-		if conf.UseTLS {
-			conn, err = tls.Dial(conf.Proto, conf.Addr, nil)
-		} else {
-			conn, err = net.Dial(conf.Proto, conf.Addr)
-		}
-		if err != nil {
-			return err
-		}
 		nl.LogEmitter = NewTextEmitter(conn)
 
 	default:
@@ -263,11 +241,11 @@ func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
 
 	switch conf.Format {
 	case "json":
-		fl.LogEmitter = NewJSONEmitter(&HekaSender{logFile}, conf.EnvVersion,
+		fl.LogEmitter = NewJSONEmitter(logFile, conf.EnvVersion,
 			app.Hostname(), conf.Name)
 
 	case "protobuf":
-		fl.LogEmitter = NewProtobufEmitter(&HekaSender{logFile}, conf.EnvVersion,
+		fl.LogEmitter = NewProtobufEmitter(logFile, conf.EnvVersion,
 			app.Hostname(), conf.Name)
 
 	case "text":
@@ -325,11 +303,11 @@ func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	writer := writerOnly{os.Stdout}
 	switch conf.Format {
 	case "json":
-		ml.LogEmitter = NewJSONEmitter(&HekaSender{writer}, conf.EnvVersion,
+		ml.LogEmitter = NewJSONEmitter(writer, conf.EnvVersion,
 			app.Hostname(), conf.Name)
 
 	case "protobuf":
-		ml.LogEmitter = NewProtobufEmitter(&HekaSender{writer}, conf.EnvVersion,
+		ml.LogEmitter = NewProtobufEmitter(writer, conf.EnvVersion,
 			app.Hostname(), conf.Name)
 
 	case "text":
