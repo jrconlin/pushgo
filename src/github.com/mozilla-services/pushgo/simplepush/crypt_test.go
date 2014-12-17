@@ -37,7 +37,7 @@ func Test_Encode(t *testing.T) {
 	}
 	enc, err = Encode(nil, testString)
 	if err != nil {
-		t.Error("Encode returned error: %s", err.Error())
+		t.Errorf("Encode returned error: %s", err.Error())
 	}
 	if enc != string(testString) {
 		t.Error("Encode failed to pass unencrypted string.")
@@ -46,7 +46,7 @@ func Test_Encode(t *testing.T) {
 	t.Logf("Str: %s\n", enc)
 	dec, err := Decode(key, enc)
 	if err != nil {
-		t.Error("Decode returned error: %s", err.Error())
+		t.Errorf("Decode returned error: %s", err.Error())
 	}
 	if bytes.Compare(dec, original) != 0 {
 		t.Errorf("Failed to decode string %s :: %s", base64.URLEncoding.EncodeToString(dec), original)

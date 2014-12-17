@@ -34,7 +34,7 @@ func Test_Init(t *testing.T) {
 
 	err := testGm.Init(testApp, gmCfg)
 	if err != nil {
-		t.Error("GomemStore Init reported error: %s", err)
+		t.Errorf("GomemStore Init reported error: %s", err)
 	}
 
 }
@@ -140,7 +140,7 @@ func Test_storeRegister(t *testing.T) {
 
 	err = testGm.storeRegister(TESTUAID, TESTCHID, 12345)
 	if err != nil {
-		t.Error("Test_storeRegister returned error: %v", err)
+		t.Errorf("Test_storeRegister returned error: %v", err)
 		return
 	}
 
@@ -156,7 +156,7 @@ func Test_Register(t *testing.T) {
 	var err error
 
 	if err = testGm.Register(TESTUAID, TESTCHID, 12345); err != nil {
-		t.Error("Register returned error: %v", err)
+		t.Errorf("Register returned error: %v", err)
 	}
 	if testGm.Register("", TESTCHID, 12345) != ErrNoID {
 		t.Error("Register failed to reject empty UAID")
@@ -215,7 +215,7 @@ func Test_Update(t *testing.T) {
 
 	err = testGm.Update(validKey, 12345)
 	if err != nil {
-		t.Error("Update returned error: %v", err)
+		t.Errorf("Update returned error: %v", err)
 	}
 	err = testGm.Update("."+TESTCHID, 12345)
 	if err == nil {
