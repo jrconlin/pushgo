@@ -20,6 +20,11 @@ import (
 
 const TextLogTime = "2006-01-02 15:04:05 -0700"
 
+var (
+	osGetPid = os.Getpid
+	timeNow  = time.Now
+)
+
 // TryClose closes w, returning nil if w does not implement io.Closer.
 func TryClose(w io.Writer) (err error) {
 	if c, ok := w.(io.Closer); ok {
@@ -111,7 +116,7 @@ func (te *TextEmitter) Emit(level LogLevel, messageType, payload string,
 	fields LogFields) (err error) {
 
 	buf := new(bytes.Buffer)
-	fmt.Fprintf(buf, "%s [% 8s] %s %q", time.Now().Format(TextLogTime),
+	fmt.Fprintf(buf, "%s [% 8s] %s %q", timeNow().Format(TextLogTime),
 		level, messageType, payload)
 
 	if len(fields) > 0 {
@@ -143,8 +148,8 @@ func NewJSONEmitter(writer io.Writer, envVersion,
 	return &JSONEmitter{
 		Writer:     writer,
 		enc:        json.NewEncoder(writer),
-		LogName:    fmt.Sprintf("%s-%s", loggerName, VERSION),
-		Pid:        int32(os.Getpid()),
+		LogName:    loggerName,
+		Pid:        int32(osGetPid()),
 		EnvVersion: envVersion,
 		Hostname:   hostname,
 	}
@@ -170,7 +175,7 @@ func (je *JSONEmitter) Emit(level LogLevel, messageType, payload string,
 	if err = hm.msg.Identify(); err != nil {
 		return fmt.Errorf("Error generating log message ID: %s", err)
 	}
-	hm.msg.SetTimestamp(time.Now().UnixNano())
+	hm.msg.SetTimestamp(timeNow().UnixNano())
 	hm.msg.SetType(messageType)
 	hm.msg.SetLogger(je.LogName)
 	hm.msg.SetSeverity(int32(level))
@@ -201,8 +206,8 @@ func NewProtobufEmitter(writer io.Writer, envVersion,
 
 	return &ProtobufEmitter{
 		Writer:     writer,
-		LogName:    fmt.Sprintf("%s-%s", loggerName, VERSION),
-		Pid:        int32(os.Getpid()),
+		LogName:    loggerName,
+		Pid:        int32(osGetPid()),
 		EnvVersion: envVersion,
 		Hostname:   hostname,
 	}
@@ -227,7 +232,7 @@ func (pe *ProtobufEmitter) Emit(level LogLevel, messageType, payload string,
 	if err = hm.msg.Identify(); err != nil {
 		return fmt.Errorf("Error generating log message ID: %s", err)
 	}
-	hm.msg.SetTimestamp(time.Now().UnixNano())
+	hm.msg.SetTimestamp(timeNow().UnixNano())
 	hm.msg.SetType(messageType)
 	hm.msg.SetLogger(pe.LogName)
 	hm.msg.SetSeverity(int32(level))

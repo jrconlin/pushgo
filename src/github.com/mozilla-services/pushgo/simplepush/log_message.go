@@ -10,6 +10,8 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
+var idAppend = id.Append
+
 // Convenience functions and framing constants from Heka.
 
 type SortedFields []*Field
@@ -38,7 +40,7 @@ func (h *Header) SetMessageLength(v uint32) {
 }
 
 func (m *Message) Identify() (err error) {
-	m.Uuid, err = id.Append(m.Uuid[:0])
+	m.Uuid, err = idAppend(m.Uuid[:0])
 	return
 }
 

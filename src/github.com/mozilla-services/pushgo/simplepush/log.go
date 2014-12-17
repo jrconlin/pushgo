@@ -174,10 +174,13 @@ func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) 
 	switch conf.Format {
 	case "json", "protobuf":
 		hostname := app.Hostname()
+		loggerName := fmt.Sprintf("%s-%s", conf.Name, VERSION)
 		if conf.Format == "json" {
-			nl.LogEmitter = NewJSONEmitter(conn, conf.EnvVersion, hostname, conf.Name)
+			nl.LogEmitter = NewJSONEmitter(conn, conf.EnvVersion,
+				hostname, loggerName)
 		} else {
-			nl.LogEmitter = NewProtobufEmitter(conn, conf.EnvVersion, hostname, conf.Name)
+			nl.LogEmitter = NewProtobufEmitter(conn, conf.EnvVersion,
+				hostname, loggerName)
 		}
 
 	case "text":
@@ -240,13 +243,16 @@ func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
 	}
 
 	switch conf.Format {
-	case "json":
-		fl.LogEmitter = NewJSONEmitter(logFile, conf.EnvVersion,
-			app.Hostname(), conf.Name)
-
-	case "protobuf":
-		fl.LogEmitter = NewProtobufEmitter(logFile, conf.EnvVersion,
-			app.Hostname(), conf.Name)
+	case "json", "protobuf":
+		hostname := app.Hostname()
+		loggerName := fmt.Sprintf("%s-%s", conf.Name, VERSION)
+		if conf.Format == "json" {
+			fl.LogEmitter = NewJSONEmitter(logFile, conf.EnvVersion,
+				hostname, loggerName)
+		} else {
+			fl.LogEmitter = NewProtobufEmitter(logFile, conf.EnvVersion,
+				hostname, loggerName)
+		}
 
 	case "text":
 		fl.LogEmitter = NewTextEmitter(logFile)
