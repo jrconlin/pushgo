@@ -159,3 +159,6 @@ statsd_server = ":8125"
 
 [balancer]
 type = "none"
+
+[handlers]
+max_data_len = 1024
