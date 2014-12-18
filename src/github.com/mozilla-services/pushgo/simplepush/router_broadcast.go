@@ -70,7 +70,6 @@ type BroadcastRouter struct {
 	rwtimeout   time.Duration
 	bucketSize  int
 	url         string
-	runs        chan func()
 	rclient     *http.Client
 	closeWait   sync.WaitGroup
 	isClosed    bool
@@ -82,7 +81,6 @@ type BroadcastRouter struct {
 
 func NewBroadcastRouter() *BroadcastRouter {
 	return &BroadcastRouter{
-		runs:        make(chan func()),
 		closeSignal: make(chan bool),
 	}
 }
