@@ -203,11 +203,19 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 	// if uid is not present, or doesn't exist in the known clients...
-	if !ok || !r.app.ClientExists(uaid) {
+	if !ok {
 		http.Error(resp, "UID Not Found", http.StatusNotFound)
 		r.metrics.Increment("updates.routed.unknown")
 		return
 	}
+
+	client, found := r.app.GetClient(uaid)
+	if !found {
+		http.Error(resp, "UID Not Found", http.StatusNotFound)
+		r.metrics.Increment("updates.routed.unknown")
+		return
+	}
+
 	// We know of this one.
 	var (
 		routable Routable
@@ -247,7 +255,8 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		}
 		data = data[:r.maxDataLen]
 	}
-	if err = r.app.Server().Update(chid, uaid, routable.Version(), sentAt, data); err != nil {
+	if err = r.app.Server().UpdateClient(client, chid, uaid, routable.Version(),
+		sentAt, data); err != nil {
 		if logWarning {
 			r.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})

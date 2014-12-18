@@ -367,17 +367,29 @@ func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments Js
 }
 
 func (self *Serv) Update(chid, uid string, vers int64, time time.Time, data string) (err error) {
-	var pk string
 	updateErr := errors.New("Update Error")
 	reason := "Unknown UID"
 
 	client, ok := self.app.GetClient(uid)
 	if !ok {
 		err = updateErr
-		goto updateError
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("server", reason,
+				LogFields{"error": err.Error(),
+					"uaid": uid,
+					"chid": chid})
+		}
+		return err
 	}
 
-	pk, ok = self.store.IDsToKey(uid, chid)
+	return self.UpdateClient(client, chid, uid, vers, time, data)
+}
+
+func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
+	time time.Time, data string) (err error) {
+	reason := "Unknown UID"
+
+	pk, ok := self.store.IDsToKey(uid, chid)
 	if !ok {
 		reason = "Failed to generate PK"
 		goto updateError
