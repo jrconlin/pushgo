@@ -6,6 +6,7 @@
 package simplepush
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -33,10 +34,6 @@ type BroadcastRouterConfig struct {
 	// will defer requests until all nodes in a bucket have responded. Defaults
 	// to 10 contacts.
 	BucketSize int `toml:"bucket_size" env:"bucket_size"`
-
-	// PoolSize is the number of goroutines to spawn for routing messages.
-	// Defaults to 30.
-	PoolSize int `toml:"pool_size" env:"pool_size"`
 
 	// Ctimeout is the maximum amount of time that the router's rclient should
 	// should wait for a dial to succeed. Defaults to 3 seconds.
@@ -72,7 +69,6 @@ type BroadcastRouter struct {
 	ctimeout    time.Duration
 	rwtimeout   time.Duration
 	bucketSize  int
-	poolSize    int
 	url         string
 	runs        chan func()
 	rclient     *http.Client
@@ -94,7 +90,6 @@ func NewBroadcastRouter() *BroadcastRouter {
 func (*BroadcastRouter) ConfigStruct() interface{} {
 	return &BroadcastRouterConfig{
 		BucketSize: 10,
-		PoolSize:   30,
 		Ctimeout:   "3s",
 		Rwtimeout:  "3s",
 		IdleConns:  50,
@@ -150,7 +145,6 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	r.url = CanonicalURL(scheme, host, addr.Port)
 
 	r.bucketSize = conf.BucketSize
-	r.poolSize = conf.PoolSize
 
 	r.rclient = &http.Client{
 		Timeout: r.rwtimeout,
@@ -159,11 +153,6 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 			MaxIdleConnsPerHost: conf.IdleConns,
 			TLSClientConfig:     new(tls.Config),
 		},
-	}
-
-	r.closeWait.Add(r.poolSize)
-	for i := 0; i < r.poolSize; i++ {
-		go r.runLoop()
 	}
 
 	return nil
@@ -418,9 +407,7 @@ func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool, contacts []stri
 	timer := time.NewTimer(timeout)
 	for _, contact := range contacts {
 		url := fmt.Sprintf("%s/route/%s", contact, uaid)
-		notify := func() {
-			r.notifyContact(result, stop, url, segment, logID)
-		}
+		go r.notifyContact(result, stop, url, segment, logID)
 		select {
 		case <-r.closeSignal:
 			return false, io.EOF
@@ -430,7 +417,6 @@ func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool, contacts []stri
 			return ok, nil
 		case <-timer.C:
 			return false, nil
-		case r.runs <- notify:
 		}
 	}
 	timer.Reset(timeout)
@@ -448,9 +434,9 @@ func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool, contacts []stri
 func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{},
 	url string, segment *capn.Segment, logID string) {
 
-	reader, writer := io.Pipe()
-	go pipeTo(writer, segment)
-	req, err := http.NewRequest("PUT", url, reader)
+	buf := bytes.Buffer{}
+	segment.WriteTo(&buf)
+	req, err := http.NewRequest("PUT", url, &buf)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Router request failed",
@@ -492,24 +478,6 @@ func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{}
 	case result <- true:
 	case <-time.After(1 * time.Second):
 	}
-}
-
-func (r *BroadcastRouter) runLoop() {
-	defer r.closeWait.Done()
-	for ok := true; ok; {
-		select {
-		case ok = <-r.closeSignal:
-		case run := <-r.runs:
-			run()
-		}
-	}
-}
-
-func pipeTo(dest *io.PipeWriter, src io.WriterTo) (err error) {
-	if _, err = src.WriteTo(dest); err != nil {
-		return dest.CloseWithError(err)
-	}
-	return dest.Close()
 }
 
 func init() {

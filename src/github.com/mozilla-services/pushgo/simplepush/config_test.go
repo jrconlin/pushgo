@@ -42,7 +42,6 @@ filter = 7
 
 [router]
 bucket_size = 15
-pool_size = 250
 
     [router.listener]
     addr = ":3000"
@@ -71,7 +70,6 @@ var env = envconf.New([]string{
 	"PUSHGO_PROPPING_TYPE=udp",
 	"PUSHGO_PROPPING_URL=http://push.services.mozilla.com/ping",
 	"PushGo_Router_Bucket_Size=15",
-	"PushGo_Router_Pool_Size=250",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
 	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
 	"PUSHGO_HANDLERS_MAX_DATA_LEN=512",
