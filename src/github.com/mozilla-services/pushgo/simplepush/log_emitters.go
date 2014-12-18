@@ -28,7 +28,7 @@ var (
 	timeNow         = time.Now
 )
 
-// TryClose closes w, returning nil if w does not implement io.Closer.
+// TryClose closes w if w implements io.Closer.
 func TryClose(w io.Writer) (err error) {
 	if c, ok := w.(io.Closer); ok {
 		err = c.Close()
