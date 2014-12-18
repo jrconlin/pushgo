@@ -9,17 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/gorilla/mux"
-	"golang.org/x/net/websocket"
 )
 
 // The Simple Push server version, set by the linker.
@@ -31,7 +26,6 @@ var (
 )
 
 type ApplicationConfig struct {
-	Origins            []string
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
@@ -42,7 +36,6 @@ type ApplicationConfig struct {
 }
 
 type Application struct {
-	origins            []*url.URL
 	hostname           string
 	host               string
 	port               int
@@ -80,15 +73,6 @@ func (a *Application) ConfigStruct() interface{} {
 // passed here will be nil.
 func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
-
-	if len(conf.Origins) > 0 {
-		a.origins = make([]*url.URL, len(conf.Origins))
-		for index, origin := range conf.Origins {
-			if a.origins[index], err = url.ParseRequestURI(origin); err != nil {
-				return fmt.Errorf("Error parsing origin: %s", err)
-			}
-		}
-	}
 
 	if conf.UseAwsHost {
 		if a.hostname, err = GetAWSPublicHostname(); err != nil {
@@ -171,50 +155,7 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
-	clientMux := mux.NewRouter()
-	clientMux.HandleFunc("/status/", a.handlers.StatusHandler)
-	clientMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
-	clientMux.Handle("/", websocket.Server{Handler: a.handlers.PushSocketHandler,
-		Handshake: a.checkOrigin})
-
-	endpointMux := mux.NewRouter()
-	endpointMux.HandleFunc("/update/{key}", a.handlers.UpdateHandler)
-	endpointMux.HandleFunc("/status/", a.handlers.StatusHandler)
-	endpointMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
-	endpointMux.HandleFunc("/metrics/", a.handlers.MetricsHandler)
-
-	// Weigh the anchor!
-	go func() {
-		clientLn := a.server.ClientListener()
-		if a.log.ShouldLog(INFO) {
-			a.log.Info("app", "Starting WebSocket server",
-				LogFields{"addr": clientLn.Addr().String()})
-		}
-		clientSrv := &http.Server{
-			Handler:  &LogHandler{clientMux, a.log},
-			ErrorLog: log.New(&LogWriter{a.log.Logger, "worker", ERROR}, "", 0)}
-		errChan <- clientSrv.Serve(clientLn)
-	}()
-
-	go func() {
-		endpointLn := a.server.EndpointListener()
-		if a.log.ShouldLog(INFO) {
-			a.log.Info("app", "Starting update server",
-				LogFields{"addr": endpointLn.Addr().String()})
-		}
-		endpointSrv := &http.Server{
-			ConnState: func(c net.Conn, state http.ConnState) {
-				if state == http.StateNew {
-					a.Metrics().Increment("endpoint.socket.connect")
-				} else if state == http.StateClosed {
-					a.Metrics().Increment("endpoint.socket.disconnect")
-				}
-			},
-			Handler:  &LogHandler{endpointMux, a.log},
-			ErrorLog: log.New(&LogWriter{a.log.Logger, "endpoint", ERROR}, "", 0)}
-		errChan <- endpointSrv.Serve(endpointLn)
-	}()
-
+	go a.handlers.Start(errChan)
 	go a.router.Start(errChan)
 
 	return errChan
@@ -275,34 +216,6 @@ func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
 	client, ok = a.clients[uaid]
 	a.clientMux.RUnlock()
 	return
-}
-
-func (a *Application) checkOrigin(conf *websocket.Config,
-	req *http.Request) (err error) {
-
-	if len(a.origins) == 0 {
-		return nil
-	}
-	if conf.Origin, err = websocket.Origin(conf, req); err != nil {
-		if a.log.ShouldLog(WARNING) {
-			a.log.Warn("http", "Error parsing WebSocket origin",
-				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
-		}
-		return err
-	}
-	if conf.Origin == nil {
-		return ErrMissingOrigin
-	}
-	for _, origin := range a.origins {
-		if isSameOrigin(conf.Origin, origin) {
-			return nil
-		}
-	}
-	if a.log.ShouldLog(WARNING) {
-		a.log.Warn("http", "Rejected WebSocket connection from unknown origin",
-			LogFields{"rid": req.Header.Get(HeaderID), "origin": conf.Origin.String()})
-	}
-	return ErrInvalidOrigin
 }
 
 func (a *Application) AddClient(uaid string, client *Client) {
