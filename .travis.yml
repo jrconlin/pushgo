@@ -3,17 +3,17 @@ go:
 - 1.3
 services:
 - memcached
-before_install:
+install:
+- make
+script:
+- make test
+- PUSHGO_TEST_STORAGE_MC_HOSTS=localhost:11211 make test-memcached
+before_deploy:
 - sudo apt-get -qq remove -y libmemcached-dev
 - sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu/ utopic main"
 - sudo apt-get -qq update
 - sudo apt-get install -y libmemcached-dev
-install:
-- make
-script:
 - make simplepush
-- make test
-before_deploy:
 - mkdir -p build/server
 - gzip simplepush
 - cp simplepush.gz build/server/simplepush-linux-$TRAVIS_BUILD_NUMBER-$TRAVIS_COMMIT.gz

@@ -93,12 +93,12 @@ func (te *TextEmitter) Close() (err error) {
 
 // NewJSONEmitter creates a JSON-encoded log message emitter.
 func NewJSONEmitter(sender client.Sender, envVersion,
-	hostname string) *HekaEmitter {
+	hostname, loggerName string) *HekaEmitter {
 
 	return &HekaEmitter{
 		Sender:        sender,
 		StreamEncoder: hekaJSONEncoder,
-		LogName:       fmt.Sprintf("pushgo-%s", VERSION),
+		LogName:       fmt.Sprintf("%s-%s", loggerName, VERSION),
 		Pid:           int32(os.Getpid()),
 		EnvVersion:    envVersion,
 		Hostname:      hostname,
@@ -108,12 +108,12 @@ func NewJSONEmitter(sender client.Sender, envVersion,
 // NewProtobufEmitter creates a Protobuf-encoded Heka log message emitter.
 // Protobuf encoding should be preferred over JSON for efficiency.
 func NewProtobufEmitter(sender client.Sender, envVersion,
-	hostname string) *HekaEmitter {
+	hostname, loggerName string) *HekaEmitter {
 
 	return &HekaEmitter{
 		Sender:        sender,
 		StreamEncoder: client.NewProtobufEncoder(nil),
-		LogName:       fmt.Sprintf("pushgo-%s", VERSION),
+		LogName:       fmt.Sprintf("%s-%s", loggerName, VERSION),
 		Pid:           int32(os.Getpid()),
 		EnvVersion:    envVersion,
 		Hostname:      hostname,

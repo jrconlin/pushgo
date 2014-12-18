@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
+	"golang.org/x/net/websocket"
 )
 
 // The Simple Push server version, set by the linker.
@@ -166,6 +166,7 @@ func (a *Application) Run() (errChan chan error) {
 
 	clientMux := mux.NewRouter()
 	clientMux.HandleFunc("/status/", a.handlers.StatusHandler)
+	clientMux.HandleFunc("/realstatus/", a.handlers.RealStatusHandler)
 	clientMux.Handle("/", websocket.Server{Handler: a.handlers.PushSocketHandler,
 		Handshake: a.checkOrigin})
 

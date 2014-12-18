@@ -154,6 +154,7 @@ type NetworkLoggerConfig struct {
 	Addr       string
 	UseTLS     bool   `toml:"use_tls" env:"use_tls"`
 	EnvVersion string `toml:"env_version" env:"env_version"`
+	Name       string `toml:"name" env:"name"`
 	Filter     int32
 }
 
@@ -162,6 +163,7 @@ func (nl *NetworkLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		Proto:      "tcp",
 		EnvVersion: "2",
+		Name:       "pushgo",
 		Filter:     0,
 	}
 }
@@ -185,9 +187,9 @@ func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) 
 		}
 		hostname := app.Hostname()
 		if conf.Format == "json" {
-			nl.LogEmitter = NewJSONEmitter(sender, conf.EnvVersion, hostname)
+			nl.LogEmitter = NewJSONEmitter(sender, conf.EnvVersion, hostname, conf.Name)
 		} else {
-			nl.LogEmitter = NewProtobufEmitter(sender, conf.EnvVersion, hostname)
+			nl.LogEmitter = NewProtobufEmitter(sender, conf.EnvVersion, hostname, conf.Name)
 		}
 
 	case "text":
@@ -235,6 +237,7 @@ type FileLoggerConfig struct {
 	Format     string
 	Path       string
 	EnvVersion string `toml:"env_version" env:"env_version"`
+	Name       string `toml:"name" env:"name"`
 	Filter     int32
 }
 
@@ -243,6 +246,7 @@ func (fl *FileLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
+		Name:       "pushgo",
 	}
 }
 
@@ -259,11 +263,11 @@ func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
 	switch conf.Format {
 	case "json":
 		fl.LogEmitter = NewJSONEmitter(&HekaSender{logFile}, conf.EnvVersion,
-			app.Hostname())
+			app.Hostname(), conf.Name)
 
 	case "protobuf":
 		fl.LogEmitter = NewProtobufEmitter(&HekaSender{logFile}, conf.EnvVersion,
-			app.Hostname())
+			app.Hostname(), conf.Name)
 
 	case "text":
 		fl.LogEmitter = NewTextEmitter(logFile)
@@ -302,6 +306,7 @@ type StdOutLoggerConfig struct {
 	Format     string
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Filter     int32
+	Name       string `toml:"name" env:"name"`
 }
 
 func (ml *StdOutLogger) ConfigStruct() interface{} {
@@ -309,6 +314,7 @@ func (ml *StdOutLogger) ConfigStruct() interface{} {
 		Format:     "protobuf",
 		EnvVersion: "2",
 		Filter:     0,
+		Name:       "pushgo",
 	}
 }
 
@@ -319,11 +325,11 @@ func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	switch conf.Format {
 	case "json":
 		ml.LogEmitter = NewJSONEmitter(&HekaSender{writer}, conf.EnvVersion,
-			app.Hostname())
+			app.Hostname(), conf.Name)
 
 	case "protobuf":
 		ml.LogEmitter = NewProtobufEmitter(&HekaSender{writer}, conf.EnvVersion,
-			app.Hostname())
+			app.Hostname(), conf.Name)
 
 	case "text":
 		ml.LogEmitter = NewTextEmitter(writer)
@@ -517,5 +523,5 @@ func init() {
 	AvailableLoggers["stdout"] = func() HasConfigStruct { return new(StdOutLogger) }
 	AvailableLoggers["net"] = func() HasConfigStruct { return new(NetworkLogger) }
 	AvailableLoggers["file"] = func() HasConfigStruct { return new(FileLogger) }
-	AvailableLoggers["default"] = AvailableLoggers["text"]
+	AvailableLoggers.SetDefault("stdout")
 }

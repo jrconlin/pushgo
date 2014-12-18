@@ -7,7 +7,7 @@ package simplepush
 import (
 	"time"
 
-	"code.google.com/p/go.net/websocket"
+	"golang.org/x/net/websocket"
 )
 
 type CommandType int
@@ -47,6 +47,25 @@ type PushWS struct {
 	Logger  *SimpleLogger
 	Metrics *Metrics
 	Born    time.Time
+}
+
+func (ws *PushWS) Origin() string {
+	// protect against null pointers.
+	if ws == nil {
+		return "Unknown"
+	}
+	if ws.Socket == nil {
+		return "No Socket"
+	}
+	conf := ws.Socket.Config()
+	if conf == nil {
+		return "No Socket Config"
+	}
+	origin := conf.Origin
+	if origin == nil {
+		return "No Socket Origin"
+	}
+	return origin.String()
 }
 
 // o4fs

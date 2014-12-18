@@ -5,14 +5,16 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
+	"golang.org/x/net/websocket"
 
 	"github.com/mozilla-services/pushgo/id"
 )
@@ -108,15 +110,15 @@ func (self *Worker) sniffer(sock *PushWS) {
 	logWarning := self.logger.ShouldLog(WARNING)
 	var (
 		socket = sock.Socket
-		raw    []byte
-		//eofCount    int    = 0
-		err error
+		buf    = new(bytes.Buffer)
 	)
 
 	for {
-		// declare buffer here so that the struct is cleared between msgs.
-		raw = raw[:0]
-		err = nil
+		buf.Reset()
+		var (
+			raw []byte
+			err error
+		)
 
 		// Were we told to shut down?
 		if self.stopped {
@@ -124,7 +126,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 		}
 		if err = websocket.Message.Receive(socket, &raw); err != nil {
 			self.stopped = true
-			if self.logger.ShouldLog(ERROR) {
+			if err != io.EOF && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Websocket Error",
 					LogFields{"rid": self.id, "error": ErrStr(err)})
 			}
@@ -133,67 +135,67 @@ func (self *Worker) sniffer(sock *PushWS) {
 		if len(raw) <= 0 {
 			continue
 		}
-
-		//eofCount = 0
-		//ignore {} pings for logging purposes.
-		if len(raw) > 5 {
-			if self.logger.ShouldLog(INFO) {
-				self.logger.Info("worker", "Socket receive",
-					LogFields{"rid": self.id, "raw": string(raw)})
-			}
-		}
-		isPing, err := isPingBody(raw)
-		if err != nil {
+		var msg []byte
+		if isPingBody(raw) {
+			// Fast case: empty object literal; no whitespace.
+			msg = raw
+		} else if err = json.Compact(buf, raw); err != nil {
+			// Slower case: validate and remove insignificant whitespace from the
+			// incoming slice.
 			if logWarning {
-				self.logger.Warn("worker", "Malformed request payload",
-					LogFields{"rid": self.id, "raw": string(raw), "error": ErrStr(err)})
-			}
-			self.stopped = true
-			continue
-		}
-		header := new(RequestHeader)
-		if isPing {
-			header.Type = "ping"
-		} else if err = json.Unmarshal(raw, header); err != nil {
-			if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
-				if logWarning {
-					self.logger.Warn("worker", "Mismatched header field types", LogFields{
-						"rid":      self.id,
-						"expected": typeErr.Type.String(),
-						"actual":   typeErr.Value})
-				}
-				self.handleError(sock, raw, ErrUnknownCommand)
-			} else if syntaxErr, ok := err.(*json.SyntaxError); ok {
-				if logWarning {
+				if syntaxErr, ok := err.(*json.SyntaxError); ok {
 					self.logger.Warn("worker", "Malformed request payload", LogFields{
 						"rid":      self.id,
-						"expected": string(raw[:syntaxErr.Offset]),
+						"expected": string(msg[:syntaxErr.Offset]),
 						"error":    syntaxErr.Error()})
-				}
-			} else {
-				if logWarning {
-					self.logger.Warn("worker", "Error parsing request payload",
+				} else {
+					self.logger.Warn("worker", "Error validating request payload",
 						LogFields{"rid": self.id, "error": ErrStr(err)})
 				}
 			}
 			self.stopped = true
 			continue
 		} else {
-			header.Type = strings.ToLower(header.Type)
+			msg = buf.Bytes()
 		}
-		switch header.Type {
+
+		//ignore {} pings for logging purposes.
+		if len(msg) > 5 && self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("worker", "Socket receive",
+				LogFields{"rid": self.id, "raw": string(msg)})
+		}
+		header := new(RequestHeader)
+		if isPingBody(msg) {
+			header.Type = "ping"
+		} else if err = json.Unmarshal(msg, header); err != nil {
+			if logWarning {
+				if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
+					self.logger.Warn("worker", "Mismatched header field types", LogFields{
+						"rid":      self.id,
+						"expected": typeErr.Type.String(),
+						"actual":   typeErr.Value})
+				} else {
+					self.logger.Warn("worker", "Error parsing request payload",
+						LogFields{"rid": self.id, "error": ErrStr(err)})
+				}
+			}
+			self.handleError(sock, msg, ErrUnknownCommand)
+			self.stopped = true
+			continue
+		}
+		switch strings.ToLower(header.Type) {
 		case "ping":
-			err = self.Ping(sock, header, raw)
+			err = self.Ping(sock, header, msg)
 		case "hello":
-			err = self.Hello(sock, header, raw)
+			err = self.Hello(sock, header, msg)
 		case "ack":
-			err = self.Ack(sock, header, raw)
+			err = self.Ack(sock, header, msg)
 		case "register":
-			err = self.Register(sock, header, raw)
+			err = self.Register(sock, header, msg)
 		case "unregister":
-			err = self.Unregister(sock, header, raw)
+			err = self.Unregister(sock, header, msg)
 		case "purge":
-			err = self.Purge(sock, header, raw)
+			err = self.Purge(sock, header, msg)
 		default:
 			if logWarning {
 				self.logger.Warn("worker", "Bad command",
@@ -206,7 +208,7 @@ func (self *Worker) sniffer(sock *PushWS) {
 				self.logger.Debug("worker", "Run returned error",
 					LogFields{"rid": self.id, "cmd": header.Type, "error": ErrStr(err)})
 			}
-			self.handleError(sock, raw, err)
+			self.handleError(sock, msg, err)
 			self.stopped = true
 			continue
 		}
@@ -215,10 +217,6 @@ func (self *Worker) sniffer(sock *PushWS) {
 
 // standardize the error reporting back to the client.
 func (self *Worker) handleError(sock *PushWS, message []byte, err error) (ret error) {
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("worker", "Sending error",
-			LogFields{"rid": self.id, "error": ErrStr(err)})
-	}
 	reply := make(map[string]interface{})
 	if ret = json.Unmarshal(message, &reply); ret != nil {
 		return
@@ -655,7 +653,7 @@ func (self *Worker) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err err
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
 			self.logger.Warn("dash", "Client sending too many pings",
-				LogFields{"rid": self.id, "source": sock.Socket.Config().Origin.String()})
+				LogFields{"rid": self.id, "source": sock.Origin()})
 		}
 		self.stopped = true
 		self.metrics.Increment("updates.client.too_many_pings")
@@ -683,31 +681,8 @@ func (self *Worker) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error) 
 	return nil
 }
 
-func isPingBody(raw []byte) (bool, error) {
-	if len(raw) < 2 || len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
-		// Fast case: empty object literal; no whitespace.
-		return true, nil
-	}
-	// Slower case: determine if the slice contains an empty object literal,
-	// ignoring leading and trailing whitespace.
-	var leftBraces, rightBraces int
-	for _, b := range raw {
-		switch b {
-		case '{':
-			leftBraces++
-		case '}':
-			rightBraces++
-		case '\t', '\r', '\n', ' ':
-			continue
-		default:
-			return false, nil
-		}
-	}
-	if leftBraces <= 1 && leftBraces == rightBraces {
-		return true, nil
-	}
-	// Quick sanity check for unbalanced or multiple consecutive braces.
-	return false, ErrBadPayload
+func isPingBody(raw []byte) bool {
+	return len(raw) == 0 || len(raw) == 2 && raw[0] == '{' && raw[1] == '}'
 }
 
 // o4fs

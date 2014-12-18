@@ -128,38 +128,38 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.metrics = app.Metrics()
 
 	if l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval); err != nil {
-		l.logger.Alert("etcd", "Could not parse refreshInterval",
+		l.logger.Panic("etcd", "Could not parse refreshInterval",
 			LogFields{"error": err.Error(),
 				"refreshInterval": conf.RefreshInterval})
 		return err
 	}
 	// default time for the server to be "live"
 	if l.defaultTTL, err = time.ParseDuration(conf.DefaultTTL); err != nil {
-		l.logger.Alert("etcd",
+		l.logger.Panic("etcd",
 			"Could not parse etcd default TTL",
 			LogFields{"value": conf.DefaultTTL, "error": err.Error()})
 		return err
 	}
 	if l.defaultTTL < minTTL {
-		l.logger.Alert("etcd",
+		l.logger.Panic("etcd",
 			"default TTL too short",
 			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
 	}
 	if l.retryDelay, err = time.ParseDuration(conf.RetryDelay); err != nil {
-		l.logger.Alert("etcd",
+		l.logger.Panic("etcd",
 			"Could not parse etcd 'retryDelay'",
 			LogFields{"value": conf.RetryDelay, "error": err.Error()})
 		return err
 	}
 	if l.maxJitter, err = time.ParseDuration(conf.MaxJitter); err != nil {
-		l.logger.Alert("etcd",
+		l.logger.Panic("etcd",
 			"Could not parse etcd 'maxJitter'",
 			LogFields{"value": conf.MaxJitter, "error": err.Error()})
 		return err
 	}
 	if l.maxDelay, err = time.ParseDuration(conf.MaxDelay); err != nil {
-		l.logger.Alert("etcd",
+		l.logger.Panic("etcd",
 			"Could not parse etcd 'maxDelay'",
 			LogFields{"value": conf.MaxDelay, "error": err.Error()})
 		return err
@@ -173,7 +173,7 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.url = app.Router().URL()
 	uri, err := url.ParseRequestURI(l.url)
 	if err != nil {
-		l.logger.Alert("etcd", "Error parsing router URL", LogFields{
+		l.logger.Panic("etcd", "Error parsing router URL", LogFields{
 			"error": err.Error(), "url": l.url})
 		return err
 	}
@@ -192,18 +192,18 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	// create the push hosts directory (if not already there)
 	if _, err = l.client.CreateDir(l.dir, 0); err != nil {
 		if !IsEtcdKeyExist(err) {
-			l.logger.Alert("etcd", "etcd createDir error", LogFields{
+			l.logger.Panic("etcd", "etcd createDir error", LogFields{
 				"error": err.Error()})
 			return err
 		}
 	}
 	if err = l.Register(); err != nil {
-		l.logger.Alert("etcd", "Could not register with etcd",
+		l.logger.Panic("etcd", "Could not register with etcd",
 			LogFields{"error": err.Error()})
 		return err
 	}
 	if l.contacts, err = l.getServers(); err != nil {
-		l.logger.Alert("etcd", "Could not fetch contact list",
+		l.logger.Panic("etcd", "Could not fetch contact list",
 			LogFields{"error": err.Error()})
 		return err
 	}
@@ -284,15 +284,25 @@ func (l *EtcdLocator) Status() (ok bool, err error) {
 	}
 	key, expected := "status_"+fakeID, "test"
 	if _, err = l.client.Set(key, expected, uint64(6*time.Second)); err != nil {
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Error storing health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	resp, err := l.client.Get(key, false, false)
 	if err != nil {
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Error fetching health check key",
+				LogFields{"error": err.Error(), "key": key})
+		}
 		return false, err
 	}
 	if resp.Node.Value != expected {
-		l.logger.Error("etcd", "Unexpected health check result",
-			LogFields{"expected": expected, "actual": resp.Node.Value})
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("etcd", "Unexpected health check result", LogFields{
+				"key": key, "expected": expected, "actual": resp.Node.Value})
+		}
 		return false, ErrEtcdStatus
 	}
 	l.client.Delete(key, false)
@@ -329,8 +339,8 @@ func (l *EtcdLocator) Register() (err error) {
 	}
 	l.metrics.IncrementBy("locator.etcd.retry.register", int64(retries))
 	if err != nil {
-		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Failed to register", LogFields{
+		if l.logger.ShouldLog(CRITICAL) {
+			l.logger.Critical("etcd", "Failed to register", LogFields{
 				"error": err.Error(), "key": l.key, "url": l.url})
 		}
 		return err
@@ -363,8 +373,8 @@ func (l *EtcdLocator) getServers() (servers []string, err error) {
 	}
 	l.metrics.IncrementBy("locator.etcd.retry.fetch", int64(retries))
 	if err != nil {
-		if l.logger.ShouldLog(ERROR) {
-			l.logger.Error("etcd", "Could not get server list",
+		if l.logger.ShouldLog(CRITICAL) {
+			l.logger.Critical("etcd", "Could not get server list",
 				LogFields{"error": err.Error()})
 		}
 		return nil, err
