@@ -150,7 +150,7 @@ func Test_storeRegister(t *testing.T) {
 func Test_Register(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -177,7 +177,7 @@ func Test_Register(t *testing.T) {
 func Test_storeUpdate(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -207,7 +207,7 @@ func Test_storeUpdate(t *testing.T) {
 func Test_Update(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -239,7 +239,7 @@ func Test_Update(t *testing.T) {
 func Test_storeUnregister(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -268,7 +268,7 @@ func Test_storeUnregister(t *testing.T) {
 func Test_Unregister(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -296,7 +296,7 @@ func Test_Unregister(t *testing.T) {
 func Test_Drop(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -323,7 +323,7 @@ func Test_Drop(t *testing.T) {
 func Test_FetchAll(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
@@ -353,7 +353,7 @@ func Test_FetchAll(t *testing.T) {
 func Test_Ping(t *testing.T) {
 	testGm, connected := setup(t)
 	if !connected {
-		t.Skip("Skipping Register check, no server.")
+		t.Skip("Skipping, no server.")
 	}
 
 	var err error
