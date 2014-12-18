@@ -16,13 +16,16 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
+
+	"github.com/mozilla-services/pushgo/id"
 )
 
 const TextLogTime = "2006-01-02 15:04:05 -0700"
 
 var (
-	osGetPid = os.Getpid
-	timeNow  = time.Now
+	idGenerateBytes = id.GenerateBytes
+	osGetPid        = os.Getpid
+	timeNow         = time.Now
 )
 
 // TryClose closes w, returning nil if w does not implement io.Closer.
@@ -169,12 +172,15 @@ type JSONEmitter struct {
 func (je *JSONEmitter) Emit(level LogLevel, messageType, payload string,
 	fields LogFields) (err error) {
 
+	msgID, err := idGenerateBytes()
+	if err != nil {
+		return fmt.Errorf("Error generating JSON log message ID: %s", err)
+	}
+
 	hm := newHekaMessage()
 	defer hm.free()
 
-	if err = hm.msg.Identify(); err != nil {
-		return fmt.Errorf("Error generating log message ID: %s", err)
-	}
+	hm.msg.SetID(msgID)
 	hm.msg.SetTimestamp(timeNow().UnixNano())
 	hm.msg.SetType(messageType)
 	hm.msg.SetLogger(je.LogName)
@@ -189,7 +195,7 @@ func (je *JSONEmitter) Emit(level LogLevel, messageType, payload string,
 	hm.msg.SortFields()
 
 	if err = je.enc.Encode(hm.msg); err != nil {
-		return fmt.Errorf("Error sending log message: %s", err)
+		return fmt.Errorf("Error sending JSON log message: %s", err)
 	}
 	return nil
 }
@@ -226,12 +232,15 @@ type ProtobufEmitter struct {
 func (pe *ProtobufEmitter) Emit(level LogLevel, messageType, payload string,
 	fields LogFields) (err error) {
 
+	msgID, err := idGenerateBytes()
+	if err != nil {
+		return fmt.Errorf("Error generating Protobuf log message ID: %s", err)
+	}
+
 	hm := newHekaMessage()
 	defer hm.free()
 
-	if err = hm.msg.Identify(); err != nil {
-		return fmt.Errorf("Error generating log message ID: %s", err)
-	}
+	hm.msg.SetID(msgID)
 	hm.msg.SetTimestamp(timeNow().UnixNano())
 	hm.msg.SetType(messageType)
 	hm.msg.SetLogger(pe.LogName)
@@ -247,10 +256,10 @@ func (pe *ProtobufEmitter) Emit(level LogLevel, messageType, payload string,
 
 	outBytes, err := hm.marshalFrame()
 	if err != nil {
-		return fmt.Errorf("Error encoding log message: %s", err)
+		return fmt.Errorf("Error encoding Protobuf log message: %s", err)
 	}
 	if _, err = pe.Writer.Write(outBytes); err != nil {
-		return fmt.Errorf("Error sending log message: %s", err)
+		return fmt.Errorf("Error sending Protobuf log message: %s", err)
 	}
 	return nil
 }

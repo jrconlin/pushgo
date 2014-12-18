@@ -6,11 +6,7 @@ package simplepush
 
 import (
 	"sort"
-
-	"github.com/mozilla-services/pushgo/id"
 )
-
-var idAppend = id.Append
 
 // Convenience functions and framing constants from Heka.
 
@@ -39,9 +35,8 @@ func (h *Header) SetMessageLength(v uint32) {
 	*h.MessageLength = v
 }
 
-func (m *Message) Identify() (err error) {
-	m.Uuid, err = idAppend(m.Uuid[:0])
-	return
+func (m *Message) SetID(msgID []byte) {
+	m.Uuid = msgID
 }
 
 func (m *Message) SetTimestamp(v int64) {

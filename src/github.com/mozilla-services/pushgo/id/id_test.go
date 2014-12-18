@@ -28,6 +28,14 @@ var validTests = map[string]bool{
 	"e281b9498a92-4443-b0c85465ba439a76":   false,
 }
 
+func BenchmarkGenerateBytes(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		if _, err := GenerateBytes(); err != nil {
+			b.Fatalf("Error generating bytes: %s", err)
+		}
+	}
+}
+
 func TestDecodeString(t *testing.T) {
 	hyphenatedBytes, err := DecodeString(hyphenatedId)
 	if err != nil {
@@ -82,29 +90,5 @@ func TestGenerate(t *testing.T) {
 	}
 	if !Valid(id) {
 		t.Errorf("Generate() returned invalid ID: %q", id)
-	}
-}
-
-func TestAppend(t *testing.T) {
-	dest := []byte{0xca, 0xfe}
-	idBytes, err := Append(dest)
-	if err != nil {
-		t.Errorf("Error appending ID: %s", err)
-	}
-	m := 16 + len(dest)
-	if len(idBytes) != m {
-		t.Errorf("Mismatched ID length: got %d; want %d", len(idBytes), m)
-	}
-	actual := idBytes[0:2]
-	if !bytes.Equal(actual, dest) {
-		t.Errorf("Wrong ID prefix: got %#v; want %#v", actual, dest)
-	}
-	emptyBytes := make([]byte, 0, 16)
-	if idBytes, err = Append(emptyBytes); err != nil {
-		t.Errorf("Error appending ID to pre-allocated slice: %s", err)
-	}
-	if !bytes.Equal(emptyBytes[:16], idBytes) {
-		t.Errorf("Append() did not append to pre-allocated slice: got %#v; want %#v",
-			idBytes, emptyBytes[:16])
 	}
 }
