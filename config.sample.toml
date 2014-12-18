@@ -186,8 +186,6 @@ type = "none"
 # means 16 buckets. Have fun with probability tables to figure out the
 # size that works best for you.)
 #bucket_size = 10
-# Number of goroutines to spawn for routing messages.
-#pool_size = 30
 # Maximum allowed data segment (in bytes)
 #max_data_len = 1024
 # Number of idle connections to maintain per host.
