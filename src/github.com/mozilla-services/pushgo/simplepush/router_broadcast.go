@@ -77,6 +77,7 @@ type BroadcastRouter struct {
 	closeLock   sync.Mutex
 	lastErr     error
 	maxDataLen  int
+	routerMux   *mux.Router
 }
 
 func NewBroadcastRouter() *BroadcastRouter {
@@ -153,6 +154,9 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 		},
 	}
 
+	r.routerMux = mux.NewRouter()
+	r.routerMux.HandleFunc("/route/{uaid}", r.RouteHandler)
+
 	return nil
 }
 
@@ -163,9 +167,6 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 			LogFields{"addr": routeLn.Addr().String()})
 	}
 
-	routeMux := mux.NewRouter()
-	routeMux.HandleFunc("/route/{uaid}", r.RouteHandler)
-
 	routeSrv := &http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
@@ -174,7 +175,7 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 				r.metrics.Increment("router.socket.disconnect")
 			}
 		},
-		Handler:  &LogHandler{routeMux, r.logger},
+		Handler:  &LogHandler{r.routerMux, r.logger},
 		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)}
 	errChan <- routeSrv.Serve(routeLn)
 }
