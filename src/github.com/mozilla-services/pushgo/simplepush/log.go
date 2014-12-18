@@ -13,13 +13,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mozilla-services/heka/client"
 	"github.com/mozilla-services/pushgo/id"
 )
 
@@ -60,17 +58,6 @@ const (
 
 type LogFields map[string]string
 
-func (l LogFields) Names() (names []string) {
-	names = make([]string, len(l))
-	i := 0
-	for name := range l {
-		names[i] = name
-		i++
-	}
-	sort.Strings(names)
-	return
-}
-
 type Logger interface {
 	HasConfigStruct
 	Log(level LogLevel, messageType, payload string, fields LogFields) error
@@ -83,6 +70,44 @@ var AvailableLoggers = make(AvailableExtensions)
 
 type SimpleLogger struct {
 	Logger
+}
+
+type LoggerConfig interface {
+	Open() (io.Writer, error)
+	GetName() string
+	GetEnvVersion() string
+}
+
+var logEmitters = map[string]func(*Application, LoggerConfig) (
+	LogEmitter, error){
+
+	"json": func(app *Application, conf LoggerConfig) (LogEmitter, error) {
+		w, err := conf.Open()
+		if err != nil {
+			return nil, err
+		}
+		hostname := app.Hostname()
+		loggerName := fmt.Sprintf("%s-%s", conf.GetName(), VERSION)
+		return NewJSONEmitter(w, conf.GetEnvVersion(),
+			hostname, loggerName), nil
+	},
+	"protobuf": func(app *Application, conf LoggerConfig) (LogEmitter, error) {
+		w, err := conf.Open()
+		if err != nil {
+			return nil, err
+		}
+		hostname := app.Hostname()
+		loggerName := fmt.Sprintf("%s-%s", conf.GetName(), VERSION)
+		return NewProtobufEmitter(w, conf.GetEnvVersion(),
+			hostname, loggerName), nil
+	},
+	"text": func(_ *Application, conf LoggerConfig) (LogEmitter, error) {
+		w, err := conf.Open()
+		if err != nil {
+			return nil, err
+		}
+		return NewTextEmitter(w), nil
+	},
 }
 
 // Error string helper that ignores nil errors
@@ -142,13 +167,6 @@ func (sl *SimpleLogger) Panic(mtype, msg string, fields LogFields) error {
 	return sl.Logger.Log(EMERGENCY, mtype, msg, fields)
 }
 
-// A NetworkLogger sends log messages to a remote Heka instance over TCP,
-// UDP, or a Unix domain socket.
-type NetworkLogger struct {
-	LogEmitter
-	filter LogLevel
-}
-
 type NetworkLoggerConfig struct {
 	Format     string
 	Proto      string
@@ -157,6 +175,38 @@ type NetworkLoggerConfig struct {
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Name       string `toml:"name" env:"name"`
 	Filter     int32
+}
+
+func (conf *NetworkLoggerConfig) Open() (io.Writer, error) {
+	if len(conf.Addr) == 0 {
+		return nil, fmt.Errorf("Missing remote host")
+	}
+	if conf.UseTLS {
+		conn, err := tls.Dial(conf.Proto, conf.Addr, nil)
+		if err != nil {
+			return nil, fmt.Errorf("Error dialing TLS host %q: %s",
+				conf.Addr, err)
+		}
+		return conn, nil
+	}
+	conn, err := net.Dial(conf.Proto, conf.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("Error dialing host %q: %s", conf.Addr, err)
+	}
+	return conn, nil
+}
+
+func (conf *NetworkLoggerConfig) GetName() string { return conf.Name }
+
+func (conf *NetworkLoggerConfig) GetEnvVersion() string {
+	return conf.EnvVersion
+}
+
+// A NetworkLogger sends log messages to a remote Heka instance over TCP,
+// UDP, or a Unix domain socket.
+type NetworkLogger struct {
+	LogEmitter
+	filter LogLevel
 }
 
 func (nl *NetworkLogger) ConfigStruct() interface{} {
@@ -171,44 +221,14 @@ func (nl *NetworkLogger) ConfigStruct() interface{} {
 
 func (nl *NetworkLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*NetworkLoggerConfig)
-	if len(conf.Addr) == 0 {
-		return fmt.Errorf("NetworkLogger: Missing remote address")
+	f, ok := logEmitters[conf.Format]
+	if !ok {
+		return fmt.Errorf("NetworkLogger: Unrecognized log format %q",
+			conf.Format)
 	}
-
-	switch conf.Format {
-	case "json", "protobuf":
-		var sender client.Sender
-		if conf.UseTLS {
-			sender, err = client.NewTlsSender(conf.Proto, conf.Addr, nil)
-		} else {
-			sender, err = client.NewNetworkSender(conf.Proto, conf.Addr)
-		}
-		if err != nil {
-			return err
-		}
-		hostname := app.Hostname()
-		if conf.Format == "json" {
-			nl.LogEmitter = NewJSONEmitter(sender, conf.EnvVersion, hostname, conf.Name)
-		} else {
-			nl.LogEmitter = NewProtobufEmitter(sender, conf.EnvVersion, hostname, conf.Name)
-		}
-
-	case "text":
-		var conn net.Conn
-		if conf.UseTLS {
-			conn, err = tls.Dial(conf.Proto, conf.Addr, nil)
-		} else {
-			conn, err = net.Dial(conf.Proto, conf.Addr)
-		}
-		if err != nil {
-			return err
-		}
-		nl.LogEmitter = NewTextEmitter(conn)
-
-	default:
-		return fmt.Errorf("NetworkLogger: Unrecognized log format '%s'", conf.Format)
+	if nl.LogEmitter, err = f(app, conf); err != nil {
+		return fmt.Errorf("NetworkLogger: %s", err)
 	}
-
 	nl.filter = LogLevel(conf.Filter)
 	return nil
 }
@@ -228,18 +248,37 @@ func (nl *NetworkLogger) Log(level LogLevel, messageType, payload string, fields
 	return nl.Emit(level, messageType, payload, fields)
 }
 
-// A FileLogger writes log messages to a file.
-type FileLogger struct {
-	LogEmitter
-	filter LogLevel
-}
-
 type FileLoggerConfig struct {
 	Format     string
 	Path       string
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Name       string `toml:"name" env:"name"`
 	Filter     int32
+}
+
+func (conf *FileLoggerConfig) Open() (io.Writer, error) {
+	if len(conf.Path) == 0 {
+		return nil, fmt.Errorf("Missing log file path")
+	}
+	logFile, err := os.OpenFile(conf.Path,
+		os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("Error opening log file %q: %s",
+			conf.Path, err)
+	}
+	return logFile, nil
+}
+
+func (conf *FileLoggerConfig) GetName() string { return conf.Name }
+
+func (conf *FileLoggerConfig) GetEnvVersion() string {
+	return conf.EnvVersion
+}
+
+// A FileLogger writes log messages to a file.
+type FileLogger struct {
+	LogEmitter
+	filter LogLevel
 }
 
 func (fl *FileLogger) ConfigStruct() interface{} {
@@ -253,31 +292,14 @@ func (fl *FileLogger) ConfigStruct() interface{} {
 
 func (fl *FileLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*FileLoggerConfig)
-	if len(conf.Path) == 0 {
-		return fmt.Errorf("FileLogger: Missing log file path")
+	f, ok := logEmitters[conf.Format]
+	if !ok {
+		return fmt.Errorf("FileLogger: Unrecognized log format %q",
+			conf.Format)
 	}
-	logFile, err := os.OpenFile(conf.Path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		return err
+	if fl.LogEmitter, err = f(app, conf); err != nil {
+		return fmt.Errorf("FileLogger: %s", err)
 	}
-
-	switch conf.Format {
-	case "json":
-		fl.LogEmitter = NewJSONEmitter(&HekaSender{logFile}, conf.EnvVersion,
-			app.Hostname(), conf.Name)
-
-	case "protobuf":
-		fl.LogEmitter = NewProtobufEmitter(&HekaSender{logFile}, conf.EnvVersion,
-			app.Hostname(), conf.Name)
-
-	case "text":
-		fl.LogEmitter = NewTextEmitter(logFile)
-
-	default:
-		logFile.Close()
-		return fmt.Errorf("FileLogger: Unsupported log format '%s'", conf.Format)
-	}
-
 	fl.filter = LogLevel(conf.Filter)
 	return nil
 }
@@ -297,17 +319,27 @@ func (fl *FileLogger) Log(level LogLevel, messageType, payload string, fields Lo
 	return fl.Emit(level, messageType, payload, fields)
 }
 
-// StdOutLogger writes log messages to standard output.
-type StdOutLogger struct {
-	LogEmitter
-	filter LogLevel
-}
-
 type StdOutLoggerConfig struct {
 	Format     string
 	EnvVersion string `toml:"env_version" env:"env_version"`
 	Filter     int32
 	Name       string `toml:"name" env:"name"`
+}
+
+func (*StdOutLoggerConfig) Open() (io.Writer, error) {
+	return writerOnly{os.Stdout}, nil
+}
+
+func (conf *StdOutLoggerConfig) GetName() string { return conf.Name }
+
+func (conf *StdOutLoggerConfig) GetEnvVersion() string {
+	return conf.EnvVersion
+}
+
+// StdOutLogger writes log messages to standard output.
+type StdOutLogger struct {
+	LogEmitter
+	filter LogLevel
 }
 
 func (ml *StdOutLogger) ConfigStruct() interface{} {
@@ -321,24 +353,14 @@ func (ml *StdOutLogger) ConfigStruct() interface{} {
 
 func (ml *StdOutLogger) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*StdOutLoggerConfig)
-
-	writer := writerOnly{os.Stdout}
-	switch conf.Format {
-	case "json":
-		ml.LogEmitter = NewJSONEmitter(&HekaSender{writer}, conf.EnvVersion,
-			app.Hostname(), conf.Name)
-
-	case "protobuf":
-		ml.LogEmitter = NewProtobufEmitter(&HekaSender{writer}, conf.EnvVersion,
-			app.Hostname(), conf.Name)
-
-	case "text":
-		ml.LogEmitter = NewTextEmitter(writer)
-
-	default:
-		return fmt.Errorf("StdOutLogger: Unsupported log format '%s'", conf.Format)
+	f, ok := logEmitters[conf.Format]
+	if !ok {
+		return fmt.Errorf("StdOutLogger: Unrecognized log format %q",
+			conf.Format)
 	}
-
+	if ml.LogEmitter, err = f(app, conf); err != nil {
+		return fmt.Errorf("StdOutLogger: %s", err)
+	}
 	ml.filter = LogLevel(conf.Filter)
 	return nil
 }

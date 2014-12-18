@@ -1,10 +1,14 @@
 SHELL = /bin/sh
+GO = go
+PROTOC = protoc
+CAPNPC = capnpc
+
 HERE = $(shell pwd)
 BIN = $(HERE)/bin
 GPM = $(HERE)/gpm
 DEPS = $(HERE)/.godeps
 GOPATH = $(DEPS):$(HERE)
-TOOLS = $(shell GOPATH=$(GOPATH) go tool)
+TOOLS = $(shell GOPATH=$(GOPATH) $(GO) tool)
 
 PLATFORM=$(shell uname)
 
@@ -36,9 +40,22 @@ $(BIN):
 $(DEPS):
 	@echo "Installing dependencies"
 	GOPATH=$(GOPATH) $(GPM) install
-	GOPATH=$(GOPATH) go get -u github.com/mattn/goveralls
+	GOPATH=$(GOPATH) $(GO) install github.com/gogo/protobuf/... \
+		github.com/rafrombrc/gomock/mockgen \
+		github.com/mattn/goveralls
 
 build: $(DEPS)
+
+gen: $(addprefix $(HERE)/src/github.com/mozilla-services/pushgo/simplepush/,\
+	log_message.pb.go routable.capnp.go)
+
+%.pb.go: %.proto
+	$(PROTOC) -I$(DEPS)/src/github.com/gogo/protobuf/gogoproto \
+		-I$(DEPS)/src/github.com/gogo/protobuf/protobuf \
+		-I$(dir $<) --gogo_out=$(dir $<) $<
+
+%.capnp.go: %.capnp
+	$(CAPNPC) -I$(dir $<) -ogo:$(dir $<) $<
 
 libmemcached-1.0.18:
 	wget -qO - https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz | tar xvz
@@ -59,22 +76,19 @@ memcached: libmemcached-1.0.18
 $(TARGET):
 	rm -f $(TARGET)
 	@echo "Building simplepush"
-	GOPATH=$(GOPATH) go build \
-		-ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
+	GOPATH=$(GOPATH) $(GO) build \
+		-ldflags "$(GOLDFLAGS)" -o $(TARGET) $(PACKAGE)
 
-$(HERE)/mockgen:
-	GOPATH=$(GOPATH) go build github.com/rafrombrc/gomock/mockgen
-
-test-mocks: $(HERE)/mockgen
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/config.go \
+test-mocks: $(DEPS)
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/config.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_config_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/worker.go \
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/worker.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_worker_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/storage.go \
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/storage.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_store_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/locator.go \
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/locator.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
 	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/balancer.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_balancer_test.go -package="simplepush"
@@ -82,25 +96,25 @@ test-mocks: $(HERE)/mockgen
 	# copied into log.go while this is run, then the mocked config struct needs to be
 	# removed from the mock_log_test.go file.
 	# Issue: https://code.google.com/p/gomock/issues/detail?id=16
-	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/log.go \
+	#mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/log.go \
 	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_log_test.go -package="simplepush"
-	#./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
+	#mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
 	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_router_test.go -package="simplepush"
 
 test-gomc:
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) $(GO) test \
 		-tags "memcached_server_test libmemcached" \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test-gomemcache:
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) $(GO) test \
 		-tags memcached_server_test \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 check-cov:
 ifneq (cover,$(filter cover,$(TOOLS)))
 	@echo "Go tool 'Cover' not installed."
-	go tool cover
+	$(GO) tool cover
 	false
 endif
 
@@ -112,17 +126,17 @@ cov-dir: clean-cov
 	mkdir -p $(COVER_PATH)
 
 retry-cov: check-cov cov-dir
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) $(GO) test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/retry.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/retry
 
 id-cov: check-cov cov-dir
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) $(GO) test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/id.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/id
 
 simplepush-cov: check-cov cov-dir
-	GOPATH=$(GOPATH) go test \
+	GOPATH=$(GOPATH) $(GO) test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
 
@@ -133,7 +147,7 @@ test-cov: retry-cov id-cov simplepush-cov
 	grep -h -v "^mode:" $(COVER_PATH)/*.out >> coverage.out
 
 html-cov: test-cov
-	GOPATH=$(GOPATH) go tool cover \
+	GOPATH=$(GOPATH) $(GO) tool cover \
 		-html=coverage.out -o coverage.html
 
 travis-cov: test-cov
@@ -141,15 +155,15 @@ travis-cov: test-cov
 		-service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
 test:
-	GOPATH=$(GOPATH) go test -v \
+	GOPATH=$(GOPATH) $(GO) test -v \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 bench:
-	GOPATH=$(GOPATH) go test -v -bench=Router -benchmem -benchtime=5s \
+	GOPATH=$(GOPATH) $(GO) test -v -bench=Router -benchmem -benchtime=5s \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:
-	GOPATH=$(GOPATH) go vet $(addprefix $(PACKAGE)/,client id retry simplepush)
+	GOPATH=$(GOPATH) $(GO) vet $(addprefix $(PACKAGE)/,client id retry simplepush)
 
 clean: clean-cov
 	rm -rf bin $(DEPS)
