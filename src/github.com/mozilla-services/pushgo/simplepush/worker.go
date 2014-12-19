@@ -37,6 +37,7 @@ type WorkerWS struct {
 	pingInt      time.Duration
 	metrics      Statistician
 	helloTimeout time.Duration
+	pongInterval time.Duration
 }
 
 type WorkerState int
@@ -111,6 +112,7 @@ func NewWorker(app *Application, id string) *WorkerWS {
 		stopped:      false,
 		pingInt:      app.clientMinPing,
 		helloTimeout: app.clientHelloTimeout,
+		pongInterval: app.clientPongInterval,
 	}
 }
 
@@ -226,6 +228,15 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 	}
 }
 
+func (self *WorkerWS) pinger(sock *PushWS) {
+	for _ = range time.Tick(self.pongInterval) {
+		if self.stopped {
+			return
+		}
+		websocket.Message.Send(sock.Socket, "{}")
+	}
+}
+
 // standardize the error reporting back to the client.
 func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret error) {
 	reply := make(map[string]interface{})
@@ -264,6 +275,9 @@ func (self *WorkerWS) Run(sock *PushWS) {
 		return
 	}(sock)
 
+	if self.pongInterval > 0 {
+		go self.pinger(sock)
+	}
 	self.sniffer(sock)
 	sock.Socket.Close()
 

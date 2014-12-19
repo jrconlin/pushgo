@@ -26,6 +26,8 @@ Features
   hello. The client will get a 307 if a peer is available, and a 429 if the
   entire cluster is full. This add's a new [balancer] section to the config
   file per the config.sample.toml. PR #144.
+- Added client "pong" function. This generates a server side protocol ping to
+  attempt to hold the socket open to the device.
 
 Bug Fixes
 ---------

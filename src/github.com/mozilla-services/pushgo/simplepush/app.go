@@ -33,6 +33,7 @@ type ApplicationConfig struct {
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
+	ClientPongInterval string `toml:"client_pong_interval" env:"client_pong_interval"`
 }
 
 type Application struct {
@@ -41,6 +42,7 @@ type Application struct {
 	port               int
 	clientMinPing      time.Duration
 	clientHelloTimeout time.Duration
+	clientPongInterval time.Duration
 	pushLongPongs      bool
 	tokenKey           []byte
 	log                *SimpleLogger
@@ -64,6 +66,7 @@ func (a *Application) ConfigStruct() interface{} {
 		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
+		ClientPongInterval: "5m",
 	}
 }
 
@@ -96,6 +99,10 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
 		return fmt.Errorf("Unable to parse 'client_min_ping_interval': %s",
+			err.Error())
+	}
+	if a.clientPongInterval, err = time.ParseDuration(conf.ClientPongInterval); err != nil {
+		return fmt.Errorf("Unable to parse 'client_pong_interval': %s",
 			err.Error())
 	}
 	if a.clientHelloTimeout, err = time.ParseDuration(conf.ClientHelloTimeout); err != nil {
