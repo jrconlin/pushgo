@@ -10,7 +10,7 @@ Features
 
 - Added support for "data". Data is not stored for offline devices
   (mostly for privacy reasons). Connected devices will get up to system
-  configurable bytes (defaults to 1024) of data included in the update
+  configurable bytes (defaults to 4096) of data included in the update
   message. PR #135
 - New config option for how many idle connections per host (for the router)
   are allowed:

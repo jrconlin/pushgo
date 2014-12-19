@@ -187,7 +187,7 @@ type = "none"
 # size that works best for you.)
 #bucket_size = 10
 # Maximum allowed data segment (in bytes)
-#max_data_len = 1024
+#max_data_len = 4096
 # Number of idle connections to maintain per host.
 #idle_conns = 50
 
@@ -232,7 +232,7 @@ type = "static"
 
 [handlers]
 # Maximum allowed data segment (in bytes)
-#max_data_len = 1024
+#max_data_len = 4096
 # A list of allowed WebSocket origins. An empty list allows all origins;
 # otherwise, the scheme, hostname, and port specified in the client's
 # `Origin` header must match at least one allowed origin.
