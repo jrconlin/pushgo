@@ -11,37 +11,29 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/mozilla-services/pushgo/client"
 )
 
-func newTestHandler(t *testing.T) (*Handler, *Application) {
+func newTestHandler(t *testing.T) *Application {
 
 	tlogger, _ := NewLogger(&TestLogger{DEBUG, t})
 
 	mx := &TestMetrics{}
 	mx.Init(nil, nil)
 	store := &NoStore{logger: tlogger, maxChannels: 10}
-	count := int32(0)
 	pping := &NoopPing{}
-	app := &Application{
-		hostname:           "test",
-		host:               "test",
-		clientMinPing:      10 * time.Second,
-		clientHelloTimeout: 10 * time.Second,
-		clientMux:          new(sync.RWMutex),
-		pushLongPongs:      true,
-		tokenKey:           []byte(""),
-		metrics:            mx,
-		clients:            make(map[string]*Client),
-		clientCount:        &count,
-		store:              store,
-		propping:           pping,
-	}
+	app := NewApplication()
+	app.hostname = "test"
+	app.host = "test"
+	app.clientMinPing = 10 * time.Second
+	app.clientHelloTimeout = 10 * time.Second
+	app.pushLongPongs = true
+	app.metrics = mx
+	app.store = store
+	app.propping = pping
 	app.SetLogger(tlogger)
 	server := &Serv{}
 	server.Init(app, server.ConfigStruct())
@@ -52,17 +44,13 @@ func newTestHandler(t *testing.T) (*Handler, *Application) {
 	router.SetLocator(locator)
 	app.SetRouter(router)
 
-	handler := &Handler{
-		app:        app,
-		logger:     tlogger,
-		store:      store,
-		router:     router,
-		metrics:    mx,
-		tokenKey:   app.TokenKey(),
-		maxDataLen: 140,
-		propping:   pping,
-	}
-	return handler, app
+	eh := NewEndpointHandlers()
+	ehConfig := eh.ConfigStruct()
+	ehConfig.(*EndpointHandlersConfig).MaxDataLen = 140
+	eh.Init(app, ehConfig)
+	app.SetEndpointHandlers(eh)
+
+	return app
 }
 
 func Test_UpdateHandler(t *testing.T) {
@@ -71,7 +59,7 @@ func Test_UpdateHandler(t *testing.T) {
 	chid := "decafbad000000000000000000000000"
 	data := "This is a test of the emergency broadcasting system."
 
-	handler, app := newTestHandler(t)
+	app := newTestHandler(t)
 	noPush := &PushWS{
 		Socket: nil,
 		Born:   time.Now(),
@@ -101,10 +89,9 @@ func Test_UpdateHandler(t *testing.T) {
 	req.Form = make(url.Values)
 	req.Form.Add("version", "1")
 	req.Form.Add("data", data)
-	tmux := mux.NewRouter()
 
 	// Yay! Actually try the test!
-	tmux.HandleFunc("/update/{key}", handler.UpdateHandler)
+	tmux := app.EndpointHandlers().ServeMux()
 	tmux.ServeHTTP(resp, req)
 	if resp.Body.String() != "{}" {
 		t.Error("Unexpected response from server")

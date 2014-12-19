@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -36,6 +35,13 @@ type ApplicationConfig struct {
 	AlwaysRoute        bool   `toml:"always_route" env:"always_route"`
 }
 
+func NewApplication() *Application {
+	return &Application{
+		clients:     make(map[string]*Client),
+		closeSignal: make(chan bool),
+	}
+}
+
 type Application struct {
 	hostname           string
 	host               string
@@ -47,14 +53,18 @@ type Application struct {
 	log                *SimpleLogger
 	metrics            Statistician
 	clients            map[string]*Client
-	clientMux          *sync.RWMutex
-	clientCount        *int32
+	clientMux          sync.RWMutex
+	clientCount        int32
 	server             *Serv
 	store              Store
 	router             Router
 	balancer           Balancer
-	handlers           *Handler
+	socketHandlers     *SocketHandlers
+	endpointHandlers   *EndpointHandlers
 	propping           PropPinger
+	closeWait          sync.WaitGroup
+	closeSignal        chan bool
+	stopped            int32 // Accessed atomically.
 	AlwaysRoute        bool
 }
 
@@ -106,10 +116,6 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 			err.Error())
 	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.clients = make(map[string]*Client)
-	a.clientMux = new(sync.RWMutex)
-	count := int32(0)
-	a.clientCount = &count
 	a.AlwaysRoute = conf.AlwaysRoute
 	return
 }
@@ -150,8 +156,13 @@ func (a *Application) SetServer(server *Serv) error {
 	return nil
 }
 
-func (a *Application) SetHandlers(handlers *Handler) error {
-	a.handlers = handlers
+func (a *Application) SetSocketHandlers(handlers *SocketHandlers) error {
+	a.socketHandlers = handlers
+	return nil
+}
+
+func (a *Application) SetEndpointHandlers(handlers *EndpointHandlers) error {
+	a.endpointHandlers = handlers
 	return nil
 }
 
@@ -159,7 +170,8 @@ func (a *Application) SetHandlers(handlers *Handler) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error)
 
-	go a.handlers.Start(errChan)
+	go a.socketHandlers.Start(errChan)
+	go a.endpointHandlers.Start(errChan)
 	go a.router.Start(errChan)
 
 	return errChan
@@ -198,8 +210,12 @@ func (a *Application) Server() *Serv {
 	return a.server
 }
 
-func (a *Application) Handlers() *Handler {
-	return a.handlers
+func (a *Application) SocketHandlers() *SocketHandlers {
+	return a.socketHandlers
+}
+
+func (a *Application) EndpointHandlers() *EndpointHandlers {
+	return a.endpointHandlers
 }
 
 func (a *Application) TokenKey() []byte {
@@ -207,7 +223,7 @@ func (a *Application) TokenKey() []byte {
 }
 
 func (a *Application) ClientCount() (count int) {
-	return int(atomic.LoadInt32(a.clientCount))
+	return int(atomic.LoadInt32(&a.clientCount))
 }
 
 func (a *Application) ClientExists(uaid string) (collision bool) {
@@ -226,7 +242,7 @@ func (a *Application) AddClient(uaid string, client *Client) {
 	a.clientMux.Lock()
 	a.clients[uaid] = client
 	a.clientMux.Unlock()
-	atomic.AddInt32(a.clientCount, 1)
+	atomic.AddInt32(&a.clientCount, 1)
 }
 
 func (a *Application) RemoveClient(uaid string) {
@@ -237,18 +253,23 @@ func (a *Application) RemoveClient(uaid string) {
 	}
 	a.clientMux.Unlock()
 	if ok {
-		atomic.AddInt32(a.clientCount, -1)
+		atomic.AddInt32(&a.clientCount, -1)
 	}
 }
 
 func (a *Application) Stop() {
+	if !atomic.CompareAndSwapInt32(&a.stopped, 0, 1) {
+		return
+	}
+	close(a.closeSignal)
+	a.closeWait.Wait()
 	plugins := []io.Closer{
-		a.server,   // Stop the WebSocket and update listeners.
-		a.handlers, // Disconnect existing clients.
-		a.balancer, // Deregister from the balancer.
-		a.router,   // Stop the routing listener and locator.
-		a.store,    // Close database connections.
-		a.log,      // Shut down the logger.
+		a.socketHandlers,   // Disconnect all clients.
+		a.endpointHandlers, // Stop accepting updates.
+		a.balancer,         // Deregister from the balancer.
+		a.router,           // Stop the routing listener and locator.
+		a.store,            // Close database connections.
+		a.log,              // Shut down the logger.
 	}
 	for _, c := range plugins {
 		if c != nil {
@@ -257,6 +278,15 @@ func (a *Application) Stop() {
 	}
 }
 
-func isSameOrigin(a, b *url.URL) bool {
-	return a.Scheme == b.Scheme && a.Host == b.Host
+func (a *Application) sendClientCount() {
+	defer a.closeWait.Done()
+	ticker := time.NewTicker(1 * time.Second)
+	for ok := true; ok; {
+		select {
+		case ok = <-a.closeSignal:
+		case <-ticker.C:
+			a.Metrics().Gauge("update.client.connections", int64(a.ClientCount()))
+		}
+	}
+	ticker.Stop()
 }
