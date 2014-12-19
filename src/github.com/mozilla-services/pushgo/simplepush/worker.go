@@ -19,6 +19,12 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
+// A set of error strings that aren't too bad
+var HarmlessConnectionErrors = []string{
+	"connection timed out",
+	"TLS handshake error",
+}
+
 //    -- Workers
 //      these write back to the websocket.
 
@@ -127,8 +133,9 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 	for {
 		buf.Reset()
 		var (
-			raw []byte
-			err error
+			raw    []byte
+			err    error
+			conErr string
 		)
 
 		// Were we told to shut down?
@@ -137,9 +144,22 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		}
 		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
 			self.stopped = true
-			if err != io.EOF && self.logger.ShouldLog(ERROR) {
-				self.logger.Error("worker", "Websocket Error",
-					LogFields{"rid": self.id, "error": ErrStr(err)})
+			if err != io.EOF {
+				if self.logger.ShouldLog(ERROR) {
+					errMsg := err.Error()
+					// Check that the errMsg isn't harmless
+					harmless := false
+					for _, conErr = range HarmlessConnectionErrors {
+						if strings.Contains(errMsg, conErr) {
+							harmless = true
+							break
+						}
+					}
+					if !harmless {
+						self.logger.Error("worker", "Websocket Error",
+							LogFields{"rid": self.id, "error": ErrStr(err)})
+					}
+				}
 			}
 			continue
 		}

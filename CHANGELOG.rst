@@ -30,6 +30,9 @@ Features
 Bug Fixes
 ---------
 
+- Don't log 'connection timed out' or 'TLS handshake error' websocket
+  disconnects as ERROR. Instead they will be skipped as they occur in a normal
+  situation and don't reflect an error in the server. Issue #68.
 - Fix for persistent connection handling in the router. Previously the router
   was failing to properly re-use TCP connections. PR #153.
 - Removed duplicate UAID check. Fast reconnects previously could've been
