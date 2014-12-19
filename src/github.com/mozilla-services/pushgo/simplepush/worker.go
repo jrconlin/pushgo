@@ -120,6 +120,19 @@ func NewWorker(app *Application, id string) *WorkerWS {
 	}
 }
 
+// Indicates whether a connection error is harmless
+func harmlessConnectionError(err error) (harmless bool) {
+	harmless = false
+	errStr := err.Error()
+	for _, connError := range HarmlessConnectionErrors {
+		if strings.Contains(errStr, connError) {
+			harmless = true
+			return
+		}
+	}
+	return
+}
+
 func (self *WorkerWS) sniffer(sock *PushWS) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
@@ -133,9 +146,8 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 	for {
 		buf.Reset()
 		var (
-			raw    []byte
-			err    error
-			conErr string
+			raw []byte
+			err error
 		)
 
 		// Were we told to shut down?
@@ -145,20 +157,9 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
 			self.stopped = true
 			if err != io.EOF {
-				if self.logger.ShouldLog(ERROR) {
-					errMsg := err.Error()
-					// Check that the errMsg isn't harmless
-					harmless := false
-					for _, conErr = range HarmlessConnectionErrors {
-						if strings.Contains(errMsg, conErr) {
-							harmless = true
-							break
-						}
-					}
-					if !harmless {
-						self.logger.Error("worker", "Websocket Error",
-							LogFields{"rid": self.id, "error": ErrStr(err)})
-					}
+				if self.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {
+					self.logger.Error("worker", "Websocket Error",
+						LogFields{"rid": self.id, "error": ErrStr(err)})
 				}
 			}
 			continue
