@@ -97,7 +97,7 @@ func (*BroadcastRouter) ConfigStruct() interface{} {
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
 		},
-		MaxDataLen: 1024,
+		MaxDataLen: 4096,
 	}
 }
 
