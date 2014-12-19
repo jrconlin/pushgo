@@ -298,6 +298,10 @@ func (r *BroadcastRouter) Unregister(uaid string) error {
 }
 
 func (r *BroadcastRouter) Status() (bool, error) {
+	locator := r.Locator()
+	if locator != nil {
+		return locator.Status()
+	}
 	return true, nil
 }
 
