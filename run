@@ -1,7 +1,0 @@
-#! /bin/bash
-if [ ! -e config.ini ]; then
-    echo "Copying sample ini to config.ini"
-    cp config.sample.ini config.ini
-fi
-GOPATH=`pwd` go build simplepush.go
-GOPATH=`pwd` ./simplepush $*

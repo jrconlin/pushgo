@@ -15,7 +15,7 @@ will need project creation privileges.)
 1.a If you don't already have a project, create a new one. (Note, this
 may become a billable expense.)
 
-1.a.1 Store the unique project id in the "config.ini" as
+1.a.1 Store the unique project id in the "config.toml" as
 gcm.project_id
 
 1.b For the project, click on the "APIs & Auth" section
@@ -29,7 +29,7 @@ activate it
 SimplePush server (this limits who can send GCM requests)
 
 1.d.2 Note the API Key that's generated. Store that value in the
-"config.ini" as gcm.api_key
+"config.toml" as gcm.api_key
 
 1.e You may wish to also set gcm.dry_run if you don't wish GCM to send
 out notifications to devices.
