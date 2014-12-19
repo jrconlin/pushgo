@@ -18,8 +18,6 @@ var configSource = `
 [default]
 current_host = "push.services.mozilla.com"
 use_aws_host = true
-origins = ["https://push.services.mozilla.com",
-           "https://loop.services.mozilla.com"]
 
     [default.websocket]
     addr = ":8080"
@@ -50,6 +48,8 @@ bucket_size = 15
 [discovery]
 
 [handlers]
+origins = ["https://push.services.mozilla.com",
+           "https://loop.services.mozilla.com"]
 max_data_len = 256
 
 [balancer]
@@ -59,7 +59,7 @@ type = "static"
 var env = envconf.New([]string{
 	"PUSHGO_DEFAULT_CURRENT_HOST=push.services.mozilla.com",
 	"pushgo_default_use_aws=0",
-	"PushGo_Default_Origins=https://push.services.mozilla.com",
+	"PushGo_Handlers_Origins=https://push.services.mozilla.com",
 	"PUSHGO_DEFAULT_WS_ADDR=",
 	"PUSHGO_DEFAULT_WS_MAX_CONNS=25000",
 	"pushgo_default_endpoint_addr=",
@@ -92,8 +92,8 @@ func TestConfigFile(t *testing.T) {
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
-	if !reflect.DeepEqual(origins, app.origins) {
-		t.Errorf("Mismatched origins: got %#v; want %#v", app.origins, origins)
+	if !reflect.DeepEqual(origins, app.handlers.origins) {
+		t.Errorf("Mismatched origins: got %#v; want %#v", app.handlers.origins, origins)
 	}
 	logger := app.Logger()
 	if stdOutLogger, ok := logger.Logger.(*StdOutLogger); ok {
