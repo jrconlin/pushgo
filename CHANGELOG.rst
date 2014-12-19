@@ -23,7 +23,7 @@ Features
     always_route
 - Weighted Load balancing via redirect using etcd. pushgo can now store client
   counts in etcd and utilize counts to do a weighted redirect during a client's
-  hello. The client will get a 302 if a peer is available, and a 429 if the
+  hello. The client will get a 307 if a peer is available, and a 429 if the
   entire cluster is full. This add's a new [balancer] section to the config
   file per the config.sample.toml. PR #144.
 
