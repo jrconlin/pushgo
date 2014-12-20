@@ -6,6 +6,7 @@ package id
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -21,11 +22,13 @@ var (
 
 var validTests = map[string]bool{
 	encodedId:                              true,
+	strings.ToUpper(encodedId):             true,
 	hyphenatedId:                           true,
 	encodedShortId:                         false,
 	encodedLongId:                          false,
 	"--e281b9498a924443b0c85465ba439a76--": false,
 	"e281b9498a92-4443-b0c85465ba439a76":   false,
+	"q281b949-8a92-4443-b0c8-5465ba439a76": false,
 }
 
 func BenchmarkGenerateBytes(b *testing.B) {
@@ -70,6 +73,17 @@ func TestValid(t *testing.T) {
 	}
 }
 
+func TestEncode(t *testing.T) {
+	ret, err := Encode(decodedId)
+	if ret != hyphenatedId {
+		t.Error("Error encoding ID.")
+	}
+	_, err = Encode(decodedId[:15])
+	if err != ErrInvalid {
+		t.Error("Incorrect error returned for encode ID.")
+	}
+}
+
 func TestDecode(t *testing.T) {
 	idBytes := make([]byte, 16)
 	if err := Decode(encodedId, idBytes); err != nil {
@@ -90,5 +104,12 @@ func TestGenerate(t *testing.T) {
 	}
 	if !Valid(id) {
 		t.Errorf("Generate() returned invalid ID: %q", id)
+	}
+}
+
+func TestMustGenerate(t *testing.T) {
+	results := MustGenerate(3)
+	if len(results) != 3 {
+		t.Errorf("MustGenerate failed to return requested number of ids")
 	}
 }

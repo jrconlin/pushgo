@@ -20,8 +20,7 @@ import (
 
 // NewGomemc creates an unconfigured memcached adapter.
 func NewGomemc() *GomemcStore {
-	s := &GomemcStore{}
-	return s
+	return &GomemcStore{}
 }
 
 // GomemcDriverConf specifies memcached driver options.
