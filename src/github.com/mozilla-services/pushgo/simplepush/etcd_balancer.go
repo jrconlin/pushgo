@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
@@ -61,6 +62,11 @@ type EtcdBalancerConf struct {
 	// Defaults to "10s".
 	UpdateInterval string `toml:"update_interval" env:"update_interval"`
 
+	// CloseDelay is the amount of time to wait after closing the balancer and
+	// removing the host from etcd. This should be 1-2 times the update interval
+	// to allow the change to propagate to all peers.
+	CloseDelay string `toml:"close_delay" env:"close_delay"`
+
 	// Retry specifies request retry options.
 	Retry retry.Config
 }
@@ -87,12 +93,11 @@ type EtcdBalancer struct {
 	metrics        Statistician
 	updateInterval time.Duration
 	ttl            time.Duration
-
-	closeLock sync.Mutex // Protects isClosed.
-	isClosed  bool
+	closeDelay     time.Duration
 
 	closeWait   sync.WaitGroup
 	closeSignal chan bool
+	closed      int32 // Accessed atomically.
 }
 
 // EtcdPeer contains peer information.
@@ -150,6 +155,7 @@ func (b *EtcdBalancer) ConfigStruct() interface{} {
 		TTL:            "1m",
 		Threshold:      0.95,
 		UpdateInterval: "10s",
+		CloseDelay:     "20s",
 		Retry: retry.Config{
 			Retries:   5,
 			Delay:     "200ms",
@@ -181,13 +187,18 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 	}
 
 	if b.updateInterval, err = time.ParseDuration(conf.UpdateInterval); err != nil {
-		b.log.Panic("balancer", "Error parsing 'updateInterval'", LogFields{
+		b.log.Panic("balancer", "Error parsing update interval", LogFields{
 			"error": err.Error(), "updateInterval": conf.UpdateInterval})
 		return err
 	}
 	if b.ttl, err = time.ParseDuration(conf.TTL); err != nil {
-		b.log.Panic("balancer", "Error parsing 'ttl'", LogFields{
+		b.log.Panic("balancer", "Error parsing TTL", LogFields{
 			"error": err.Error(), "ttl": conf.TTL})
+		return err
+	}
+	if b.closeDelay, err = time.ParseDuration(conf.CloseDelay); err != nil {
+		b.log.Panic("balancer", "Error parsing close delay", LogFields{
+			"error": err.Error(), "closeDelay": conf.TTL})
 		return err
 	}
 
@@ -218,6 +229,9 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 }
 
 func (b *EtcdBalancer) shouldRedirect() (currentConns int64, ok bool) {
+	if b.isClosed() {
+		return
+	}
 	currentConns = int64(b.connCount())
 	ok = float64(currentConns+1)/float64(b.maxConns) >= b.threshold
 	return
@@ -279,6 +293,9 @@ func (b *EtcdBalancer) publishCounts() {
 
 // Status determines whether etcd is available. Implements Balancer.Status().
 func (b *EtcdBalancer) Status() (ok bool, err error) {
+	if b.isClosed() {
+		return
+	}
 	if ok, err = IsEtcdHealthy(b.client); err != nil {
 		if b.log.ShouldLog(ERROR) {
 			b.log.Error("balancer", "Failed etcd health check",
@@ -291,21 +308,41 @@ func (b *EtcdBalancer) Status() (ok bool, err error) {
 // Close stops the balancer and closes the connection to etcd. Implements
 // Balancer.Close().
 func (b *EtcdBalancer) Close() (err error) {
-	b.closeLock.Lock()
-	isClosed := b.isClosed
-	if !isClosed {
-		b.isClosed = true
-	}
-	b.closeLock.Unlock()
-	if isClosed {
+	if !atomic.CompareAndSwapInt32(&b.closed, 0, 1) {
 		return nil
+	}
+	if b.log.ShouldLog(INFO) {
+		b.log.Info("balancer", "Closing etcd balancer",
+			LogFields{"key": b.key})
 	}
 	close(b.closeSignal)
 	b.closeWait.Wait()
-	if len(b.key) > 0 {
-		_, err = b.client.Delete(b.key, false)
+	if len(b.key) == 0 {
+		return nil
 	}
+	if _, err = b.client.Delete(b.key, false); err != nil {
+		if IsEtcdKeyNotExist(err) {
+			return nil
+		}
+		if b.log.ShouldLog(ERROR) {
+			b.log.Error("balancer", "Error removing key from etcd",
+				LogFields{"error": err.Error(), "key": b.key})
+		}
+	}
+	if b.closeDelay <= 0 {
+		return err
+	}
+	if b.log.ShouldLog(INFO) {
+		b.log.Info("balancer", "Waiting for etcd changes to propagate",
+			LogFields{"closeDelay": b.closeDelay.String()})
+	}
+	time.Sleep(b.closeDelay)
 	return err
+}
+
+// isClosed indicates whether the balancer is closed.
+func (b *EtcdBalancer) isClosed() bool {
+	return atomic.LoadInt32(&b.closed) == 1
 }
 
 // parseKey extracts the scheme and host from an etcd key in the form of

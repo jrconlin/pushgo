@@ -97,7 +97,7 @@ func (h *EndpointHandlers) ServeMux() *mux.Router  { return h.mux }
 func (h *EndpointHandlers) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Starting update server",
-			LogFields{"addr": h.listener.Addr().String()})
+			LogFields{"url": h.url})
 	}
 	endpointSrv := NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
@@ -330,7 +330,16 @@ sendUpdate:
 }
 
 func (h *EndpointHandlers) Close() (err error) {
-	err = h.listener.Close()
+	if h.logger.ShouldLog(INFO) {
+		h.logger.Info("handlers_endpoint", "Closing update listener",
+			LogFields{"url": h.url})
+	}
+	if err = h.listener.Close(); err != nil {
+		if h.logger.ShouldLog(ERROR) {
+			h.logger.Error("handlers_endpoint", "Error closing update listener",
+				LogFields{"error": err.Error(), "url": h.url})
+		}
+	}
 	return err
 }
 

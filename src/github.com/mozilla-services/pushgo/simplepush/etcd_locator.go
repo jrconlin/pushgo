@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
@@ -38,12 +39,16 @@ type EtcdLocatorConf struct {
 	Servers []string
 
 	// DefaultTTL is the maximum amount of time that registered contacts will be
-	// considered valid. Defaults to "24h".
+	// considered valid. Defaults to "1m".
 	DefaultTTL string `env:"ttl"`
 
 	// RefreshInterval is the maximum amount of time that a cached contact list
-	// will be considered valid. Defaults to "5m".
+	// will be considered valid. Defaults to "10s".
 	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
+
+	// CloseDelay is the amount of time to wait after closing the locator and
+	// removing the host from etcd. This should be 1-2 times the refresh interval.
+	CloseDelay string `toml:"close_delay" env:"close_delay"`
 
 	// Retry specifies request retry options.
 	Retry retry.Config
@@ -55,6 +60,7 @@ type EtcdLocator struct {
 	metrics         Statistician
 	refreshInterval time.Duration
 	defaultTTL      time.Duration
+	closeDelay      time.Duration
 	rh              *retry.Helper
 	serverList      []string
 	dir             string
@@ -68,8 +74,7 @@ type EtcdLocator struct {
 	isClosing       bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
-	closeLock       sync.Mutex
-	lastErr         error
+	closed          int32 // Accessed atomically.
 }
 
 func NewEtcdLocator() *EtcdLocator {
@@ -82,8 +87,9 @@ func (*EtcdLocator) ConfigStruct() interface{} {
 	return &EtcdLocatorConf{
 		Dir:             "push_hosts",
 		Servers:         []string{"http://localhost:4001"},
-		DefaultTTL:      "24h",
-		RefreshInterval: "5m",
+		DefaultTTL:      "1m",
+		RefreshInterval: "10s",
+		CloseDelay:      "20s",
 		Retry: retry.Config{
 			Retries:   5,
 			Delay:     "200ms",
@@ -99,7 +105,7 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.metrics = app.Metrics()
 
 	if l.refreshInterval, err = time.ParseDuration(conf.RefreshInterval); err != nil {
-		l.logger.Panic("locator", "Could not parse refreshInterval",
+		l.logger.Panic("locator", "Could not parse refresh interval",
 			LogFields{"error": err.Error(),
 				"refreshInterval": conf.RefreshInterval})
 		return err
@@ -116,6 +122,12 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 			"default TTL too short",
 			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
+	}
+	if l.closeDelay, err = time.ParseDuration(conf.CloseDelay); err != nil {
+		l.logger.Panic("locator", "Could not parse close delay",
+			LogFields{"error": err.Error(),
+				"closeDelay": conf.CloseDelay})
+		return err
 	}
 
 	l.serverList = conf.Servers
@@ -203,24 +215,49 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
 // Close stops the locator and closes the etcd client connection. Implements
 // Locator.Close().
 func (l *EtcdLocator) Close() (err error) {
-	defer l.closeLock.Unlock()
-	l.closeLock.Lock()
-	if l.isClosing {
-		return l.lastErr
+	if !atomic.CompareAndSwapInt32(&l.closed, 0, 1) {
+		return nil
+	}
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("locator", "Closing etcd locator",
+			LogFields{"key": l.key})
 	}
 	close(l.closeSignal)
 	l.closeWait.Wait()
-	if l.key != "" {
-		_, err = l.client.Delete(l.key, false)
+	if l.key == "" {
+		return nil
 	}
-	l.isClosing = true
-	l.lastErr = err
+	if _, err = l.client.Delete(l.key, false); err != nil {
+		if IsEtcdKeyNotExist(err) {
+			return nil
+		}
+		if l.logger.ShouldLog(ERROR) {
+			l.logger.Error("locator", "Error deregistering from etcd",
+				LogFields{"error": err.Error(), "key": l.key})
+		}
+	}
+	if l.closeDelay <= 0 {
+		return err
+	}
+	if l.logger.ShouldLog(INFO) {
+		l.logger.Info("locator", "Waiting for etcd deregistration to propagate",
+			LogFields{"closeDelay": l.closeDelay.String()})
+	}
+	time.Sleep(l.closeDelay)
 	return err
+}
+
+// isClosed indicates whether the locator is closed.
+func (l *EtcdLocator) isClosed() bool {
+	return atomic.LoadInt32(&l.closed) == 1
 }
 
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
+	if l.isClosed() {
+		return
+	}
 	l.contactsLock.RLock()
 	contacts = make([]string, len(l.contacts))
 	copy(contacts, l.contacts)
@@ -234,6 +271,9 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 // Status determines whether etcd can respond to requests. Implements
 // Locator.Status().
 func (l *EtcdLocator) Status() (ok bool, err error) {
+	if l.isClosed() {
+		return
+	}
 	if ok, err = IsEtcdHealthy(l.client); err != nil {
 		if l.logger.ShouldLog(ERROR) {
 			l.logger.Error("locator", "Failed etcd health check",

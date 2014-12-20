@@ -43,12 +43,6 @@ type Router interface {
 	// Unregister a uaid for routing, this func may be called concurrently
 	Unregister(uaid string) error
 
-	// Set the Locator for the router to use
-	SetLocator(locator Locator) error
-
-	// Return the Locator that was set
-	Locator() Locator
-
 	// Unique identifier used by locator's for this node
 	URL() string
 

@@ -51,7 +51,7 @@ func (t *TestServer) Stop() {
 	}
 	t.isStopping = true
 	if t.app != nil {
-		t.app.Stop()
+		t.app.Close()
 	}
 }
 
@@ -59,7 +59,7 @@ func (t *TestServer) fatal(err error) {
 	defer t.Unlock()
 	t.Lock()
 	if !t.isStopping {
-		t.app.Stop()
+		t.app.Close()
 		t.isStopping = true
 	}
 	if t.lastErr == nil {

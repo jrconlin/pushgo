@@ -104,7 +104,7 @@ func (h *SocketHandlers) ServeMux() *mux.Router  { return h.mux }
 func (h *SocketHandlers) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Starting WebSocket server",
-			LogFields{"addr": h.listener.Addr().String()})
+			LogFields{"url": h.url})
 	}
 	clientSrv := NewServeCloser(&http.Server{
 		Handler: &LogHandler{h.mux, h.logger},
@@ -195,9 +195,19 @@ func (h *SocketHandlers) removeSocket(ws *websocket.Conn) {
 	delete(h.sockets, ws)
 }
 
-func (h *SocketHandlers) Close() error {
+func (h *SocketHandlers) Close() (err error) {
 	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
 		return nil
+	}
+	if h.logger.ShouldLog(INFO) {
+		h.logger.Info("handlers_socket", "Closing WebSocket listener",
+			LogFields{"url": h.url})
+	}
+	if err = h.listener.Close(); err != nil {
+		if h.logger.ShouldLog(ERROR) {
+			h.logger.Error("handlers", "Error closing WebSocket listener",
+				LogFields{"error": err.Error(), "url": h.url})
+		}
 	}
 	h.socketsLock.Lock()
 	defer h.socketsLock.Unlock()
@@ -206,7 +216,7 @@ func (h *SocketHandlers) Close() error {
 		ws.Close()
 		// TODO: Sleep between disconnects.
 	}
-	return nil
+	return err
 }
 
 func (h *SocketHandlers) hostPort() (host string, port int) {

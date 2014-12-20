@@ -66,7 +66,7 @@ func main() {
 	// Load the app from the config file
 	app, err := simplepush.LoadApplicationFromFileName(*configFile, *logging)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalf("Error loading application: %s", err)
 	}
 
 	// Report what the app believes the current host to be, and what version.
@@ -79,15 +79,19 @@ func main() {
 	// And we're underway!
 	errChan := app.Run()
 
+	exitCode := 0
 	select {
 	case err = <-errChan:
+		exitCode = 1
+		log.Printf("Run: %s", err)
+
 	case <-sigChan:
 		app.Logger().Info("main", "Recieved signal, shutting down.", nil)
 	}
-	app.Stop()
-	if err != nil {
-		panic("Run: " + err.Error())
+	if err = app.Close(); err != nil {
+		log.Fatalf("Error shutting down: %s", err)
 	}
+	os.Exit(exitCode)
 }
 
 // 04fs

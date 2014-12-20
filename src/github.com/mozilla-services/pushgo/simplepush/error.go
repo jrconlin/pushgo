@@ -2,7 +2,18 @@ package simplepush
 
 import (
 	"net/http"
+	"strings"
 )
+
+type MultipleError []error
+
+func (err MultipleError) Error() string {
+	messages := make([]string, len(err))
+	for i, e := range err {
+		messages[i] = e.Error()
+	}
+	return strings.Join(messages, ", ")
+}
 
 // ErrorCode represents a service error code. Error codes are used for logging,
 // and may be exposed to clients in the future.

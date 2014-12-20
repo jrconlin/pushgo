@@ -272,15 +272,6 @@ func (r *BroadcastRouter) dial(netw, addr string) (c net.Conn, err error) {
 	return c, nil
 }
 
-func (r *BroadcastRouter) SetLocator(locator Locator) error {
-	r.locator = locator
-	return nil
-}
-
-func (r *BroadcastRouter) Locator() Locator {
-	return r.locator
-}
-
 func (r *BroadcastRouter) Listener() net.Listener {
 	return r.listener
 }
@@ -298,7 +289,7 @@ func (r *BroadcastRouter) Unregister(uaid string) error {
 }
 
 func (r *BroadcastRouter) Status() (bool, error) {
-	locator := r.Locator()
+	locator := r.app.Locator()
 	if locator != nil {
 		return locator.Status()
 	}
@@ -314,7 +305,7 @@ func (r *BroadcastRouter) Close() (err error) {
 	}
 	r.isClosed = true
 	close(r.closeSignal)
-	if locator := r.Locator(); locator != nil {
+	if locator := r.app.Locator(); locator != nil {
 		r.lastErr = locator.Close()
 	}
 	if err := r.listener.Close(); err != nil {
@@ -328,7 +319,7 @@ func (r *BroadcastRouter) Close() (err error) {
 // Route routes an update packet to the correct server.
 func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string, data string) (err error) {
 	startTime := time.Now()
-	locator := r.Locator()
+	locator := r.app.Locator()
 	if locator == nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "No discovery service set; unable to route message",

@@ -190,7 +190,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 	locator := obj.(Locator)
-	if err = router.SetLocator(locator); err != nil {
+	if err = app.SetLocator(locator); err != nil {
 		return nil, err
 	}
 

@@ -46,7 +46,7 @@ func TestBroadcastRouter(t *testing.T) {
 	router.Init(app, conf)
 	app.SetRouter(router)
 
-	router.SetLocator(mckLocator)
+	app.SetLocator(mckLocator)
 
 	srv := new(Serv)
 	defSrvConfig := srv.ConfigStruct()
@@ -154,7 +154,7 @@ func BenchmarkRouter(b *testing.B) {
 	router.Init(app, conf)
 	app.SetRouter(router)
 
-	router.SetLocator(mckLocator)
+	app.SetLocator(mckLocator)
 
 	srv := new(Serv)
 	defSrvConfig := srv.ConfigStruct()
@@ -207,7 +207,7 @@ func TestBroadcastStaticLocator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error starting test application %q: %s", cServer.Name, err)
 	}
-	defer cApp.Stop()
+	defer cServer.Stop()
 	defer cConn.Close()
 	defer cConn.Purge()
 

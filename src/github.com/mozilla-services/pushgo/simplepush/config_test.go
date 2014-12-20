@@ -87,7 +87,7 @@ func TestConfigFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing app: %s", err)
 	}
-	defer app.Stop()
+	defer app.Close()
 	hostname := "push.services.mozilla.com"
 	if app.Hostname() != hostname {
 		t.Errorf("Mismatched hostname: got %#v; want %#v", app.Hostname(), hostname)
@@ -288,7 +288,7 @@ func TestLoad(t *testing.T) {
 	if err := isReady(mockHealth); err != nil {
 		t.Fatal(err)
 	}
-	defer app.Stop()
+	defer app.Close()
 	if app != appInst {
 		t.Errorf("Mismatched app instances: got %#v; want %#v", app, appInst)
 	}
