@@ -37,6 +37,7 @@ type SocketHandlers struct {
 	hostname    string
 	origins     []*url.URL
 	listener    net.Listener
+	server      *ServeCloser
 	mux         *mux.Router
 	url         string
 	maxConns    int
@@ -79,9 +80,6 @@ func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) 
 			LogFields{"error": err.Error()})
 		return err
 	}
-	h.mux = mux.NewRouter()
-	h.mux.Handle("/", websocket.Server{Handler: h.PushSocketHandler,
-		Handshake: h.checkOrigin})
 
 	var scheme string
 	if conf.Listener.UseTLS() {
@@ -93,6 +91,20 @@ func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) 
 	h.url = CanonicalURL(scheme, host, port)
 
 	h.maxConns = conf.Listener.MaxConns
+
+	h.mux = mux.NewRouter()
+	h.mux.Handle("/", websocket.Server{Handler: h.PushSocketHandler,
+		Handshake: h.checkOrigin})
+
+	h.server = NewServeCloser(&http.Server{
+		Handler: &LogHandler{h.mux, h.logger},
+		ErrorLog: log.New(&LogWriter{
+			Logger: h.logger.Logger,
+			Name:   "handlers_socket",
+			Level:  ERROR,
+		}, "", 0),
+	})
+
 	return nil
 }
 
@@ -106,15 +118,7 @@ func (h *SocketHandlers) Start(errChan chan<- error) {
 		h.logger.Info("handlers_socket", "Starting WebSocket server",
 			LogFields{"url": h.url})
 	}
-	clientSrv := NewServeCloser(&http.Server{
-		Handler: &LogHandler{h.mux, h.logger},
-		ErrorLog: log.New(&LogWriter{
-			Logger: h.logger.Logger,
-			Name:   "handlers_socket",
-			Level:  ERROR,
-		}, "", 0),
-	})
-	errChan <- clientSrv.Serve(h.listener)
+	errChan <- h.server.Serve(h.listener)
 }
 
 func (h *SocketHandlers) PushSocketHandler(ws *websocket.Conn) {
@@ -195,20 +199,7 @@ func (h *SocketHandlers) removeSocket(ws *websocket.Conn) {
 	delete(h.sockets, ws)
 }
 
-func (h *SocketHandlers) Close() (err error) {
-	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
-		return nil
-	}
-	if h.logger.ShouldLog(INFO) {
-		h.logger.Info("handlers_socket", "Closing WebSocket listener",
-			LogFields{"url": h.url})
-	}
-	if err = h.listener.Close(); err != nil {
-		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers", "Error closing WebSocket listener",
-				LogFields{"error": err.Error(), "url": h.url})
-		}
-	}
+func (h *SocketHandlers) closeSockets() {
 	h.socketsLock.Lock()
 	defer h.socketsLock.Unlock()
 	for ws := range h.sockets {
@@ -216,7 +207,36 @@ func (h *SocketHandlers) Close() (err error) {
 		ws.Close()
 		// TODO: Sleep between disconnects.
 	}
-	return err
+}
+
+func (h *SocketHandlers) Close() error {
+	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
+		return nil
+	}
+	if h.logger.ShouldLog(INFO) {
+		h.logger.Info("handlers_socket", "Closing WebSocket handler",
+			LogFields{"url": h.url})
+	}
+	var errors MultipleError
+	if err := h.listener.Close(); err != nil {
+		if h.logger.ShouldLog(ERROR) {
+			h.logger.Error("handlers", "Error closing WebSocket listener",
+				LogFields{"error": err.Error(), "url": h.url})
+		}
+		errors = append(errors, err)
+	}
+	h.closeSockets()
+	if err := h.server.Close(); err != nil {
+		if h.logger.ShouldLog(ERROR) {
+			h.logger.Error("handlers", "Error closing WebSocket server",
+				LogFields{"error": err.Error(), "url": h.url})
+		}
+		errors = append(errors, err)
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	return nil
 }
 
 func (h *SocketHandlers) hostPort() (host string, port int) {

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	capn "github.com/glycerine/go-capnproto"
@@ -64,6 +65,7 @@ type BroadcastRouter struct {
 	app         *Application
 	locator     Locator
 	listener    net.Listener
+	server      *ServeCloser
 	logger      *SimpleLogger
 	metrics     Statistician
 	ctimeout    time.Duration
@@ -74,10 +76,9 @@ type BroadcastRouter struct {
 	closeWait   sync.WaitGroup
 	isClosed    bool
 	closeSignal chan bool
-	closeLock   sync.Mutex
-	lastErr     error
 	maxDataLen  int
 	routerMux   *mux.Router
+	closed      int32 // Accessed atomically.
 }
 
 func NewBroadcastRouter() *BroadcastRouter {
@@ -157,17 +158,7 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	r.routerMux = mux.NewRouter()
 	r.routerMux.HandleFunc("/route/{uaid}", r.RouteHandler)
 
-	return nil
-}
-
-func (r *BroadcastRouter) Start(errChan chan<- error) {
-	routeLn := r.Listener()
-	if r.logger.ShouldLog(INFO) {
-		r.logger.Info("app", "Starting router",
-			LogFields{"addr": routeLn.Addr().String()})
-	}
-
-	routeSrv := NewServeCloser(&http.Server{
+	r.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				r.metrics.Increment("router.socket.connect")
@@ -177,7 +168,17 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 		},
 		Handler:  &LogHandler{r.routerMux, r.logger},
 		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)})
-	errChan <- routeSrv.Serve(routeLn)
+
+	return nil
+}
+
+func (r *BroadcastRouter) Start(errChan chan<- error) {
+	routeLn := r.Listener()
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("app", "Starting routing server",
+			LogFields{"url": r.url})
+	}
+	errChan <- r.server.Serve(routeLn)
 }
 
 func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Request) {
@@ -296,24 +297,44 @@ func (r *BroadcastRouter) Status() (bool, error) {
 	return true, nil
 }
 
-func (r *BroadcastRouter) Close() (err error) {
-	r.closeLock.Lock()
-	err = r.lastErr
-	if r.isClosed {
-		r.closeLock.Unlock()
-		return err
+func (r *BroadcastRouter) Close() error {
+	if !atomic.CompareAndSwapInt32(&r.closed, 0, 1) {
+		return nil
 	}
-	r.isClosed = true
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("router", "Closing router",
+			LogFields{"url": r.url})
+	}
 	close(r.closeSignal)
-	if locator := r.app.Locator(); locator != nil {
-		r.lastErr = locator.Close()
-	}
-	if err := r.listener.Close(); err != nil {
-		r.lastErr = err
-	}
-	r.closeLock.Unlock()
 	r.closeWait.Wait()
-	return err
+	var errors MultipleError
+	if err := r.listener.Close(); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Error closing routing listener",
+				LogFields{"error": err.Error(), "url": r.url})
+		}
+		errors = append(errors, err)
+	}
+	if err := r.server.Close(); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Error closing routing server",
+				LogFields{"error": err.Error(), "url": r.url})
+		}
+		errors = append(errors, err)
+	}
+	if locator := r.app.Locator(); locator != nil {
+		if err := locator.Close(); err != nil {
+			if r.logger.ShouldLog(ERROR) {
+				r.logger.Error("router", "Error closing locator",
+					LogFields{"error": err.Error(), "url": r.url})
+			}
+			errors = append(errors, err)
+		}
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	return nil
 }
 
 // Route routes an update packet to the correct server.

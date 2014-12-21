@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -36,10 +37,12 @@ type EndpointHandlers struct {
 	hostname   string
 	tokenKey   []byte
 	listener   net.Listener
+	server     *ServeCloser
 	mux        *mux.Router
 	url        string
 	maxConns   int
 	maxDataLen int
+	closed     int32 // Accessed atomically.
 }
 
 func (h *EndpointHandlers) ConfigStruct() interface{} {
@@ -72,8 +75,6 @@ func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error
 			LogFields{"error": err.Error()})
 		return err
 	}
-	h.mux = mux.NewRouter()
-	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
 
 	var scheme string
 	if conf.Listener.UseTLS() {
@@ -86,20 +87,11 @@ func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error
 
 	h.maxConns = conf.Listener.MaxConns
 	h.maxDataLen = conf.MaxDataLen
-	return nil
-}
 
-func (h *EndpointHandlers) Listener() net.Listener { return h.listener }
-func (h *EndpointHandlers) MaxConns() int          { return h.maxConns }
-func (h *EndpointHandlers) URL() string            { return h.url }
-func (h *EndpointHandlers) ServeMux() *mux.Router  { return h.mux }
+	h.mux = mux.NewRouter()
+	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
 
-func (h *EndpointHandlers) Start(errChan chan<- error) {
-	if h.logger.ShouldLog(INFO) {
-		h.logger.Info("handlers_endpoint", "Starting update server",
-			LogFields{"url": h.url})
-	}
-	endpointSrv := NewServeCloser(&http.Server{
+	h.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				h.metrics.Increment("endpoint.socket.connect")
@@ -114,7 +106,21 @@ func (h *EndpointHandlers) Start(errChan chan<- error) {
 			Level:  ERROR,
 		}, "", 0),
 	})
-	errChan <- endpointSrv.Serve(h.listener)
+
+	return nil
+}
+
+func (h *EndpointHandlers) Listener() net.Listener { return h.listener }
+func (h *EndpointHandlers) MaxConns() int          { return h.maxConns }
+func (h *EndpointHandlers) URL() string            { return h.url }
+func (h *EndpointHandlers) ServeMux() *mux.Router  { return h.mux }
+
+func (h *EndpointHandlers) Start(errChan chan<- error) {
+	if h.logger.ShouldLog(INFO) {
+		h.logger.Info("handlers_endpoint", "Starting update server",
+			LogFields{"url": h.url})
+	}
+	errChan <- h.server.Serve(h.listener)
 }
 
 // -- REST
@@ -329,18 +335,33 @@ sendUpdate:
 	return
 }
 
-func (h *EndpointHandlers) Close() (err error) {
+func (h *EndpointHandlers) Close() error {
+	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
+		return nil
+	}
 	if h.logger.ShouldLog(INFO) {
-		h.logger.Info("handlers_endpoint", "Closing update listener",
+		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})
 	}
-	if err = h.listener.Close(); err != nil {
+	var errors MultipleError
+	if err := h.listener.Close(); err != nil {
 		if h.logger.ShouldLog(ERROR) {
 			h.logger.Error("handlers_endpoint", "Error closing update listener",
 				LogFields{"error": err.Error(), "url": h.url})
 		}
+		errors = append(errors, err)
 	}
-	return err
+	if err := h.server.Close(); err != nil {
+		if h.logger.ShouldLog(ERROR) {
+			h.logger.Error("handlers_endpoint", "Error closing update server",
+				LogFields{"error": err.Error(), "url": h.url})
+		}
+		errors = append(errors, err)
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	return nil
 }
 
 func (h *EndpointHandlers) hostPort() (host string, port int) {
