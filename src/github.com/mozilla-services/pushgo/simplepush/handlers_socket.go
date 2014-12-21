@@ -34,7 +34,6 @@ type SocketHandlers struct {
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
-	hostname    string
 	origins     []*url.URL
 	listener    net.Listener
 	server      *ServeCloser
@@ -64,8 +63,6 @@ func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) 
 	h.metrics = app.Metrics()
 	h.store = app.Store()
 
-	h.hostname = app.Hostname()
-
 	if len(conf.Origins) > 0 {
 		h.origins = make([]*url.URL, len(conf.Origins))
 		for index, origin := range conf.Origins {
@@ -87,7 +84,7 @@ func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) 
 	} else {
 		scheme = "ws"
 	}
-	host, port := h.hostPort()
+	host, port := HostPort(h.listener, app)
 	h.url = CanonicalURL(scheme, host, port)
 
 	h.maxConns = conf.Listener.MaxConns
@@ -237,14 +234,6 @@ func (h *SocketHandlers) Close() error {
 		return errors
 	}
 	return nil
-}
-
-func (h *SocketHandlers) hostPort() (host string, port int) {
-	addr := h.listener.Addr().(*net.TCPAddr)
-	if host = h.hostname; len(host) == 0 {
-		host = addr.IP.String()
-	}
-	return host, addr.Port
 }
 
 func isSameOrigin(a, b *url.URL) bool {

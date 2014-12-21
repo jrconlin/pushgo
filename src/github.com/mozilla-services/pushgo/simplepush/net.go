@@ -23,6 +23,26 @@ var defaultPorts = map[string]int{
 	"ws":    80,
 }
 
+type Hostnamer interface {
+	Hostname() string
+}
+
+// HostPort returns the host and port on which ln is listening. If the default
+// hostname dh is empty, the IP of ln will be used instead.
+func HostPort(ln net.Listener, dh Hostnamer) (host string, port int) {
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if dh != nil {
+		host = dh.Hostname()
+	}
+	if ok && len(host) == 0 {
+		host = addr.IP.String()
+	}
+	if ok {
+		port = addr.Port
+	}
+	return
+}
+
 // CanonicalURL constructs a URL from the given scheme, host, and port,
 // excluding default port numbers.
 func CanonicalURL(scheme, host string, port int) string {

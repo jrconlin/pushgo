@@ -63,6 +63,7 @@ type BroadcastRouterConfig struct {
 // currently maintains a WebSocket connection to the target device.
 type BroadcastRouter struct {
 	app         *Application
+	hostname    string
 	locator     Locator
 	listener    net.Listener
 	server      *ServeCloser
@@ -123,6 +124,12 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 		return err
 	}
 
+	if len(conf.DefaultHost) > 0 {
+		r.hostname = conf.DefaultHost
+	} else {
+		r.hostname = app.Hostname()
+	}
+
 	if r.listener, err = conf.Listener.Listen(); err != nil {
 		r.logger.Panic("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
@@ -134,15 +141,8 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	} else {
 		scheme = "http"
 	}
-	host := conf.DefaultHost
-	if len(host) == 0 {
-		host = app.Hostname()
-	}
-	addr := r.listener.Addr().(*net.TCPAddr)
-	if len(host) == 0 {
-		host = addr.IP.String()
-	}
-	r.url = CanonicalURL(scheme, host, addr.Port)
+	host, port := HostPort(r.listener, r)
+	r.url = CanonicalURL(scheme, host, port)
 
 	r.bucketSize = conf.BucketSize
 
@@ -171,6 +171,8 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 
 	return nil
 }
+
+func (r *BroadcastRouter) Hostname() string { return r.hostname }
 
 func (r *BroadcastRouter) Start(errChan chan<- error) {
 	routeLn := r.Listener()

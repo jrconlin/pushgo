@@ -67,7 +67,6 @@ func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error
 	h.pinger = app.PropPinger()
 	h.balancer = app.Balancer()
 
-	h.hostname = app.Hostname()
 	h.tokenKey = app.TokenKey()
 
 	if h.listener, err = conf.Listener.Listen(); err != nil {
@@ -82,7 +81,7 @@ func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error
 	} else {
 		scheme = "http"
 	}
-	host, port := h.hostPort()
+	host, port := HostPort(h.listener, app)
 	h.url = CanonicalURL(scheme, host, port)
 
 	h.maxConns = conf.Listener.MaxConns
@@ -362,14 +361,6 @@ func (h *EndpointHandlers) Close() error {
 		return errors
 	}
 	return nil
-}
-
-func (h *EndpointHandlers) hostPort() (host string, port int) {
-	addr := h.listener.Addr().(*net.TCPAddr)
-	if host = h.hostname; len(host) == 0 {
-		host = addr.IP.String()
-	}
-	return host, addr.Port
 }
 
 func validPK(pk string) bool {
