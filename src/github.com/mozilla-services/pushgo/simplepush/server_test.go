@@ -166,8 +166,8 @@ func (t *TestServer) load() (*Application, error) {
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			sh := NewSocketHandlers()
-			shConf := sh.ConfigStruct().(*SocketHandlersConfig)
+			sh := NewSocketHandler()
+			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
 			shConf.Listener.Addr = t.ClientAddr
 			if err := sh.Init(app, shConf); err != nil {
 				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
@@ -175,8 +175,8 @@ func (t *TestServer) load() (*Application, error) {
 			return sh, nil
 		},
 		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
-			eh := NewEndpointHandlers()
-			ehConf := eh.ConfigStruct().(*EndpointHandlersConfig)
+			eh := NewEndpointHandler()
+			ehConf := eh.ConfigStruct().(*EndpointHandlerConfig)
 			ehConf.Listener.Addr = t.EndpointAddr
 			if err := eh.Init(app, ehConf); err != nil {
 				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
@@ -216,7 +216,7 @@ func (t *TestServer) Origin() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return app.SocketHandlers().URL(), nil
+	return app.SocketHandler().URL(), nil
 }
 
 func (t *TestServer) Dial(channelIds ...string) (

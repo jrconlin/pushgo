@@ -205,8 +205,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
 		return nil, err
 	}
-	socketHandlers := obj.(*SocketHandlers)
-	app.SetSocketHandlers(socketHandlers)
+	sh := obj.(*SocketHandler)
+	app.SetSocketHandler(sh)
 
 	// Set up the balancer.
 	// Deps: PluginLogger, PluginMetrics, PluginServer.
@@ -221,8 +221,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginEndpoint, app); err != nil {
 		return nil, err
 	}
-	endpointHandlers := obj.(*EndpointHandlers)
-	app.SetEndpointHandlers(endpointHandlers)
+	eh := obj.(*EndpointHandler)
+	app.SetEndpointHandler(eh)
 
 	// Loaded for side effects only.
 	if _, err = l.loadPlugin(PluginHealth, app); err != nil {
@@ -396,14 +396,14 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			h := NewSocketHandlers()
+			h := NewSocketHandler()
 			if err := LoadConfigForSection(app, "websocket", h, env, configFile); err != nil {
 				return nil, err
 			}
 			return h, nil
 		},
 		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
-			h := NewEndpointHandlers()
+			h := NewEndpointHandler()
 			if err := LoadConfigForSection(app, "endpoint", h, env, configFile); err != nil {
 				return nil, err
 			}

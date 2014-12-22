@@ -189,7 +189,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.app.EndpointHandlers().URL(), // TODO: Circular dependency.
+		self.app.EndpointHandler().URL(), // TODO: Circular dependency.
 	}); err != nil {
 		if self.logger.ShouldLog(ERROR) {
 			self.logger.Error("server",

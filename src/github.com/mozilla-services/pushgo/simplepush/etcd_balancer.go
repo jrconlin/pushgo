@@ -172,12 +172,12 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 	b.metrics = app.Metrics()
 
 	b.connCount = app.ClientCount
-	b.maxConns = app.SocketHandlers().MaxConns()
+	b.maxConns = app.SocketHandler().MaxConns()
 
 	b.threshold = conf.Threshold
 	b.dir = path.Clean(conf.Dir)
 
-	clientURL := app.SocketHandlers().URL()
+	clientURL := app.SocketHandler().URL()
 	if b.url, err = url.ParseRequestURI(clientURL); err != nil {
 		b.log.Panic("balancer", "Error parsing client endpoint", LogFields{
 			"error": err.Error(), "url": clientURL})

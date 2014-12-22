@@ -44,11 +44,11 @@ func newTestHandler(t *testing.T) *Application {
 	app.SetRouter(router)
 	app.SetLocator(locator)
 
-	eh := NewEndpointHandlers()
+	eh := NewEndpointHandler()
 	ehConfig := eh.ConfigStruct()
-	ehConfig.(*EndpointHandlersConfig).MaxDataLen = 140
+	ehConfig.(*EndpointHandlerConfig).MaxDataLen = 140
 	eh.Init(app, ehConfig)
-	app.SetEndpointHandlers(eh)
+	app.SetEndpointHandler(eh)
 
 	return app
 }
@@ -91,7 +91,7 @@ func Test_UpdateHandler(t *testing.T) {
 	req.Form.Add("data", data)
 
 	// Yay! Actually try the test!
-	tmux := app.EndpointHandlers().ServeMux()
+	tmux := app.EndpointHandler().ServeMux()
 	tmux.ServeHTTP(resp, req)
 	if resp.Body.String() != "{}" {
 		t.Error("Unexpected response from server")

@@ -258,7 +258,7 @@ func TestBroadcastStaticLocator(t *testing.T) {
 			}
 			return
 		}
-		uri.Host = app.EndpointHandlers().Listener().Addr().String()
+		uri.Host = app.EndpointHandler().Listener().Addr().String()
 		for i := 1; i <= count; i++ {
 			if err = client.Notify(uri.String(), int64(i)); err != nil {
 				break

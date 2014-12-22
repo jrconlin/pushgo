@@ -16,18 +16,18 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func NewEndpointHandlers() (h *EndpointHandlers) {
-	h = new(EndpointHandlers)
+func NewEndpointHandler() (h *EndpointHandler) {
+	h = new(EndpointHandler)
 	h.Closable.CloserOnce = h
 	return h
 }
 
-type EndpointHandlersConfig struct {
+type EndpointHandlerConfig struct {
 	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
 	Listener   ListenerConfig
 }
 
-type EndpointHandlers struct {
+type EndpointHandler struct {
 	Closable
 	app        *Application
 	logger     *SimpleLogger
@@ -46,8 +46,8 @@ type EndpointHandlers struct {
 	maxDataLen int
 }
 
-func (h *EndpointHandlers) ConfigStruct() interface{} {
-	return &EndpointHandlersConfig{
+func (h *EndpointHandler) ConfigStruct() interface{} {
+	return &EndpointHandlerConfig{
 		MaxDataLen: 4096,
 		Listener: ListenerConfig{
 			Addr:            ":8081",
@@ -57,8 +57,8 @@ func (h *EndpointHandlers) ConfigStruct() interface{} {
 	}
 }
 
-func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*EndpointHandlersConfig)
+func (h *EndpointHandler) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*EndpointHandlerConfig)
 
 	h.app = app
 	h.logger = app.Logger()
@@ -110,12 +110,12 @@ func (h *EndpointHandlers) Init(app *Application, config interface{}) (err error
 	return nil
 }
 
-func (h *EndpointHandlers) Listener() net.Listener { return h.listener }
-func (h *EndpointHandlers) MaxConns() int          { return h.maxConns }
-func (h *EndpointHandlers) URL() string            { return h.url }
-func (h *EndpointHandlers) ServeMux() *mux.Router  { return h.mux }
+func (h *EndpointHandler) Listener() net.Listener { return h.listener }
+func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
+func (h *EndpointHandler) URL() string            { return h.url }
+func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
 
-func (h *EndpointHandlers) Start(errChan chan<- error) {
+func (h *EndpointHandler) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Starting update server",
 			LogFields{"url": h.url})
@@ -124,7 +124,7 @@ func (h *EndpointHandlers) Start(errChan chan<- error) {
 }
 
 // -- REST
-func (h *EndpointHandlers) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
+func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	timer := time.Now()
 	requestID := req.Header.Get(HeaderID)
@@ -335,7 +335,7 @@ sendUpdate:
 	return
 }
 
-func (h *EndpointHandlers) CloseOnce() error {
+func (h *EndpointHandler) CloseOnce() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})

@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-type Handlers interface {
+type Handler interface {
 	HasConfigStruct
 	Listener() net.Listener
 	MaxConns() int

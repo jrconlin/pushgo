@@ -17,20 +17,20 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func NewSocketHandlers() (h *SocketHandlers) {
-	h = &SocketHandlers{
+func NewSocketHandler() (h *SocketHandler) {
+	h = &SocketHandler{
 		sockets: make(map[*websocket.Conn]bool),
 	}
 	h.Closable.CloserOnce = h
 	return h
 }
 
-type SocketHandlersConfig struct {
+type SocketHandlerConfig struct {
 	Origins  []string
 	Listener ListenerConfig
 }
 
-type SocketHandlers struct {
+type SocketHandler struct {
 	Closable
 	app         *Application
 	logger      *SimpleLogger
@@ -46,8 +46,8 @@ type SocketHandlers struct {
 	sockets     map[*websocket.Conn]bool
 }
 
-func (h *SocketHandlers) ConfigStruct() interface{} {
-	return &SocketHandlersConfig{
+func (h *SocketHandler) ConfigStruct() interface{} {
+	return &SocketHandlerConfig{
 		Listener: ListenerConfig{
 			Addr:            ":8080",
 			MaxConns:        1000,
@@ -56,8 +56,8 @@ func (h *SocketHandlers) ConfigStruct() interface{} {
 	}
 }
 
-func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) {
-	conf := config.(*SocketHandlersConfig)
+func (h *SocketHandler) Init(app *Application, config interface{}) (err error) {
+	conf := config.(*SocketHandlerConfig)
 
 	h.app = app
 	h.logger = app.Logger()
@@ -106,12 +106,12 @@ func (h *SocketHandlers) Init(app *Application, config interface{}) (err error) 
 	return nil
 }
 
-func (h *SocketHandlers) Listener() net.Listener { return h.listener }
-func (h *SocketHandlers) MaxConns() int          { return h.maxConns }
-func (h *SocketHandlers) URL() string            { return h.url }
-func (h *SocketHandlers) ServeMux() *mux.Router  { return h.mux }
+func (h *SocketHandler) Listener() net.Listener { return h.listener }
+func (h *SocketHandler) MaxConns() int          { return h.maxConns }
+func (h *SocketHandler) URL() string            { return h.url }
+func (h *SocketHandler) ServeMux() *mux.Router  { return h.mux }
 
-func (h *SocketHandlers) Start(errChan chan<- error) {
+func (h *SocketHandler) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Starting WebSocket server",
 			LogFields{"url": h.url})
@@ -119,7 +119,7 @@ func (h *SocketHandlers) Start(errChan chan<- error) {
 	errChan <- h.server.Serve(h.listener)
 }
 
-func (h *SocketHandlers) PushSocketHandler(ws *websocket.Conn) {
+func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	h.addSocket(ws)
 	defer h.removeSocket(ws)
 
@@ -150,7 +150,7 @@ func (h *SocketHandlers) PushSocketHandler(ws *websocket.Conn) {
 	}
 }
 
-func (h *SocketHandlers) checkOrigin(conf *websocket.Config, req *http.Request) (err error) {
+func (h *SocketHandler) checkOrigin(conf *websocket.Config, req *http.Request) (err error) {
 	if len(h.origins) == 0 {
 		return nil
 	}
@@ -177,7 +177,7 @@ func (h *SocketHandlers) checkOrigin(conf *websocket.Config, req *http.Request) 
 	return ErrInvalidOrigin
 }
 
-func (h *SocketHandlers) addSocket(ws *websocket.Conn) {
+func (h *SocketHandler) addSocket(ws *websocket.Conn) {
 	if h.IsClosed() {
 		ws.Close()
 		return
@@ -187,7 +187,7 @@ func (h *SocketHandlers) addSocket(ws *websocket.Conn) {
 	h.sockets[ws] = true
 }
 
-func (h *SocketHandlers) removeSocket(ws *websocket.Conn) {
+func (h *SocketHandler) removeSocket(ws *websocket.Conn) {
 	if h.IsClosed() {
 		ws.Close()
 		return
@@ -197,7 +197,7 @@ func (h *SocketHandlers) removeSocket(ws *websocket.Conn) {
 	delete(h.sockets, ws)
 }
 
-func (h *SocketHandlers) closeSockets() {
+func (h *SocketHandler) closeSockets() {
 	h.socketsLock.Lock()
 	defer h.socketsLock.Unlock()
 	for ws := range h.sockets {
@@ -207,7 +207,7 @@ func (h *SocketHandlers) closeSockets() {
 	}
 }
 
-func (h *SocketHandlers) CloseOnce() error {
+func (h *SocketHandler) CloseOnce() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
 			LogFields{"url": h.url})

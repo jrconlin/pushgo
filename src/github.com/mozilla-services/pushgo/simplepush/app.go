@@ -62,8 +62,8 @@ type Application struct {
 	router             Router
 	locator            Locator
 	balancer           Balancer
-	socketHandlers     *SocketHandlers
-	endpointHandlers   *EndpointHandlers
+	sh                 *SocketHandler
+	eh                 *EndpointHandler
 	propping           PropPinger
 	closeWait          sync.WaitGroup
 	closeChan          chan bool
@@ -163,13 +163,13 @@ func (a *Application) SetServer(server *Serv) error {
 	return nil
 }
 
-func (a *Application) SetSocketHandlers(handlers *SocketHandlers) error {
-	a.socketHandlers = handlers
+func (a *Application) SetSocketHandler(handlers *SocketHandler) error {
+	a.sh = handlers
 	return nil
 }
 
-func (a *Application) SetEndpointHandlers(handlers *EndpointHandlers) error {
-	a.endpointHandlers = handlers
+func (a *Application) SetEndpointHandler(handlers *EndpointHandler) error {
+	a.eh = handlers
 	return nil
 }
 
@@ -177,8 +177,8 @@ func (a *Application) SetEndpointHandlers(handlers *EndpointHandlers) error {
 func (a *Application) Run() (errChan chan error) {
 	errChan = make(chan error, 3)
 
-	go a.socketHandlers.Start(errChan)
-	go a.endpointHandlers.Start(errChan)
+	go a.sh.Start(errChan)
+	go a.eh.Start(errChan)
 	go a.router.Start(errChan)
 
 	return errChan
@@ -221,12 +221,12 @@ func (a *Application) Server() *Serv {
 	return a.server
 }
 
-func (a *Application) SocketHandlers() *SocketHandlers {
-	return a.socketHandlers
+func (a *Application) SocketHandler() *SocketHandler {
+	return a.sh
 }
 
-func (a *Application) EndpointHandlers() *EndpointHandlers {
-	return a.endpointHandlers
+func (a *Application) EndpointHandler() *EndpointHandler {
+	return a.eh
 }
 
 func (a *Application) TokenKey() []byte {
@@ -270,7 +270,7 @@ func (a *Application) RemoveClient(uaid string) {
 
 func (a *Application) CloseOnce() error {
 	var errors MultipleError
-	if eh := a.EndpointHandlers(); eh != nil {
+	if eh := a.EndpointHandler(); eh != nil {
 		// Stop the update listener; close all connections.
 		if err := eh.Close(); err != nil {
 			errors = append(errors, err)
@@ -282,7 +282,7 @@ func (a *Application) CloseOnce() error {
 			errors = append(errors, err)
 		}
 	}
-	if sh := a.SocketHandlers(); sh != nil {
+	if sh := a.SocketHandler(); sh != nil {
 		// Close the WebSocket listener; disconnect existing clients.
 		if err := sh.Close(); err != nil {
 			errors = append(errors, err)

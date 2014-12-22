@@ -94,9 +94,9 @@ func TestConfigFile(t *testing.T) {
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
-	if !reflect.DeepEqual(origins, app.socketHandlers.origins) {
+	if !reflect.DeepEqual(origins, app.sh.origins) {
 		t.Errorf("Mismatched origins: got %#v; want %#v",
-			app.socketHandlers.origins, origins)
+			app.sh.origins, origins)
 	}
 	logger := app.Logger()
 	if stdOutLogger, ok := logger.Logger.(*StdOutLogger); ok {
@@ -134,7 +134,7 @@ func TestConfigFile(t *testing.T) {
 	} else {
 		t.Errorf("Pinger type assertion failed: %#v", pinger)
 	}
-	handlers := app.EndpointHandlers()
+	handlers := app.EndpointHandler()
 	if handlers.maxDataLen != 512 {
 		t.Errorf("Wrong maximum data size: got %d; want 512", handlers.maxDataLen)
 	}
@@ -249,7 +249,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockLogger, mockMetrics, mockStore); err != nil {
 				return nil, err
 			}
-			h := NewSocketHandlers()
+			h := NewSocketHandler()
 			mockSocket = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
 				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
@@ -262,7 +262,7 @@ func TestLoad(t *testing.T) {
 
 				return nil, err
 			}
-			h := NewEndpointHandlers()
+			h := NewEndpointHandler()
 			mockEndpoint = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "endpoint", app, mockEndpoint); err != nil {
 				return nil, fmt.Errorf("Error initializing update handlers: %s", err)

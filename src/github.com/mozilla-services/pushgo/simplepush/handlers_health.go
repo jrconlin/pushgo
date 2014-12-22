@@ -40,16 +40,16 @@ func NewHealthHandlers() *HealthHandlers {
 }
 
 type HealthHandlers struct {
-	app              *Application
-	logger           *SimpleLogger
-	metrics          Statistician
-	server           *Serv
-	store            Store
-	pinger           PropPinger
-	router           Router
-	balancer         Balancer
-	socketHandlers   *SocketHandlers
-	endpointHandlers *EndpointHandlers
+	app      *Application
+	logger   *SimpleLogger
+	metrics  Statistician
+	server   *Serv
+	store    Store
+	pinger   PropPinger
+	router   Router
+	balancer Balancer
+	sh       *SocketHandler
+	eh       *EndpointHandler
 }
 
 func (h *HealthHandlers) ConfigStruct() interface{} {
@@ -65,15 +65,15 @@ func (h *HealthHandlers) Init(app *Application, _ interface{}) error {
 	h.pinger = app.PropPinger()
 	h.router = app.Router()
 	h.balancer = app.Balancer()
-	h.socketHandlers = app.SocketHandlers()
-	h.endpointHandlers = app.EndpointHandlers()
+	h.sh = app.SocketHandler()
+	h.eh = app.EndpointHandler()
 
 	// Register health check handlers with muxes.
-	clientMux := h.socketHandlers.ServeMux()
+	clientMux := h.sh.ServeMux()
 	clientMux.HandleFunc("/status/", h.StatusHandler)
 	clientMux.HandleFunc("/realstatus/", h.RealStatusHandler)
 
-	endpointMux := h.endpointHandlers.ServeMux()
+	endpointMux := h.eh.ServeMux()
 	endpointMux.HandleFunc("/status/", h.StatusHandler)
 	endpointMux.HandleFunc("/realstatus/", h.RealStatusHandler)
 	endpointMux.HandleFunc("/metrics/", h.MetricsHandler)
@@ -114,8 +114,8 @@ func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 
 	status := StatusReport{
-		MaxClientConns:   h.socketHandlers.MaxConns(),
-		MaxEndpointConns: h.endpointHandlers.MaxConns(),
+		MaxClientConns:   h.sh.MaxConns(),
+		MaxEndpointConns: h.eh.MaxConns(),
 		Version:          VERSION,
 	}
 

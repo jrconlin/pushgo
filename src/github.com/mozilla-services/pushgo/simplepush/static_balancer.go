@@ -32,7 +32,7 @@ func (b *StaticBalancer) Init(app *Application, config interface{}) error {
 	b.threshold = conf.Threshold
 
 	b.workerCount = app.ClientCount
-	b.maxWorkers = app.SocketHandlers().MaxConns()
+	b.maxWorkers = app.SocketHandler().MaxConns()
 
 	return nil
 }
