@@ -17,17 +17,17 @@ import (
 // IsEtcdKeyNotExist returns true if err reports that an etcd key
 // does not exist.
 func IsEtcdKeyNotExist(err error) bool {
-	return IsEtcdCode(err, 100)
+	return isEtcdCode(err, 100)
 }
 
 // IsEtcdKeyExist returns true if err reports that an etcd key
 // already exists.
 func IsEtcdKeyExist(err error) bool {
-	return IsEtcdCode(err, 105)
+	return isEtcdCode(err, 105)
 }
 
-// IsEtcdCode indicates whether err matches an etcd error code.
-func IsEtcdCode(err error, code int) bool {
+// isEtcdCode indicates whether err matches an etcd error code.
+func isEtcdCode(err error, code int) bool {
 	clientErr, ok := err.(*etcd.EtcdError)
 	return ok && clientErr.ErrorCode == code
 }
