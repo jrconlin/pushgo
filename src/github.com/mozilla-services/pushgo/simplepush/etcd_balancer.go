@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
@@ -95,9 +94,9 @@ type EtcdBalancer struct {
 	ttl            time.Duration
 	closeDelay     time.Duration
 
+	Closable
 	closeWait   sync.WaitGroup
 	closeSignal chan bool
-	closed      int32 // Accessed atomically.
 }
 
 // EtcdPeer contains peer information.
@@ -142,10 +141,12 @@ func (p *EtcdPeers) Choose() (peer EtcdPeer, ok bool) {
 	return p.peers[i], true
 }
 
-func NewEtcdBalancer() *EtcdBalancer {
-	return &EtcdBalancer{
+func NewEtcdBalancer() (b *EtcdBalancer) {
+	b = &EtcdBalancer{
 		closeSignal: make(chan bool),
 	}
+	b.Closable.CloserOnce = b
+	return b
 }
 
 func (b *EtcdBalancer) ConfigStruct() interface{} {
@@ -229,7 +230,7 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 }
 
 func (b *EtcdBalancer) shouldRedirect() (currentConns int64, ok bool) {
-	if b.isClosed() {
+	if b.IsClosed() {
 		return
 	}
 	currentConns = int64(b.connCount())
@@ -293,7 +294,7 @@ func (b *EtcdBalancer) publishCounts() {
 
 // Status determines whether etcd is available. Implements Balancer.Status().
 func (b *EtcdBalancer) Status() (ok bool, err error) {
-	if b.isClosed() {
+	if b.IsClosed() {
 		return
 	}
 	if ok, err = IsEtcdHealthy(b.client); err != nil {
@@ -305,12 +306,9 @@ func (b *EtcdBalancer) Status() (ok bool, err error) {
 	return
 }
 
-// Close stops the balancer and closes the connection to etcd. Implements
-// Balancer.Close().
-func (b *EtcdBalancer) Close() (err error) {
-	if !atomic.CompareAndSwapInt32(&b.closed, 0, 1) {
-		return nil
-	}
+// CloseOnce stops the balancer and closes the connection to etcd. Implements
+// CloserOnce.CloseOnce().
+func (b *EtcdBalancer) CloseOnce() (err error) {
 	if b.log.ShouldLog(INFO) {
 		b.log.Info("balancer", "Closing etcd balancer",
 			LogFields{"key": b.key})
@@ -338,11 +336,6 @@ func (b *EtcdBalancer) Close() (err error) {
 	}
 	time.Sleep(b.closeDelay)
 	return err
-}
-
-// isClosed indicates whether the balancer is closed.
-func (b *EtcdBalancer) isClosed() bool {
-	return atomic.LoadInt32(&b.closed) == 1
 }
 
 // parseKey extracts the scheme and host from an etcd key in the form of

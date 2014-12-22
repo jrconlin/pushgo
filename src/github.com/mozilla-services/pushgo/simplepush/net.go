@@ -109,6 +109,7 @@ func NewServeCloser(srv *http.Server) (s *ServeCloser) {
 		Server: srv,
 		conns:  make(map[net.Conn]bool),
 	}
+	s.Closable.CloserOnce = s
 	if srv.ConnState != nil {
 		s.stateHook = srv.ConnState
 	}
@@ -119,18 +120,15 @@ func NewServeCloser(srv *http.Server) (s *ServeCloser) {
 // ServeCloser is an HTTP server with graceful shutdown support. Closing a
 // server cancels any pending requests by closing the underlying connections.
 type ServeCloser struct {
+	Closable
 	*http.Server
 	stateHook func(net.Conn, http.ConnState)
 	connsLock sync.Mutex // Protects conns.
 	conns     map[net.Conn]bool
-	closed    int32 // Accessed atomically.
 }
 
 // Close stops the server.
-func (s *ServeCloser) Close() error {
-	if !atomic.CompareAndSwapInt32(&s.closed, 0, 1) {
-		return nil
-	}
+func (s *ServeCloser) CloseOnce() error {
 	s.connsLock.Lock()
 	defer s.connsLock.Unlock()
 	for c := range s.conns {
@@ -141,7 +139,7 @@ func (s *ServeCloser) Close() error {
 }
 
 func (s *ServeCloser) addConn(c net.Conn) {
-	if atomic.LoadInt32(&s.closed) == 1 {
+	if s.IsClosed() {
 		c.Close()
 		return
 	}
@@ -151,7 +149,7 @@ func (s *ServeCloser) addConn(c net.Conn) {
 }
 
 func (s *ServeCloser) removeConn(c net.Conn) {
-	if atomic.LoadInt32(&s.closed) == 1 {
+	if s.IsClosed() {
 		c.Close()
 		return
 	}

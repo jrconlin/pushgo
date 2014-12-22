@@ -11,14 +11,15 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
-func NewEndpointHandlers() *EndpointHandlers {
-	return new(EndpointHandlers)
+func NewEndpointHandlers() (h *EndpointHandlers) {
+	h = new(EndpointHandlers)
+	h.Closable.CloserOnce = h
+	return h
 }
 
 type EndpointHandlersConfig struct {
@@ -27,6 +28,7 @@ type EndpointHandlersConfig struct {
 }
 
 type EndpointHandlers struct {
+	Closable
 	app        *Application
 	logger     *SimpleLogger
 	metrics    Statistician
@@ -42,7 +44,6 @@ type EndpointHandlers struct {
 	url        string
 	maxConns   int
 	maxDataLen int
-	closed     int32 // Accessed atomically.
 }
 
 func (h *EndpointHandlers) ConfigStruct() interface{} {
@@ -334,10 +335,7 @@ sendUpdate:
 	return
 }
 
-func (h *EndpointHandlers) Close() error {
-	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
-		return nil
-	}
+func (h *EndpointHandlers) CloseOnce() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})

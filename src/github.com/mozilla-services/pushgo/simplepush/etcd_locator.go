@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
@@ -56,6 +55,7 @@ type EtcdLocatorConf struct {
 
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
+	Closable
 	logger          *SimpleLogger
 	metrics         Statistician
 	refreshInterval time.Duration
@@ -71,16 +71,16 @@ type EtcdLocator struct {
 	contacts        []string
 	contactsErr     error
 	lastFetch       time.Time
-	isClosing       bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
-	closed          int32 // Accessed atomically.
 }
 
-func NewEtcdLocator() *EtcdLocator {
-	return &EtcdLocator{
+func NewEtcdLocator() (l *EtcdLocator) {
+	l = &EtcdLocator{
 		closeSignal: make(chan bool),
 	}
+	l.Closable.CloserOnce = l
+	return l
 }
 
 func (*EtcdLocator) ConfigStruct() interface{} {
@@ -213,11 +213,8 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
 }
 
 // Close stops the locator and closes the etcd client connection. Implements
-// Locator.Close().
-func (l *EtcdLocator) Close() (err error) {
-	if !atomic.CompareAndSwapInt32(&l.closed, 0, 1) {
-		return nil
-	}
+// CloserOnce.CloseOnce().
+func (l *EtcdLocator) CloseOnce() (err error) {
 	if l.logger.ShouldLog(INFO) {
 		l.logger.Info("locator", "Closing etcd locator",
 			LogFields{"key": l.key})
@@ -247,15 +244,10 @@ func (l *EtcdLocator) Close() (err error) {
 	return err
 }
 
-// isClosed indicates whether the locator is closed.
-func (l *EtcdLocator) isClosed() bool {
-	return atomic.LoadInt32(&l.closed) == 1
-}
-
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
-	if l.isClosed() {
+	if l.IsClosed() {
 		return
 	}
 	l.contactsLock.RLock()
@@ -271,7 +263,7 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 // Status determines whether etcd can respond to requests. Implements
 // Locator.Status().
 func (l *EtcdLocator) Status() (ok bool, err error) {
-	if l.isClosed() {
+	if l.IsClosed() {
 		return
 	}
 	if ok, err = IsEtcdHealthy(l.client); err != nil {

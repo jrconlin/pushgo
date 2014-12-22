@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	capn "github.com/glycerine/go-capnproto"
@@ -62,6 +61,7 @@ type BroadcastRouterConfig struct {
 // Router proxies incoming updates to the Simple Push server ("contact") that
 // currently maintains a WebSocket connection to the target device.
 type BroadcastRouter struct {
+	Closable
 	app         *Application
 	hostname    string
 	locator     Locator
@@ -75,17 +75,17 @@ type BroadcastRouter struct {
 	url         string
 	rclient     *http.Client
 	closeWait   sync.WaitGroup
-	isClosed    bool
 	closeSignal chan bool
 	maxDataLen  int
 	routerMux   *mux.Router
-	closed      int32 // Accessed atomically.
 }
 
-func NewBroadcastRouter() *BroadcastRouter {
-	return &BroadcastRouter{
+func NewBroadcastRouter() (r *BroadcastRouter) {
+	r = &BroadcastRouter{
 		closeSignal: make(chan bool),
 	}
+	r.Closable.CloserOnce = r
+	return r
 }
 
 func (*BroadcastRouter) ConfigStruct() interface{} {
@@ -299,10 +299,7 @@ func (r *BroadcastRouter) Status() (bool, error) {
 	return true, nil
 }
 
-func (r *BroadcastRouter) Close() error {
-	if !atomic.CompareAndSwapInt32(&r.closed, 0, 1) {
-		return nil
-	}
+func (r *BroadcastRouter) CloseOnce() error {
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Closing router",
 			LogFields{"url": r.url})

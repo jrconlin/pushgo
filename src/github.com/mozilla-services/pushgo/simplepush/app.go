@@ -34,14 +34,17 @@ type ApplicationConfig struct {
 	AlwaysRoute        bool   `toml:"always_route" env:"always_route"`
 }
 
-func NewApplication() *Application {
-	return &Application{
+func NewApplication() (a *Application) {
+	a = &Application{
 		clients:   make(map[string]*Client),
 		closeChan: make(chan bool),
 	}
+	a.Closable.CloserOnce = a
+	return a
 }
 
 type Application struct {
+	Closable
 	hostname           string
 	host               string
 	port               int
@@ -64,7 +67,6 @@ type Application struct {
 	propping           PropPinger
 	closeWait          sync.WaitGroup
 	closeChan          chan bool
-	closed             int32 // Accessed atomically.
 	AlwaysRoute        bool
 }
 
@@ -266,10 +268,7 @@ func (a *Application) RemoveClient(uaid string) {
 	}
 }
 
-func (a *Application) Close() error {
-	if !atomic.CompareAndSwapInt32(&a.closed, 0, 1) {
-		return nil
-	}
+func (a *Application) CloseOnce() error {
 	var errors MultipleError
 	if eh := a.EndpointHandlers(); eh != nil {
 		// Stop the update listener; close all connections.

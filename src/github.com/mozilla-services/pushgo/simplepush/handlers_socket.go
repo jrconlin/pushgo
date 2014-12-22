@@ -11,17 +11,18 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/net/websocket"
 )
 
-func NewSocketHandlers() *SocketHandlers {
-	return &SocketHandlers{
+func NewSocketHandlers() (h *SocketHandlers) {
+	h = &SocketHandlers{
 		sockets: make(map[*websocket.Conn]bool),
 	}
+	h.Closable.CloserOnce = h
+	return h
 }
 
 type SocketHandlersConfig struct {
@@ -30,6 +31,7 @@ type SocketHandlersConfig struct {
 }
 
 type SocketHandlers struct {
+	Closable
 	app         *Application
 	logger      *SimpleLogger
 	metrics     Statistician
@@ -42,7 +44,6 @@ type SocketHandlers struct {
 	maxConns    int
 	socketsLock sync.Mutex // Protects sockets.
 	sockets     map[*websocket.Conn]bool
-	closed      int32 // Accessed atomically.
 }
 
 func (h *SocketHandlers) ConfigStruct() interface{} {
@@ -177,7 +178,7 @@ func (h *SocketHandlers) checkOrigin(conf *websocket.Config, req *http.Request) 
 }
 
 func (h *SocketHandlers) addSocket(ws *websocket.Conn) {
-	if atomic.LoadInt32(&h.closed) == 1 {
+	if h.IsClosed() {
 		ws.Close()
 		return
 	}
@@ -187,7 +188,7 @@ func (h *SocketHandlers) addSocket(ws *websocket.Conn) {
 }
 
 func (h *SocketHandlers) removeSocket(ws *websocket.Conn) {
-	if atomic.LoadInt32(&h.closed) == 1 {
+	if h.IsClosed() {
 		ws.Close()
 		return
 	}
@@ -206,10 +207,7 @@ func (h *SocketHandlers) closeSockets() {
 	}
 }
 
-func (h *SocketHandlers) Close() error {
-	if !atomic.CompareAndSwapInt32(&h.closed, 0, 1) {
-		return nil
-	}
+func (h *SocketHandlers) CloseOnce() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
 			LogFields{"url": h.url})
