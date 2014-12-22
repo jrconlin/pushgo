@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"runtime"
 	"strconv"
 	"strings"
@@ -137,7 +138,13 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		if self.stopped {
 			return
 		}
+		sock.Socket.SetReadDeadline(time.Now().Add(self.pongInterval))
 		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if err = websocket.Message.Send(sock.Socket, "{}"); err == nil {
+					continue
+				}
+			}
 			self.stopped = true
 			if err != io.EOF && self.logger.ShouldLog(ERROR) {
 				self.logger.Error("worker", "Websocket Error",
@@ -228,15 +235,6 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 	}
 }
 
-func (self *WorkerWS) pinger(sock *PushWS) {
-	for _ = range time.Tick(self.pongInterval) {
-		if self.stopped {
-			return
-		}
-		websocket.Message.Send(sock.Socket, "{}")
-	}
-}
-
 // standardize the error reporting back to the client.
 func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret error) {
 	reply := make(map[string]interface{})
@@ -275,9 +273,6 @@ func (self *WorkerWS) Run(sock *PushWS) {
 		return
 	}(sock)
 
-	if self.pongInterval > 0 {
-		go self.pinger(sock)
-	}
 	self.sniffer(sock)
 	sock.Socket.Close()
 
