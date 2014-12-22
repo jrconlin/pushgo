@@ -79,14 +79,20 @@ func main() {
 	// And we're underway!
 	errChan := app.Run()
 
+	logger := app.Logger()
 	exitCode := 0
 	select {
 	case err = <-errChan:
 		exitCode = 1
-		log.Printf("Run: %s", err)
+		if logger.ShouldLog(simplepush.ERROR) {
+			logger.Error("main", "Run encountered an error; shutting down.",
+				simplepush.LogFields{"error": err.Error()})
+		}
 
 	case <-sigChan:
-		app.Logger().Info("main", "Recieved signal, shutting down.", nil)
+		if logger.ShouldLog(simplepush.INFO) {
+			logger.Info("main", "Recieved signal, shutting down.", nil)
+		}
 	}
 	if err = app.Close(); err != nil {
 		log.Fatalf("Error shutting down: %s", err)
