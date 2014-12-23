@@ -136,7 +136,7 @@ func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	defer func() {
 		now := time.Now()
 		// Clean-up the resources
-		h.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock) // TODO: Circular dependency.
+		h.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
 		h.metrics.Timer("client.socket.lifespan", now.Sub(sock.Born))
 		h.metrics.Increment("client.socket.disconnect")
 	}()
@@ -203,7 +203,6 @@ func (h *SocketHandler) closeSockets() {
 	for ws := range h.sockets {
 		delete(h.sockets, ws)
 		ws.Close()
-		// TODO: Sleep between disconnects.
 	}
 }
 

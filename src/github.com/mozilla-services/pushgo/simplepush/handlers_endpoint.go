@@ -326,7 +326,7 @@ sendUpdate:
 	}
 
 	if clientConnected {
-		h.app.Server().RequestFlush(client, chid, int64(version), data) // TODO: Circular dependency.
+		h.app.Server().RequestFlush(client, chid, int64(version), data)
 		h.metrics.Increment("updates.appserver.received")
 	}
 

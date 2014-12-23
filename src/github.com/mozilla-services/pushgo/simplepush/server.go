@@ -88,11 +88,6 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 				"channelIDs": chidss})
 	}
 
-	// TODO: If the client needs to connect to a different server,
-	// Look up the appropriate server (based on UAID)
-	// return a response that looks like:
-	// { uaid: UAIDValue, status: 302, redirect: NewWS_URL }
-
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
 		if err := self.prop.Register(uaid, connect); err != nil {
 			if self.logger.ShouldLog(WARNING) {
@@ -189,7 +184,7 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		CurrentHost string
 	}{
 		token,
-		self.app.EndpointHandler().URL(), // TODO: Circular dependency.
+		self.app.EndpointHandler().URL(),
 	}); err != nil {
 		if self.logger.ShouldLog(ERROR) {
 			self.logger.Error("server",
