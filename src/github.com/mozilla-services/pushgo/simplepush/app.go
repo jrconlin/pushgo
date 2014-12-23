@@ -250,6 +250,10 @@ func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
 }
 
 func (a *Application) AddClient(uaid string, client *Client) {
+	if a.IsClosed() {
+		client.PushWS.Close()
+		return
+	}
 	a.clientMux.Lock()
 	a.clients[uaid] = client
 	a.clientMux.Unlock()
@@ -257,6 +261,9 @@ func (a *Application) AddClient(uaid string, client *Client) {
 }
 
 func (a *Application) RemoveClient(uaid string) {
+	if a.IsClosed() {
+		return
+	}
 	var ok bool
 	a.clientMux.Lock()
 	if _, ok = a.clients[uaid]; ok {
@@ -265,6 +272,15 @@ func (a *Application) RemoveClient(uaid string) {
 	a.clientMux.Unlock()
 	if ok {
 		atomic.AddInt32(&a.clientCount, -1)
+	}
+}
+
+func (a *Application) closeClients() {
+	a.clientMux.Lock()
+	defer a.clientMux.Unlock()
+	for uaid, client := range a.clients {
+		delete(a.clients, uaid)
+		client.PushWS.Close()
 	}
 }
 
@@ -283,11 +299,13 @@ func (a *Application) CloseOnce() error {
 		}
 	}
 	if sh := a.SocketHandler(); sh != nil {
-		// Close the WebSocket listener; disconnect existing clients.
+		// Close the WebSocket listener.
 		if err := sh.Close(); err != nil {
 			errors = append(errors, err)
 		}
 	}
+	// Disconnect existing clients.
+	a.closeClients()
 	// Stop publishing client counts.
 	close(a.closeChan)
 	a.closeWait.Wait()

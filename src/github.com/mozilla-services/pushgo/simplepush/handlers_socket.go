@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -18,9 +17,7 @@ import (
 )
 
 func NewSocketHandler() (h *SocketHandler) {
-	h = &SocketHandler{
-		sockets: make(map[*websocket.Conn]bool),
-	}
+	h = new(SocketHandler)
 	h.Closable.CloserOnce = h
 	return h
 }
@@ -32,18 +29,16 @@ type SocketHandlerConfig struct {
 
 type SocketHandler struct {
 	Closable
-	app         *Application
-	logger      *SimpleLogger
-	metrics     Statistician
-	store       Store
-	origins     []*url.URL
-	listener    net.Listener
-	server      *ServeCloser
-	mux         *mux.Router
-	url         string
-	maxConns    int
-	socketsLock sync.Mutex // Protects sockets.
-	sockets     map[*websocket.Conn]bool
+	app      *Application
+	logger   *SimpleLogger
+	metrics  Statistician
+	store    Store
+	origins  []*url.URL
+	listener net.Listener
+	server   *ServeCloser
+	mux      *mux.Router
+	url      string
+	maxConns int
 }
 
 func (h *SocketHandler) ConfigStruct() interface{} {
@@ -120,9 +115,6 @@ func (h *SocketHandler) Start(errChan chan<- error) {
 }
 
 func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
-	h.addSocket(ws)
-	defer h.removeSocket(ws)
-
 	requestID := ws.Request().Header.Get(HeaderID)
 	sock := PushWS{Socket: ws,
 		Store:  h.store,
@@ -177,35 +169,6 @@ func (h *SocketHandler) checkOrigin(conf *websocket.Config, req *http.Request) (
 	return ErrInvalidOrigin
 }
 
-func (h *SocketHandler) addSocket(ws *websocket.Conn) {
-	if h.IsClosed() {
-		ws.Close()
-		return
-	}
-	h.socketsLock.Lock()
-	defer h.socketsLock.Unlock()
-	h.sockets[ws] = true
-}
-
-func (h *SocketHandler) removeSocket(ws *websocket.Conn) {
-	if h.IsClosed() {
-		ws.Close()
-		return
-	}
-	h.socketsLock.Lock()
-	defer h.socketsLock.Unlock()
-	delete(h.sockets, ws)
-}
-
-func (h *SocketHandler) closeSockets() {
-	h.socketsLock.Lock()
-	defer h.socketsLock.Unlock()
-	for ws := range h.sockets {
-		delete(h.sockets, ws)
-		ws.Close()
-	}
-}
-
 func (h *SocketHandler) CloseOnce() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
@@ -219,7 +182,6 @@ func (h *SocketHandler) CloseOnce() error {
 		}
 		errors = append(errors, err)
 	}
-	h.closeSockets()
 	if err := h.server.Close(); err != nil {
 		if h.logger.ShouldLog(ERROR) {
 			h.logger.Error("handlers", "Error closing WebSocket server",
