@@ -33,7 +33,6 @@ type ApplicationConfig struct {
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
 	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
 	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
-	AlwaysRoute        bool   `toml:"always_route" env:"always_route"`
 	ClientPongInterval string `toml:"client_pong_interval" env:"client_pong_interval"`
 }
 
@@ -68,7 +67,6 @@ func (a *Application) ConfigStruct() interface{} {
 		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
-		AlwaysRoute:        false,
 		ClientPongInterval: "5m",
 	}
 }

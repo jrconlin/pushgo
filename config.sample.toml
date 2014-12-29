@@ -36,14 +36,8 @@
 #client_min_ping_interval = "20s"
 ## Timeout socket if not recv'd hello
 #client_hello_timeout = "30s"
-# Always route. This will force a server to always send a message out for
-# routing, even if the server believes that the client is connected. This
-# is useful in cases where a client may have reconnected to a different
-# server but the old connection has yet to time out for the server. (This,
-# sadly, happens a fair bit.)
-#always_route = false
-# Client Pong Interval is the period when the server should send a text
-# ping frame to the device. Set to "0" for no server pings
+# Client Pong Interval is the period for when the server should send a text
+# ping frame. Set to "0" for no server pings
 #client_pong_interval = "5m"
 
 [default.websocket]
