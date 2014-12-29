@@ -81,7 +81,9 @@ const (
 	PluginLocator
 	PluginBalancer
 	PluginServer
-	PluginHandlers
+	PluginSocket
+	PluginEndpoint
+	PluginHealth
 )
 
 var pluginNames = map[PluginType]string{
@@ -90,10 +92,13 @@ var pluginNames = map[PluginType]string{
 	PluginPinger:   "pinger",
 	PluginMetrics:  "metrics",
 	PluginStore:    "store",
+	PluginRouter:   "router",
 	PluginLocator:  "locator",
 	PluginBalancer: "balancer",
 	PluginServer:   "server",
-	PluginHandlers: "handlers",
+	PluginSocket:   "socket",
+	PluginEndpoint: "endpoint",
+	PluginHealth:   "health",
 }
 
 func (t PluginType) String() string {
@@ -120,7 +125,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	// available on the Application at each stage of application setup
 
 	// Setup the base application first
-	app := new(Application)
+	app := NewApplication()
 	if _, err = l.loadPlugin(PluginApp, app); err != nil {
 		return nil, err
 	}
@@ -185,7 +190,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 	locator := obj.(Locator)
-	if err = router.SetLocator(locator); err != nil {
+	if err = app.SetLocator(locator); err != nil {
 		return nil, err
 	}
 
@@ -197,6 +202,12 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	serv := obj.(*Serv)
 	app.SetServer(serv)
 
+	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
+		return nil, err
+	}
+	sh := obj.(*SocketHandler)
+	app.SetSocketHandler(sh)
+
 	// Set up the balancer.
 	// Deps: PluginLogger, PluginMetrics, PluginServer.
 	if obj, err = l.loadPlugin(PluginBalancer, app); err != nil {
@@ -207,14 +218,16 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Register the endpoint handlers.
-	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginRouter,
-	// PluginPinger, PluginServer.
-	if obj, err = l.loadPlugin(PluginHandlers, app); err != nil {
+	if obj, err = l.loadPlugin(PluginEndpoint, app); err != nil {
 		return nil, err
 	}
-	handlers := obj.(*Handler)
-	app.SetHandlers(handlers)
+	eh := obj.(*EndpointHandler)
+	app.SetEndpointHandler(eh)
+
+	// Loaded for side effects only.
+	if _, err = l.loadPlugin(PluginHealth, app); err != nil {
+		return nil, err
+	}
 
 	return app, nil
 }
@@ -382,12 +395,26 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			}
 			return serv, nil
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			handlers := new(Handler)
-			if err := LoadConfigForSection(app, "handlers", handlers, env, configFile); err != nil {
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			h := NewSocketHandler()
+			if err := LoadConfigForSection(app, "websocket", h, env, configFile); err != nil {
 				return nil, err
 			}
-			return handlers, nil
+			return h, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			h := NewEndpointHandler()
+			if err := LoadConfigForSection(app, "endpoint", h, env, configFile); err != nil {
+				return nil, err
+			}
+			return h, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			h := NewHealthHandlers()
+			if err := h.Init(app, h.ConfigStruct()); err != nil {
+				return nil, err
+			}
+			return h, nil
 		},
 	}
 

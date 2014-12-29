@@ -61,9 +61,12 @@ type BroadcastRouterConfig struct {
 // Router proxies incoming updates to the Simple Push server ("contact") that
 // currently maintains a WebSocket connection to the target device.
 type BroadcastRouter struct {
+	Closable
 	app         *Application
+	hostname    string
 	locator     Locator
 	listener    net.Listener
+	server      *ServeCloser
 	logger      *SimpleLogger
 	metrics     Statistician
 	ctimeout    time.Duration
@@ -72,18 +75,17 @@ type BroadcastRouter struct {
 	url         string
 	rclient     *http.Client
 	closeWait   sync.WaitGroup
-	isClosed    bool
 	closeSignal chan bool
-	closeLock   sync.Mutex
-	lastErr     error
 	maxDataLen  int
 	routerMux   *mux.Router
 }
 
-func NewBroadcastRouter() *BroadcastRouter {
-	return &BroadcastRouter{
+func NewBroadcastRouter() (r *BroadcastRouter) {
+	r = &BroadcastRouter{
 		closeSignal: make(chan bool),
 	}
+	r.Closable.CloserOnce = r
+	return r
 }
 
 func (*BroadcastRouter) ConfigStruct() interface{} {
@@ -122,6 +124,12 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 		return err
 	}
 
+	if len(conf.DefaultHost) > 0 {
+		r.hostname = conf.DefaultHost
+	} else {
+		r.hostname = app.Hostname()
+	}
+
 	if r.listener, err = conf.Listener.Listen(); err != nil {
 		r.logger.Panic("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
@@ -133,15 +141,8 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	} else {
 		scheme = "http"
 	}
-	host := conf.DefaultHost
-	if len(host) == 0 {
-		host = app.Hostname()
-	}
-	addr := r.listener.Addr().(*net.TCPAddr)
-	if len(host) == 0 {
-		host = addr.IP.String()
-	}
-	r.url = CanonicalURL(scheme, host, addr.Port)
+	host, port := HostPort(r.listener, r)
+	r.url = CanonicalURL(scheme, host, port)
 
 	r.bucketSize = conf.BucketSize
 
@@ -157,17 +158,7 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 	r.routerMux = mux.NewRouter()
 	r.routerMux.HandleFunc("/route/{uaid}", r.RouteHandler)
 
-	return nil
-}
-
-func (r *BroadcastRouter) Start(errChan chan<- error) {
-	routeLn := r.Listener()
-	if r.logger.ShouldLog(INFO) {
-		r.logger.Info("app", "Starting router",
-			LogFields{"addr": routeLn.Addr().String()})
-	}
-
-	routeSrv := &http.Server{
+	r.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				r.metrics.Increment("router.socket.connect")
@@ -176,8 +167,20 @@ func (r *BroadcastRouter) Start(errChan chan<- error) {
 			}
 		},
 		Handler:  &LogHandler{r.routerMux, r.logger},
-		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)}
-	errChan <- routeSrv.Serve(routeLn)
+		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)})
+
+	return nil
+}
+
+func (r *BroadcastRouter) Hostname() string { return r.hostname }
+
+func (r *BroadcastRouter) Start(errChan chan<- error) {
+	routeLn := r.Listener()
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("app", "Starting routing server",
+			LogFields{"url": r.url})
+	}
+	errChan <- r.server.Serve(routeLn)
 }
 
 func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Request) {
@@ -272,15 +275,6 @@ func (r *BroadcastRouter) dial(netw, addr string) (c net.Conn, err error) {
 	return c, nil
 }
 
-func (r *BroadcastRouter) SetLocator(locator Locator) error {
-	r.locator = locator
-	return nil
-}
-
-func (r *BroadcastRouter) Locator() Locator {
-	return r.locator
-}
-
 func (r *BroadcastRouter) Listener() net.Listener {
 	return r.listener
 }
@@ -298,33 +292,54 @@ func (r *BroadcastRouter) Unregister(uaid string) error {
 }
 
 func (r *BroadcastRouter) Status() (bool, error) {
+	locator := r.app.Locator()
+	if locator != nil {
+		return locator.Status()
+	}
 	return true, nil
 }
 
-func (r *BroadcastRouter) Close() (err error) {
-	r.closeLock.Lock()
-	err = r.lastErr
-	if r.isClosed {
-		r.closeLock.Unlock()
-		return err
+func (r *BroadcastRouter) CloseOnce() error {
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Info("router", "Closing router",
+			LogFields{"url": r.url})
 	}
-	r.isClosed = true
 	close(r.closeSignal)
-	if locator := r.Locator(); locator != nil {
-		r.lastErr = locator.Close()
-	}
-	if err := r.listener.Close(); err != nil {
-		r.lastErr = err
-	}
-	r.closeLock.Unlock()
 	r.closeWait.Wait()
-	return err
+	var errors MultipleError
+	if err := r.listener.Close(); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Error closing routing listener",
+				LogFields{"error": err.Error(), "url": r.url})
+		}
+		errors = append(errors, err)
+	}
+	if err := r.server.Close(); err != nil {
+		if r.logger.ShouldLog(ERROR) {
+			r.logger.Error("router", "Error closing routing server",
+				LogFields{"error": err.Error(), "url": r.url})
+		}
+		errors = append(errors, err)
+	}
+	if locator := r.app.Locator(); locator != nil {
+		if err := locator.Close(); err != nil {
+			if r.logger.ShouldLog(ERROR) {
+				r.logger.Error("router", "Error closing locator",
+					LogFields{"error": err.Error(), "url": r.url})
+			}
+			errors = append(errors, err)
+		}
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	return nil
 }
 
 // Route routes an update packet to the correct server.
 func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string, data string) (err error) {
 	startTime := time.Now()
-	locator := r.Locator()
+	locator := r.app.Locator()
 	if locator == nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "No discovery service set; unable to route message",

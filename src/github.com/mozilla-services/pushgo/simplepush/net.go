@@ -23,6 +23,26 @@ var defaultPorts = map[string]int{
 	"ws":    80,
 }
 
+type Hostnamer interface {
+	Hostname() string
+}
+
+// HostPort returns the host and port on which ln is listening. If the default
+// hostname dh is empty, the IP of ln will be used instead.
+func HostPort(ln net.Listener, dh Hostnamer) (host string, port int) {
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if dh != nil {
+		host = dh.Hostname()
+	}
+	if ok && len(host) == 0 {
+		host = addr.IP.String()
+	}
+	if ok {
+		port = addr.Port
+	}
+	return
+}
+
 // CanonicalURL constructs a URL from the given scheme, host, and port,
 // excluding default port numbers.
 func CanonicalURL(scheme, host string, port int) string {
@@ -81,6 +101,76 @@ func (c *LimitConn) Close() error {
 	err := c.Conn.Close()
 	c.removeOnce.Do(c.removeConn)
 	return err
+}
+
+// NewServeCloser wraps srv and returns a closable HTTP server.
+func NewServeCloser(srv *http.Server) (s *ServeCloser) {
+	s = &ServeCloser{
+		Server: srv,
+		conns:  make(map[net.Conn]bool),
+	}
+	s.Closable.CloserOnce = s
+	if srv.ConnState != nil {
+		s.stateHook = srv.ConnState
+	}
+	srv.ConnState = s.connState
+	return
+}
+
+// ServeCloser is an HTTP server with graceful shutdown support. Closing a
+// server cancels any pending requests by closing the underlying connections.
+type ServeCloser struct {
+	Closable
+	*http.Server
+	stateHook func(net.Conn, http.ConnState)
+	connsLock sync.Mutex // Protects conns.
+	conns     map[net.Conn]bool
+}
+
+// Close stops the server.
+func (s *ServeCloser) CloseOnce() error {
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	for c := range s.conns {
+		delete(s.conns, c)
+		c.Close()
+	}
+	return nil
+}
+
+func (s *ServeCloser) addConn(c net.Conn) {
+	if s.IsClosed() {
+		c.Close()
+		return
+	}
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	s.conns[c] = true
+}
+
+func (s *ServeCloser) removeConn(c net.Conn) {
+	if s.IsClosed() {
+		c.Close()
+		return
+	}
+	s.connsLock.Lock()
+	defer s.connsLock.Unlock()
+	delete(s.conns, c)
+}
+
+func (s *ServeCloser) connState(c net.Conn, state http.ConnState) {
+	switch state {
+	case http.StateNew:
+		// Track new connections.
+		s.addConn(c)
+	case http.StateClosed, http.StateHijacked:
+		// Remove closed and hijacked connections. Clients must track hijacked
+		// connections separately.
+		s.removeConn(c)
+	}
+	if s.stateHook != nil {
+		s.stateHook(c, state)
+	}
 }
 
 // LimitListener restricts the number of concurrent connections accepted by the

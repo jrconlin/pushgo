@@ -26,6 +26,15 @@ Features
   hello. The client will get a 307 if a peer is available, and a 429 if the
   entire cluster is full. This add's a new [balancer] section to the config
   file per the config.sample.toml. PR #144.
+- Graceful shutdown has been added. When a running server encounters an error
+  or receives an interrupt signal, it stops the endpoint listener, deregisters
+  from the balancer, closes all client connections, deregisters from the
+  discovery service, and stops the routing listener. By default, servers will
+  wait for 2 refresh periods after removing their keys from etcd to ensure the
+  changes propagate to all peers. PR #178, Issue #139.
+- New config option for specifying the shutdown delay for [discovery] and
+  [balancer]. PR #178.
+    close_delay
 - Added client "pong" function. This generates a server side protocol ping to
   attempt to hold the socket open to the device.
 
@@ -43,6 +52,8 @@ Bug Fixes
   PR #152, Issue #141.
 - Fix for sending wrong websocket ping format. Pings should be sent as text
   frames, due to a bug they were sent as binary frames. PR #147.
+- The update endpoint uses 'application/x-www-form-urlencoded' for PUT requests
+  without a 'Content-Type' header. PR #160.
 
 Metrics
 -------
@@ -69,9 +80,20 @@ Metrics
 Incompatibilities
 -----------------
 
+- The 'pool_size' option for [router] has been removed. PR #167.
+- The [discovery] 'max_retries', 'retry_delay', 'max_jitter', and 'max_delay'
+  options have moved to the [discovery.retry] section. 'max_retries' has
+  been renamed to 'retries', and 'retry_delay' is now 'delay'. PR #145.
 - Origins is no longer a [default] value in the config.toml, it is now under
-  the [handlers] section. Config files and env vars will need to be updated
-  for this change. PR #168, Issue #142.
+  the [websocket] section. Config files and env vars will need to be updated
+  for this change. PR #178, Issues #139, #142.
+- The [default.websocket] section has been renamed to [websocket.listener].
+  PR #178.
+- The [default.endpoint] section has been renamed to [endpoint.listener].
+  PR #178.
+- The [discovery] default values for 'defaultTTL' and 'refresh_interval' have
+  changed to "1m" and "10s," respectively, to reflect production usage.
+  PR #178.
 
 GCM
 ---
@@ -84,10 +106,19 @@ Internal
 
 - Router has been re-factored to an interface, and the default router is now
   known as the BroadcastRouter. PR #154, Issue #127.
+- Router now exposes a health check used by '/realstatus'. PR #178, Issue #156.
 - Mocks for the router and most other interfaces in pushgo have been generated
   by gomock. Multiple PR's.
+- A ServeCloser type has been added for wrapping an HTTP server with shutdown
+  capability. PR #178.
+- The websocket, endpoint, and health handlers have been refactored into
+  separate types to support graceful shutdown. PR #178.
+- The PRNG now uses a cryptographically-strong seed. PR #178.
 - Muxes for the websocket, endpoint, router handlers are now exposed for easier
   testing and mocking.
+- The router now uses a goroutine per notification instead of a goroutine pool.
+  This ensures slow requests don't delay other requests. PR #167.
+- The Heka client dependency has been removed. PR #161, Issue #125.
 
 1.4.2
 =====
