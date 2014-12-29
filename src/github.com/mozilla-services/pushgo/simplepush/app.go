@@ -68,7 +68,6 @@ type Application struct {
 	propping           PropPinger
 	closeWait          sync.WaitGroup
 	closeChan          chan bool
-	AlwaysRoute        bool
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -123,7 +122,6 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 			err.Error())
 	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.AlwaysRoute = conf.AlwaysRoute
 	return
 }
 
