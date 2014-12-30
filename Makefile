@@ -77,7 +77,7 @@ $(TARGET):
 	rm -f $(TARGET)
 	@echo "Building simplepush"
 	GOPATH=$(GOPATH) $(GO) build \
-		-ldflags "$(GOLDFLAGS)" -o $(TARGET) $(PACKAGE)
+		-ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
 test-mocks: $(DEPS)
 	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/config.go \
