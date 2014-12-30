@@ -24,6 +24,8 @@ var HarmlessConnectionErrors = []string{
 	"TLS handshake error",
 }
 
+var idGenerate = id.Generate
+
 //    -- Workers
 //      these write back to the websocket.
 
@@ -60,6 +62,13 @@ type HelloRequest struct {
 	DeviceID   string          `json:"uaid"`
 	ChannelIDs []interface{}   `json:"channelIDs"`
 	PingData   json.RawMessage `json:"connect"`
+}
+
+type HelloReply struct {
+	Type        string `json:"messageType"`
+	Status      int    `json:"status"`
+	DeviceID    string `json:"uaid"`
+	RedirectURL string `json:"redirect"`
 }
 
 type RegisterRequest struct {
@@ -487,7 +496,7 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	return request.DeviceID, true, nil
 
 forceReset:
-	if deviceID, err = id.Generate(); err != nil {
+	if deviceID, err = idGenerate(); err != nil {
 		return "", false, err
 	}
 	return deviceID, true, nil
