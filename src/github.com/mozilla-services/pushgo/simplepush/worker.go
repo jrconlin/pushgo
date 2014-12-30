@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"runtime"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ type WorkerWS struct {
 	pingInt      time.Duration
 	metrics      Statistician
 	helloTimeout time.Duration
+	pongInterval time.Duration
 }
 
 type WorkerState int
@@ -117,6 +119,7 @@ func NewWorker(app *Application, id string) *WorkerWS {
 		stopped:      false,
 		pingInt:      app.clientMinPing,
 		helloTimeout: app.clientHelloTimeout,
+		pongInterval: app.clientPongInterval,
 	}
 }
 
@@ -154,7 +157,13 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		if self.stopped {
 			return
 		}
+		sock.Socket.SetReadDeadline(time.Now().Add(self.pongInterval))
 		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if err = websocket.Message.Send(sock.Socket, "{}"); err == nil {
+					continue
+				}
+			}
 			self.stopped = true
 			if err != io.EOF {
 				if self.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {

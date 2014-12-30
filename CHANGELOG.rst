@@ -35,6 +35,8 @@ Features
 - New config option for specifying the shutdown delay for [discovery] and
   [balancer]. PR #178.
     close_delay
+- Added client "pong" function. This generates a server side protocol ping to
+  attempt to hold the socket open to the device.
 
 Bug Fixes
 ---------
