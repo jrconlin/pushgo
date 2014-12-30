@@ -14,11 +14,22 @@ import (
 	"github.com/mozilla-services/pushgo/retry"
 )
 
-// IsEtcdKeyExist indicates whether the given error reports that an etcd key
+// IsEtcdKeyNotExist returns true if err reports that an etcd key
+// does not exist.
+func IsEtcdKeyNotExist(err error) bool {
+	return isEtcdCode(err, 100)
+}
+
+// IsEtcdKeyExist returns true if err reports that an etcd key
 // already exists.
 func IsEtcdKeyExist(err error) bool {
+	return isEtcdCode(err, 105)
+}
+
+// isEtcdCode indicates whether err matches an etcd error code.
+func isEtcdCode(err error, code int) bool {
 	clientErr, ok := err.(*etcd.EtcdError)
-	return ok && clientErr.ErrorCode == 105
+	return ok && clientErr.ErrorCode == code
 }
 
 // EtcdWalk walks an etcd directory tree rooted at root, calling walkFn for

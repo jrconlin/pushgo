@@ -51,7 +51,7 @@ func (t *TestServer) Stop() {
 	}
 	t.isStopping = true
 	if t.app != nil {
-		t.app.Stop()
+		t.app.Close()
 	}
 }
 
@@ -59,7 +59,7 @@ func (t *TestServer) fatal(err error) {
 	defer t.Unlock()
 	t.Lock()
 	if !t.isStopping {
-		t.app.Stop()
+		t.app.Close()
 		t.isStopping = true
 	}
 	if t.lastErr == nil {
@@ -160,20 +160,35 @@ func (t *TestServer) load() (*Application, error) {
 		PluginServer: func(app *Application) (HasConfigStruct, error) {
 			serv := NewServer()
 			servConf := serv.ConfigStruct().(*ServerConfig)
-			// Listen on a random port for testing.
-			servConf.Client.Addr = t.ClientAddr
-			servConf.Endpoint.Addr = t.EndpointAddr
 			if err := serv.Init(app, servConf); err != nil {
 				return nil, fmt.Errorf("Error initializing server: %#v", err)
 			}
 			return serv, nil
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			handlers := new(Handler)
-			if err := handlers.Init(app, handlers.ConfigStruct()); err != nil {
-				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			sh := NewSocketHandler()
+			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
+			shConf.Listener.Addr = t.ClientAddr
+			if err := sh.Init(app, shConf); err != nil {
+				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
 			}
-			return handlers, nil
+			return sh, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			eh := NewEndpointHandler()
+			ehConf := eh.ConfigStruct().(*EndpointHandlerConfig)
+			ehConf.Listener.Addr = t.EndpointAddr
+			if err := eh.Init(app, ehConf); err != nil {
+				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
+			}
+			return eh, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			h := NewHealthHandlers()
+			if err := h.Init(app, h.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
+			}
+			return h, nil
 		},
 	}
 	return loaders.Load(int(t.LogLevel))
@@ -201,11 +216,7 @@ func (t *TestServer) Origin() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	server := app.Server()
-	if server == nil {
-		return "", nil
-	}
-	return server.ClientURL(), nil
+	return app.SocketHandler().URL(), nil
 }
 
 func (t *TestServer) Dial(channelIds ...string) (

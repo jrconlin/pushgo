@@ -8,9 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -36,7 +34,17 @@ type ApplicationConfig struct {
 	AlwaysRoute        bool   `toml:"always_route" env:"always_route"`
 }
 
+func NewApplication() (a *Application) {
+	a = &Application{
+		clients:   make(map[string]*Client),
+		closeChan: make(chan bool),
+	}
+	a.Closable.CloserOnce = a
+	return a
+}
+
 type Application struct {
+	Closable
 	hostname           string
 	host               string
 	port               int
@@ -47,14 +55,18 @@ type Application struct {
 	log                *SimpleLogger
 	metrics            Statistician
 	clients            map[string]*Client
-	clientMux          *sync.RWMutex
-	clientCount        *int32
+	clientMux          sync.RWMutex
+	clientCount        int32
 	server             *Serv
 	store              Store
 	router             Router
+	locator            Locator
 	balancer           Balancer
-	handlers           *Handler
+	sh                 *SocketHandler
+	eh                 *EndpointHandler
 	propping           PropPinger
+	closeWait          sync.WaitGroup
+	closeChan          chan bool
 	AlwaysRoute        bool
 }
 
@@ -106,10 +118,6 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 			err.Error())
 	}
 	a.pushLongPongs = conf.PushLongPongs
-	a.clients = make(map[string]*Client)
-	a.clientMux = new(sync.RWMutex)
-	count := int32(0)
-	a.clientCount = &count
 	a.AlwaysRoute = conf.AlwaysRoute
 	return
 }
@@ -140,6 +148,11 @@ func (a *Application) SetRouter(router Router) error {
 	return nil
 }
 
+func (a *Application) SetLocator(locator Locator) error {
+	a.locator = locator
+	return nil
+}
+
 func (a *Application) SetBalancer(b Balancer) error {
 	a.balancer = b
 	return nil
@@ -150,16 +163,22 @@ func (a *Application) SetServer(server *Serv) error {
 	return nil
 }
 
-func (a *Application) SetHandlers(handlers *Handler) error {
-	a.handlers = handlers
+func (a *Application) SetSocketHandler(handlers *SocketHandler) error {
+	a.sh = handlers
+	return nil
+}
+
+func (a *Application) SetEndpointHandler(handlers *EndpointHandler) error {
+	a.eh = handlers
 	return nil
 }
 
 // Start the application
 func (a *Application) Run() (errChan chan error) {
-	errChan = make(chan error)
+	errChan = make(chan error, 3)
 
-	go a.handlers.Start(errChan)
+	go a.sh.Start(errChan)
+	go a.eh.Start(errChan)
 	go a.router.Start(errChan)
 
 	return errChan
@@ -190,6 +209,10 @@ func (a *Application) Router() Router {
 	return a.router
 }
 
+func (a *Application) Locator() Locator {
+	return a.locator
+}
+
 func (a *Application) Balancer() Balancer {
 	return a.balancer
 }
@@ -198,8 +221,12 @@ func (a *Application) Server() *Serv {
 	return a.server
 }
 
-func (a *Application) Handlers() *Handler {
-	return a.handlers
+func (a *Application) SocketHandler() *SocketHandler {
+	return a.sh
+}
+
+func (a *Application) EndpointHandler() *EndpointHandler {
+	return a.eh
 }
 
 func (a *Application) TokenKey() []byte {
@@ -207,7 +234,7 @@ func (a *Application) TokenKey() []byte {
 }
 
 func (a *Application) ClientCount() (count int) {
-	return int(atomic.LoadInt32(a.clientCount))
+	return int(atomic.LoadInt32(&a.clientCount))
 }
 
 func (a *Application) ClientExists(uaid string) (collision bool) {
@@ -223,13 +250,20 @@ func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
 }
 
 func (a *Application) AddClient(uaid string, client *Client) {
+	if a.IsClosed() {
+		client.PushWS.Close()
+		return
+	}
 	a.clientMux.Lock()
 	a.clients[uaid] = client
 	a.clientMux.Unlock()
-	atomic.AddInt32(a.clientCount, 1)
+	atomic.AddInt32(&a.clientCount, 1)
 }
 
 func (a *Application) RemoveClient(uaid string) {
+	if a.IsClosed() {
+		return
+	}
 	var ok bool
 	a.clientMux.Lock()
 	if _, ok = a.clients[uaid]; ok {
@@ -237,25 +271,71 @@ func (a *Application) RemoveClient(uaid string) {
 	}
 	a.clientMux.Unlock()
 	if ok {
-		atomic.AddInt32(a.clientCount, -1)
+		atomic.AddInt32(&a.clientCount, -1)
 	}
 }
 
-func (a *Application) Stop() {
-	plugins := []io.Closer{
-		a.server,   // Stop the WebSocket and update listeners.
-		a.balancer, // Deregister from the balancer.
-		a.router,   // Stop the routing listener and locator.
-		a.store,    // Close database connections.
-		a.log,      // Shut down the logger.
+func (a *Application) closeClients() {
+	a.clientMux.Lock()
+	defer a.clientMux.Unlock()
+	for uaid, client := range a.clients {
+		delete(a.clients, uaid)
+		client.PushWS.Close()
 	}
-	for _, c := range plugins {
-		if c != nil {
-			c.Close()
+}
+
+func (a *Application) CloseOnce() error {
+	var errors MultipleError
+	if eh := a.EndpointHandler(); eh != nil {
+		// Stop the update listener; close all connections.
+		if err := eh.Close(); err != nil {
+			errors = append(errors, err)
 		}
 	}
+	if b := a.Balancer(); b != nil {
+		// Deregister from the balancer.
+		if err := b.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if sh := a.SocketHandler(); sh != nil {
+		// Close the WebSocket listener.
+		if err := sh.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	// Disconnect existing clients.
+	a.closeClients()
+	// Stop publishing client counts.
+	close(a.closeChan)
+	a.closeWait.Wait()
+	if l := a.Locator(); l != nil {
+		// Deregister from the discovery service.
+		if err := a.locator.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if a.router != nil {
+		// Close the routing listener.
+		if err := a.router.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	return nil
 }
 
-func isSameOrigin(a, b *url.URL) bool {
-	return a.Scheme == b.Scheme && a.Host == b.Host
+func (a *Application) sendClientCount() {
+	defer a.closeWait.Done()
+	ticker := time.NewTicker(1 * time.Second)
+	for ok := true; ok; {
+		select {
+		case ok = <-a.closeChan:
+		case <-ticker.C:
+			a.Metrics().Gauge("update.client.connections", int64(a.ClientCount()))
+		}
+	}
+	ticker.Stop()
 }

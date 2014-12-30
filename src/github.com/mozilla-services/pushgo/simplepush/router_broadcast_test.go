@@ -24,7 +24,7 @@ func TestBroadcastRouter(t *testing.T) {
 	version := int64(10)
 	sentAt := time.Now()
 
-	app := new(Application)
+	app := NewApplication()
 	appConfig := app.ConfigStruct()
 	app.Init(nil, appConfig)
 
@@ -46,14 +46,10 @@ func TestBroadcastRouter(t *testing.T) {
 	router.Init(app, conf)
 	app.SetRouter(router)
 
-	router.SetLocator(mckLocator)
+	app.SetLocator(mckLocator)
 
 	srv := new(Serv)
 	defSrvConfig := srv.ConfigStruct()
-	srvConfig := defSrvConfig.(*ServerConfig)
-
-	srvConfig.Client.Addr = ""
-	srvConfig.Endpoint.Addr = ""
 	srv.Init(app, defSrvConfig)
 	app.SetServer(srv)
 
@@ -136,7 +132,7 @@ func BenchmarkRouter(b *testing.B) {
 	version := int64(10)
 	sentAt := time.Now()
 
-	app := new(Application)
+	app := NewApplication()
 	appConfig := app.ConfigStruct()
 	app.Init(nil, appConfig)
 
@@ -158,14 +154,10 @@ func BenchmarkRouter(b *testing.B) {
 	router.Init(app, conf)
 	app.SetRouter(router)
 
-	router.SetLocator(mckLocator)
+	app.SetLocator(mckLocator)
 
 	srv := new(Serv)
 	defSrvConfig := srv.ConfigStruct()
-	srvConfig := defSrvConfig.(*ServerConfig)
-
-	srvConfig.Client.Addr = ""
-	srvConfig.Endpoint.Addr = ""
 	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 	srv.Init(app, defSrvConfig)
 	app.SetServer(srv)
@@ -215,7 +207,7 @@ func TestBroadcastStaticLocator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error starting test application %q: %s", cServer.Name, err)
 	}
-	defer cApp.Stop()
+	defer cServer.Stop()
 	defer cConn.Close()
 	defer cConn.Purge()
 
@@ -266,7 +258,7 @@ func TestBroadcastStaticLocator(t *testing.T) {
 			}
 			return
 		}
-		uri.Host = app.Server().EndpointListener().Addr().String()
+		uri.Host = app.EndpointHandler().Listener().Addr().String()
 		for i := 1; i <= count; i++ {
 			if err = client.Notify(uri.String(), int64(i)); err != nil {
 				break

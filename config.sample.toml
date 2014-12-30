@@ -43,7 +43,13 @@
 # sadly, happens a fair bit.)
 #always_route = false
 
-[default.websocket]
+[websocket]
+# A list of allowed WebSocket origins. An empty list allows all origins;
+# otherwise, the scheme, hostname, and port specified in the client's
+# `Origin` header must match at least one allowed origin.
+#origins = []
+
+[websocket.listener]
 # The WebSocket listener address and port. 0.0.0.0 = all interfaces
 addr = ":8080"
 # The maximum number of concurrent connections that this listener can
@@ -55,7 +61,11 @@ addr = ":8080"
 #cert_file = "certs/test.crt"
 #key_file = "certs/test.key"
 
-[default.endpoint]
+[endpoint]
+# Maximum allowed data segment (in bytes)
+#max_data_len = 4096
+
+[endpoint.listener]
 addr = ":8081"
 #max_connections = 1000
 #tcp_keep_alive = "3m"
@@ -219,9 +229,12 @@ type = "static"
 # list of absolute etcd server URLs
 #servers = ["http://localhost:4001"]
 # Simple Push nodes should be considered "valid" for this period
-#defaultTTL = "24h"
+#defaultTTL = "1m"
 # The polling interval for new nodes.
-#refresh_interval = "5m"
+#refresh_interval = "10s"
+# Time to wait after removing the host from etcd during shutdown. Should
+# be 1-2 times the refresh_interval.
+#close_delay = "20s"
 
 #[discovery.retry]
 #retries = 5
@@ -236,14 +249,6 @@ type = "static"
 #prefix = "myhostname.simplepush"
 #statsd_server = "heka_statsdinput_host:1234"
 
-[handlers]
-# Maximum allowed data segment (in bytes)
-#max_data_len = 4096
-# A list of allowed WebSocket origins. An empty list allows all origins;
-# otherwise, the scheme, hostname, and port specified in the client's
-# `Origin` header must match at least one allowed origin.
-#origins = []
-
 [balancer]
 type = "none"
 
@@ -252,9 +257,18 @@ type = "none"
 #servers = ["http://localhost:4001"]
 # The maximum amount of time that published client counts will be
 # considered valid.
-#ttl = "5m"
+#ttl = "1m"
 # The connected client threshold. Once exceeded, connecting clients will be
 # redirected to hosts with the fewest connections.
 #threshold = 0.95
 # The client count publication interval.
-#update_interval = "1m"
+#update_interval = "10s"
+# Time to wait after removing client counts from etcd during shutdown. Should
+# be 1-2 times the update_interval.
+#close_delay = "20s"
+
+#[balancer.retry]
+#retries = 5
+#delay = "200ms"
+#max_delay = "5s"
+#max_jitter = "400ms"

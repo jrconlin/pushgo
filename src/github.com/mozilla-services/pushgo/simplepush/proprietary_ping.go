@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/mozilla-services/pushgo/retry"
@@ -164,13 +163,16 @@ func (r *UDPPing) Close() error {
 // ===
 // Google Cloud Messaging Proprietary Ping interface
 // NOTE: This is still experimental.
-func NewGCMPing() *GCMPing {
-	return &GCMPing{
+func NewGCMPing() (r *GCMPing) {
+	r = &GCMPing{
 		closeSignal: make(chan bool),
 	}
+	r.Closable.CloserOnce = r
+	return r
 }
 
 type GCMPing struct {
+	Closable
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
@@ -181,9 +183,7 @@ type GCMPing struct {
 	apiKey      string
 	ttl         uint64
 	rh          *retry.Helper
-	closeLock   sync.Mutex
 	closeSignal chan bool
-	isClosed    bool
 }
 
 type GCMPingConfig struct {
@@ -399,13 +399,7 @@ func (r *GCMPing) CloseNotify() <-chan bool {
 	return r.closeSignal
 }
 
-func (r *GCMPing) Close() error {
-	r.closeLock.Lock()
-	defer r.closeLock.Unlock()
-	if r.isClosed {
-		return nil
-	}
-	r.isClosed = true
+func (r *GCMPing) CloseOnce() error {
 	close(r.closeSignal)
 	return nil
 }

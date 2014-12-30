@@ -19,11 +19,18 @@ var configSource = `
 current_host = "push.services.mozilla.com"
 use_aws_host = true
 
-    [default.websocket]
+[websocket]
+    origins = ["https://push.services.mozilla.com",
+               "https://loop.services.mozilla.com"]
+
+    [websocket.listener]
     addr = ":8080"
     max_connections = 25000
 
-    [default.endpoint]
+[endpoint]
+    max_data_len = 256
+
+    [endpoint.listener]
     addr = ":8081"
     max_connections = 3000
 
@@ -47,11 +54,6 @@ bucket_size = 15
 
 [discovery]
 
-[handlers]
-origins = ["https://push.services.mozilla.com",
-           "https://loop.services.mozilla.com"]
-max_data_len = 256
-
 [balancer]
 type = "static"
 `
@@ -59,11 +61,11 @@ type = "static"
 var env = envconf.New([]string{
 	"PUSHGO_DEFAULT_CURRENT_HOST=push.services.mozilla.com",
 	"pushgo_default_use_aws=0",
-	"PushGo_Handlers_Origins=https://push.services.mozilla.com",
-	"PUSHGO_DEFAULT_WS_ADDR=",
-	"PUSHGO_DEFAULT_WS_MAX_CONNS=25000",
-	"pushgo_default_endpoint_addr=",
-	"pushgo_default_endpoint_max_conns=6000",
+	"PushGo_WebSocket_Origins=https://push.services.mozilla.com",
+	"PUSHGO_WEBSOCKET_LISTENER_ADDR=",
+	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNS=25000",
+	"pushgo_endpoint_listener_addr=",
+	"pushgo_endpoint_listener_max_conns=6000",
 	"PUSHGO_logging_TYPE=stdout",
 	"pushgo_LOGGING_FORMAT=text",
 	"pushgo_logging_FILTER=0",
@@ -72,7 +74,7 @@ var env = envconf.New([]string{
 	"PushGo_Router_Bucket_Size=15",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
 	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
-	"PUSHGO_HANDLERS_MAX_DATA_LEN=512",
+	"PUSHGO_ENDPOINT_MAX_DATA_LEN=512",
 	"PUSHGO_BALANCER_TYPE=none",
 })
 
@@ -85,15 +87,16 @@ func TestConfigFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing app: %s", err)
 	}
-	defer app.Stop()
+	defer app.Close()
 	hostname := "push.services.mozilla.com"
 	if app.Hostname() != hostname {
 		t.Errorf("Mismatched hostname: got %#v; want %#v", app.Hostname(), hostname)
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
-	if !reflect.DeepEqual(origins, app.handlers.origins) {
-		t.Errorf("Mismatched origins: got %#v; want %#v", app.handlers.origins, origins)
+	if !reflect.DeepEqual(origins, app.sh.origins) {
+		t.Errorf("Mismatched origins: got %#v; want %#v",
+			app.sh.origins, origins)
 	}
 	logger := app.Logger()
 	if stdOutLogger, ok := logger.Logger.(*StdOutLogger); ok {
@@ -131,7 +134,7 @@ func TestConfigFile(t *testing.T) {
 	} else {
 		t.Errorf("Pinger type assertion failed: %#v", pinger)
 	}
-	handlers := app.Handlers()
+	handlers := app.EndpointHandler()
 	if handlers.maxDataLen != 512 {
 		t.Errorf("Wrong maximum data size: got %d; want 512", handlers.maxDataLen)
 	}
@@ -144,7 +147,8 @@ func TestConfigFile(t *testing.T) {
 func TestLoad(t *testing.T) {
 	var (
 		appInst                                                    *Application
-		mockApp, mockMetrics, mockRouter, mockServ, mockHandler    *mockPlugin
+		mockApp, mockMetrics, mockRouter, mockServ                 *mockPlugin
+		mockSocket, mockEndpoint, mockHealth                       *mockPlugin
 		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
 	loader := PluginLoaders{
@@ -241,14 +245,38 @@ func TestLoad(t *testing.T) {
 			}
 			return balancer, nil
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			if err := isReady(mockLogger, mockMetrics); err != nil {
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger, mockMetrics, mockStore); err != nil {
 				return nil, err
 			}
-			h := &Handler{}
-			mockHandler = newMockPlugin(PluginHandlers, h)
-			if err := loadEnvConfig(env, "handlers", app, mockHandler); err != nil {
-				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
+			h := NewSocketHandler()
+			mockSocket = newMockPlugin(PluginSocket, h)
+			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
+				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger, mockMetrics, mockStore, mockRouter,
+				mockPing, mockBalancer); err != nil {
+
+				return nil, err
+			}
+			h := NewEndpointHandler()
+			mockEndpoint = newMockPlugin(PluginSocket, h)
+			if err := loadEnvConfig(env, "endpoint", app, mockEndpoint); err != nil {
+				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockSocket, mockEndpoint); err != nil {
+				return nil, err
+			}
+			h := NewHealthHandlers()
+			mockHealth = newMockPlugin(PluginHealth, h)
+			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
 			}
 			return h, nil
 		},
@@ -257,7 +285,10 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.Stop()
+	if err := isReady(mockHealth); err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
 	if app != appInst {
 		t.Errorf("Mismatched app instances: got %#v; want %#v", app, appInst)
 	}
@@ -294,7 +325,6 @@ type mockPlugin struct {
 	typ               PluginType
 	configStructCalls int
 	initCalls         int
-	ready             bool
 }
 
 func (mp *mockPlugin) ConfigStruct() interface{} {
@@ -318,12 +348,12 @@ func (mp *mockPlugin) Ready() (err error) {
 		return fmt.Errorf("Uninitialized plugin")
 	}
 	if mp.configStructCalls != 1 {
-		return fmt.Errorf("Mismatched ConfigStruct() calls: want 1; got %d",
-			mp.configStructCalls)
+		return fmt.Errorf("Mismatched ConfigStruct() calls for %s: want 1; got %d",
+			mp.typ, mp.configStructCalls)
 	}
 	if mp.initCalls != 1 {
-		return fmt.Errorf("Mismatched Init() calls: want 1; got %d",
-			mp.initCalls)
+		return fmt.Errorf("Mismatched Init() calls for %s: want 1; got %d",
+			mp.typ, mp.initCalls)
 	}
 	return nil
 }
