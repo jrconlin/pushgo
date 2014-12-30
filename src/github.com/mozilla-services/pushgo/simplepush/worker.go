@@ -113,7 +113,7 @@ func NewWorker(app *Application, id string) *WorkerWS {
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
 		id:           id,
-		state:        WorkerActive,
+		state:        WorkerInactive,
 		stopped:      false,
 		pingInt:      app.clientMinPing,
 		helloTimeout: app.clientHelloTimeout,
@@ -155,10 +155,22 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		if self.stopped {
 			return
 		}
-		sock.Socket.SetReadDeadline(time.Now().Add(self.pongInterval))
+		var deadline time.Time
+		if self.state == WorkerInactive {
+			deadline = time.Now().Add(self.helloTimeout)
+		} else {
+			deadline = time.Now().Add(self.pongInterval)
+		}
+		sock.Socket.SetReadDeadline(deadline)
 		if err = sock.Socket.ReadBinary(&raw); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if err = sock.Socket.WriteText("{}"); err == nil {
+				if self.state == WorkerInactive {
+					if self.logger.ShouldLog(DEBUG) {
+						self.logger.Debug("dash", "Worker Idle connection. Closing socket",
+							LogFields{"rid": self.id})
+					}
+					sock.Socket.Close()
+				} else if err = sock.Socket.WriteText("{}"); err == nil {
 					continue
 				}
 			}
@@ -266,17 +278,6 @@ func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret 
 
 // General workhorse loop for the websocket handler.
 func (self *WorkerWS) Run(sock *PushWS) {
-	time.AfterFunc(self.helloTimeout,
-		func() {
-			if sock.UAID() == "" {
-				if self.logger.ShouldLog(DEBUG) {
-					self.logger.Debug("dash", "Worker Idle connection. Closing socket",
-						LogFields{"rid": self.id})
-				}
-				sock.Socket.Close()
-			}
-		})
-
 	defer func(sock *PushWS) {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
