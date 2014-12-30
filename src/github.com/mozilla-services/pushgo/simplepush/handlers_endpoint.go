@@ -318,7 +318,7 @@ sendUpdate:
 		if cn, ok := resp.(http.CloseNotifier); ok {
 			cancelSignal = cn.CloseNotify()
 		}
-		if err = h.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
+		if _, err = h.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
 			resp.WriteHeader(http.StatusNotFound)
 			resp.Write([]byte("false"))
 			return
