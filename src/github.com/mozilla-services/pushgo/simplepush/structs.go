@@ -7,8 +7,6 @@ package simplepush
 import (
 	"sync"
 	"time"
-
-	"golang.org/x/net/websocket"
 )
 
 type CommandType int
@@ -42,8 +40,8 @@ type PushCommand struct {
 
 type PushWS struct {
 	uaidLock sync.RWMutex
-	uaid     string          // Hex-encoded client ID; not normalized
-	Socket   *websocket.Conn // Remote connection
+	uaid     string // Hex-encoded client ID; not normalized
+	Socket   Socket // Remote connection
 	Store
 	Logger    *SimpleLogger
 	Metrics   *Metrics
@@ -88,25 +86,6 @@ func (ws *PushWS) Close() error {
 		return nil
 	}
 	return socket.Close()
-}
-
-func (ws *PushWS) Origin() string {
-	// protect against null pointers.
-	if ws == nil {
-		return "Unknown"
-	}
-	if ws.Socket == nil {
-		return "No Socket"
-	}
-	conf := ws.Socket.Config()
-	if conf == nil {
-		return "No Socket Config"
-	}
-	origin := conf.Origin
-	if origin == nil {
-		return "No Socket Origin"
-	}
-	return origin.String()
 }
 
 // o4fs

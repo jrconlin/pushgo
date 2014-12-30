@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/websocket"
-
 	"github.com/mozilla-services/pushgo/id"
 )
 
@@ -158,9 +156,9 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 			return
 		}
 		sock.Socket.SetReadDeadline(time.Now().Add(self.pongInterval))
-		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
+		if err = sock.Socket.ReadBinary(&raw); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if err = websocket.Message.Send(sock.Socket, "{}"); err == nil {
+				if err = sock.Socket.WriteText("{}"); err == nil {
 					continue
 				}
 			}
@@ -263,7 +261,7 @@ func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret 
 		return
 	}
 	reply["status"], reply["error"] = ErrToStatus(err)
-	return websocket.JSON.Send(sock.Socket, reply)
+	return sock.Socket.WriteJSON(reply)
 }
 
 // General workhorse loop for the websocket handler.
@@ -341,8 +339,8 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 				self.logger.Warn("worker", "Failed to redirect client", LogFields{
 					"error": err.Error(), "rid": self.id, "cmd": header.Type})
 			}
-			_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":429}`,
-				header.Type)
+			reply := fmt.Sprintf(`{"messageType":"%s","status":429}`, header.Type)
+			err = sock.Socket.WriteText(reply)
 			self.stopped = true
 			return err
 		}
@@ -353,8 +351,9 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			self.logger.Debug("worker", "Redirecting client", LogFields{
 				"rid": self.id, "cmd": header.Type, "origin": origin})
 		}
-		_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
+		reply := fmt.Sprintf(`{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
 			header.Type, uaid, origin)
+		err = sock.Socket.WriteText(reply)
 		self.stopped = true
 		return err
 	}
@@ -380,13 +379,13 @@ registerDevice:
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "hello", "uaid": uaid})
 	}
-	// websocket.JSON.Send(sock.Socket, JsMap{
+	// sock.Socket.WriteJSON(JsMap{
 	// 	"messageType": header.Type,
 	// 	"status":      status,
 	// 	"uaid":        uaid})
-	_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":%d,"uaid":"%s"}`,
+	reply := fmt.Sprintf(`{"messageType":"%s","status":%d,"uaid":"%s"}`,
 		header.Type, status, uaid)
-	if err != nil {
+	if err = sock.Socket.WriteText(reply); err != nil {
 		if logWarning {
 			self.logger.Warn("dash", "Error writing client handshake", LogFields{
 				"rid": self.id, "error": err.Error()})
@@ -598,7 +597,7 @@ func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []by
 			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	websocket.JSON.Send(sock.Socket, RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
+	sock.Socket.WriteJSON(RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
 	return err
 }
@@ -646,7 +645,7 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "unregister"})
 	}
-	websocket.JSON.Send(sock.Socket, UnregisterReply{header.Type, 200, request.ChannelID})
+	sock.Socket.WriteJSON(UnregisterReply{header.Type, 200, request.ChannelID})
 	self.metrics.Increment("updates.client.unregister")
 	return nil
 }
@@ -724,7 +723,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 			"rid":     self.id,
 			"updates": fmt.Sprintf("[%s]", strings.Join(logStrings, ", "))})
 	}
-	websocket.JSON.Send(sock.Socket, reply)
+	sock.Socket.WriteJSON(reply)
 	return nil
 }
 
@@ -732,8 +731,12 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 	now := time.Now()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
+			source, ok := sock.Socket.Origin()
+			if !ok {
+				source = "No Socket Origin"
+			}
 			self.logger.Warn("dash", "Client sending too many pings",
-				LogFields{"rid": self.id, "source": sock.Origin()})
+				LogFields{"rid": self.id, "source": source})
 		}
 		self.stopped = true
 		self.metrics.Increment("updates.client.too_many_pings")
@@ -741,9 +744,9 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 	}
 	self.lastPing = now
 	if self.app.pushLongPongs {
-		websocket.JSON.Send(sock.Socket, PingReply{header.Type, 200})
+		sock.Socket.WriteJSON(PingReply{header.Type, 200})
 	} else {
-		websocket.Message.Send(sock.Socket, "{}")
+		sock.Socket.WriteText("{}")
 	}
 	self.metrics.Increment("updates.client.ping")
 	return nil
@@ -757,7 +760,7 @@ func (self *WorkerWS) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error
 	       Arguments:JsMap{"uaid": sock.UAID()}}
 	   result := <-sock.Scmd
 	*/
-	websocket.Message.Send(sock.Socket, "{}")
+	sock.Socket.WriteText("{}")
 	return nil
 }
 
