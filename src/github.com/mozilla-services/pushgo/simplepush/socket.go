@@ -18,9 +18,9 @@ type Socket interface {
 	SetWriteDeadline(time.Time) error
 	ReadJSON(v interface{}) error
 	WriteJSON(v interface{}) error
-	ReadBinary(data *[]byte) error
+	ReadBinary() (data []byte, err error)
 	WriteBinary(data []byte) error
-	ReadText(data *string) error
+	ReadText() (data string, err error)
 	WriteText(data string) error
 	Close() error
 }
@@ -55,16 +55,18 @@ func (ws *WebSocket) WriteJSON(v interface{}) error {
 	return websocket.JSON.Send((*websocket.Conn)(ws), v)
 }
 
-func (ws *WebSocket) ReadBinary(data *[]byte) error {
-	return websocket.Message.Receive((*websocket.Conn)(ws), data)
+func (ws *WebSocket) ReadBinary() (data []byte, err error) {
+	err = websocket.Message.Receive((*websocket.Conn)(ws), &data)
+	return
 }
 
 func (ws *WebSocket) WriteBinary(data []byte) error {
 	return websocket.Message.Send((*websocket.Conn)(ws), data)
 }
 
-func (ws *WebSocket) ReadText(data *string) error {
-	return websocket.Message.Receive((*websocket.Conn)(ws), data)
+func (ws *WebSocket) ReadText() (data string, err error) {
+	err = websocket.Message.Receive((*websocket.Conn)(ws), &data)
+	return
 }
 
 func (ws *WebSocket) WriteText(data string) error {
@@ -113,9 +115,8 @@ func (rs *RecorderSocket) WriteJSON(v interface{}) error {
 	return rs.outEnc.Encode(v)
 }
 
-func (rs *RecorderSocket) ReadBinary(data *[]byte) (err error) {
-	*data, err = rs.Incoming.ReadBytes('\n')
-	return
+func (rs *RecorderSocket) ReadBinary() (data []byte, err error) {
+	return rs.Incoming.ReadBytes('\n')
 }
 
 func (rs *RecorderSocket) WriteBinary(data []byte) error {
@@ -124,9 +125,8 @@ func (rs *RecorderSocket) WriteBinary(data []byte) error {
 	return nil
 }
 
-func (rs *RecorderSocket) ReadText(data *string) (err error) {
-	*data, err = rs.Incoming.ReadString('\n')
-	return
+func (rs *RecorderSocket) ReadText() (data string, err error) {
+	return rs.Incoming.ReadString('\n')
 }
 
 func (rs *RecorderSocket) WriteText(data string) error {

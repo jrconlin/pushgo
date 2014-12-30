@@ -171,7 +171,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 			deadline = time.Now().Add(self.pongInterval)
 		}
 		sock.Socket.SetReadDeadline(deadline)
-		if err = sock.Socket.ReadBinary(&raw); err != nil {
+		if raw, err = sock.Socket.ReadBinary(); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				if self.state == WorkerInactive {
 					if self.logger.ShouldLog(DEBUG) {
