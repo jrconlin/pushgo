@@ -421,11 +421,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
 
 // Update updates the version for the given device ID and channel ID.
 // Implements Store.Update().
-func (s *EmceeStore) Update(key string, version int64) (err error) {
-	uaid, chid, ok := s.KeyToIDs(key)
-	if !ok {
-		return ErrInvalidKey
-	}
+func (s *EmceeStore) Update(uaid, chid string, version int64) (err error) {
 	if len(uaid) == 0 {
 		return ErrNoID
 	}

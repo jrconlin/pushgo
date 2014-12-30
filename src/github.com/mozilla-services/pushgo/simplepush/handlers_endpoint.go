@@ -293,7 +293,7 @@ sendUpdate:
 				"version": strconv.FormatInt(version, 10)})
 	}
 
-	if err = h.store.Update(pk, version); err != nil {
+	if err = h.store.Update(uaid, chid, version); err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not update channel", LogFields{
 				"rid":     requestID,

@@ -74,7 +74,7 @@ func (n *NoStore) Exists(uaid string) bool {
 }
 
 func (*NoStore) Register(string, string, int64) error                   { return nil }
-func (*NoStore) Update(string, int64) error                             { return nil }
+func (*NoStore) Update(string, string, int64) error                     { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }
 func (*NoStore) Drop(string, string) error                              { return nil }
 func (*NoStore) FetchAll(string, time.Time) ([]Update, []string, error) { return nil, nil, nil }

@@ -387,26 +387,16 @@ func TestUpdateClient(t *testing.T) {
 
 	Convey("Should flush updates to the worker", t, func() {
 		gomock.InOrder(
-			mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", true),
-			mckStore.EXPECT().Update("123", version).Return(nil),
+			mckStore.EXPECT().Update(uaid, chid, version).Return(nil),
 			mckWorker.EXPECT().Flush(pws, int64(0), chid, version, data),
 		)
 		err := srv.UpdateClient(client, chid, uaid, version, time.Time{}, data)
 		So(err, ShouldBeNil)
 	})
 
-	Convey("Should fail for invalid primary keys", t, func() {
-		mckStore.EXPECT().IDsToKey(uaid, chid).Return("", false)
-		err := srv.UpdateClient(client, chid, uaid, version, time.Time{}, data)
-		So(err, ShouldNotBeNil)
-	})
-
 	Convey("Should fail if storage is unavailable", t, func() {
 		updateErr := errors.New("omg, everything is exploding")
-		gomock.InOrder(
-			mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", true),
-			mckStore.EXPECT().Update("123", version).Return(updateErr),
-		)
+		mckStore.EXPECT().Update(uaid, chid, version).Return(updateErr)
 		err := srv.UpdateClient(client, chid, uaid, version, time.Time{}, data)
 		So(err, ShouldEqual, updateErr)
 	})
@@ -414,8 +404,7 @@ func TestUpdateClient(t *testing.T) {
 	Convey("Should fail if the worker returns an error", t, func() {
 		flushErr := errors.New("cannot brew coffee with a teapot")
 		gomock.InOrder(
-			mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", true),
-			mckStore.EXPECT().Update("123", version).Return(nil),
+			mckStore.EXPECT().Update(uaid, chid, version).Return(nil),
 			mckWorker.EXPECT().Flush(pws, int64(0), chid, version, data).Return(flushErr),
 		)
 		err := srv.UpdateClient(client, chid, uaid, version, time.Time{}, data)

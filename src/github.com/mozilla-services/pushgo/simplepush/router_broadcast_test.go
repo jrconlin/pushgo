@@ -98,8 +98,8 @@ func TestBroadcastRouter(t *testing.T) {
 
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
 		mckStat.EXPECT().Increment("updates.routed.incoming")
-		mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
+			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
@@ -180,8 +180,8 @@ func BenchmarkRouter(b *testing.B) {
 		mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
-		mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
+			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()

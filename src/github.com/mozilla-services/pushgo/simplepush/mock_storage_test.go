@@ -103,14 +103,14 @@ func (_mr *_MockStoreRecorder) Register(arg0, arg1, arg2 interface{}) *gomock.Ca
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Register", arg0, arg1, arg2)
 }
 
-func (_m *MockStore) Update(key string, version int64) error {
-	ret := _m.ctrl.Call(_m, "Update", key, version)
+func (_m *MockStore) Update(suaid string, schid string, version int64) error {
+	ret := _m.ctrl.Call(_m, "Update", suaid, schid, version)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockStoreRecorder) Update(arg0, arg1 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Update", arg0, arg1)
+func (_mr *_MockStoreRecorder) Update(arg0, arg1, arg2 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Update", arg0, arg1, arg2)
 }
 
 func (_m *MockStore) Unregister(suaid string, schid string) error {
