@@ -61,6 +61,12 @@ addr = ":8080"
 [endpoint]
 # Maximum allowed data segment (in bytes)
 #max_data_len = 4096
+# Always route. This will force a server to always send a message out for
+# routing, even if the server believes that the client is connected. This
+# is useful in cases where a client may have reconnected to a different
+# server but the old connection has yet to time out for the server. (This,
+# sadly, happens a fair bit.)
+#always_route = false
 
 [endpoint.listener]
 addr = ":8081"

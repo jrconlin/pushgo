@@ -23,32 +23,35 @@ func NewEndpointHandler() (h *EndpointHandler) {
 }
 
 type EndpointHandlerConfig struct {
-	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
-	Listener   ListenerConfig
+	MaxDataLen  int  `toml:"max_data_len" env:"max_data_len"`
+	AlwaysRoute bool `toml:"always_route" env:"always_route"`
+	Listener    ListenerConfig
 }
 
 type EndpointHandler struct {
 	Closable
-	app        *Application
-	logger     *SimpleLogger
-	metrics    Statistician
-	store      Store
-	router     Router
-	pinger     PropPinger
-	balancer   Balancer
-	hostname   string
-	tokenKey   []byte
-	listener   net.Listener
-	server     *ServeCloser
-	mux        *mux.Router
-	url        string
-	maxConns   int
-	maxDataLen int
+	app         *Application
+	logger      *SimpleLogger
+	metrics     Statistician
+	store       Store
+	router      Router
+	pinger      PropPinger
+	balancer    Balancer
+	hostname    string
+	tokenKey    []byte
+	listener    net.Listener
+	server      *ServeCloser
+	mux         *mux.Router
+	url         string
+	maxConns    int
+	maxDataLen  int
+	alwaysRoute bool
 }
 
 func (h *EndpointHandler) ConfigStruct() interface{} {
 	return &EndpointHandlerConfig{
-		MaxDataLen: 4096,
+		MaxDataLen:  4096,
+		AlwaysRoute: false,
 		Listener: ListenerConfig{
 			Addr:            ":8081",
 			MaxConns:        1000,
@@ -87,6 +90,7 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 
 	h.maxConns = conf.Listener.MaxConns
 	h.maxDataLen = conf.MaxDataLen
+	h.alwaysRoute = conf.AlwaysRoute
 
 	h.mux = mux.NewRouter()
 	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
@@ -121,6 +125,57 @@ func (h *EndpointHandler) Start(errChan chan<- error) {
 			LogFields{"url": h.url})
 	}
 	errChan <- h.server.Serve(h.listener)
+}
+
+func (h *EndpointHandler) decodePK(token string) (key string, err error) {
+	if len(token) == 0 {
+		return "", fmt.Errorf("Missing primary key")
+	}
+	if len(h.tokenKey) == 0 {
+		return token, nil
+	}
+	bpk, err := Decode(h.tokenKey, token)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes.TrimSpace(bpk)), nil
+}
+
+func (h *EndpointHandler) resolvePK(token string) (uaid, chid string, err error) {
+	pk, err := h.decodePK(token)
+	if err != nil {
+		err = fmt.Errorf("Error decoding primary key: %s", err)
+		return "", "", err
+	}
+	if !validPK(pk) {
+		err = fmt.Errorf("Invalid primary key: %q", pk)
+		return "", "", err
+	}
+	uaid, chid, ok := h.store.KeyToIDs(pk)
+	if !ok {
+		err = fmt.Errorf("Could not resolve primary key: %q", pk)
+		return "", "", err
+	}
+	if len(chid) == 0 {
+		err = fmt.Errorf("Primary key missing channel ID: %q", pk)
+		return "", "", err
+	}
+	return uaid, chid, nil
+}
+
+func (h *EndpointHandler) doPropPing(uaid string, version int64, data string) (ok bool, err error) {
+	if h.pinger == nil {
+		return false, nil
+	}
+	if ok, err = h.pinger.Send(uaid, version, data); err != nil {
+		return false, fmt.Errorf("Could not send proprietary ping: %s", err)
+	}
+	if !ok {
+		return false, nil
+	}
+	/* if this is a GCM connected host, boot vers immediately to GCM
+	 */
+	return h.pinger.CanBypassWebsocket(), nil
 }
 
 // -- REST
@@ -194,68 +249,16 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	var pk string
-	pk, ok := mux.Vars(req)["key"]
 	// TODO:
 	// is there a magic flag for proxyable endpoints?
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
-	if !ok || len(pk) == 0 {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "No token, rejecting request",
-				LogFields{"rid": requestID})
-		}
-		http.Error(resp, "Token not found", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	if tokenKey := h.tokenKey; len(tokenKey) > 0 {
+	token := mux.Vars(req)["key"]
+	if uaid, chid, err = h.resolvePK(token); err != nil {
 		// Note: dumping the []uint8 keys can produce terminal glitches
-		if h.logger.ShouldLog(DEBUG) {
-			h.logger.Debug("handlers_endpoint", "Decoding...",
-				LogFields{"rid": requestID})
-		}
-		var err error
-		bpk, err := Decode(tokenKey, pk)
-		if err != nil {
-			if logWarning {
-				h.logger.Warn("handlers_endpoint", "Could not decode primary key",
-					LogFields{"rid": requestID, "pk": pk, "error": err.Error()})
-			}
-			http.Error(resp, "", http.StatusNotFound)
-			h.metrics.Increment("updates.appserver.invalid")
-			return
-		}
-
-		pk = string(bytes.TrimSpace(bpk))
-	}
-
-	if !validPK(pk) {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Invalid primary key for update",
-				LogFields{"rid": requestID, "pk": pk})
-		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	uaid, chid, ok = h.store.KeyToIDs(pk)
-	if !ok {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Could not resolve primary key",
-				LogFields{"rid": requestID, "pk": pk})
-		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	if chid == "" {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Primary key missing channel ID",
-				LogFields{"rid": requestID, "uaid": uaid})
+				LogFields{"error": err.Error(), "rid": requestID, "token": token})
 		}
 		http.Error(resp, "Invalid Token", http.StatusNotFound)
 		h.metrics.Increment("updates.appserver.invalid")
@@ -266,27 +269,19 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	h.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	if h.pinger == nil {
-		goto sendUpdate
-	}
-	if ok, err = h.pinger.Send(uaid, version, data); err != nil {
+	canBypass, err := h.doPropPing(uaid, version, data)
+	if err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not send proprietary ping",
 				LogFields{"rid": requestID, "uaid": uaid, "error": err.Error()})
 		}
-		goto sendUpdate
-	}
-	/* if this is a GCM connected host, boot vers immediately to GCM
-	 */
-	if ok && h.pinger.CanBypassWebsocket() {
+	} else if canBypass {
 		// Neat! Might as well return.
 		h.metrics.Increment("updates.appserver.received")
-		resp.Header().Set("Content-Type", "application/json")
-		resp.Write([]byte("{}"))
+		writeSuccess(resp)
 		return
 	}
 
-sendUpdate:
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "setting version for ChannelID",
 			LogFields{"rid": requestID, "uaid": uaid, "chid": chid,
@@ -308,31 +303,47 @@ sendUpdate:
 		return
 	}
 
-	// Ping the appropriate server
-	// Is this ours or should we punt to a different server?
+	cn, _ := resp.(http.CloseNotifier)
+	if !h.deliver(cn, uaid, chid, version, requestID, data) {
+		write404(resp)
+		return
+	}
+	writeSuccess(resp)
+	return
+}
+
+// Deliver the message to the appropriate server.
+func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, version int64, requestID string, data string) (ok bool) {
 	client, clientConnected := h.app.GetClient(uaid)
-	if !clientConnected {
-		// TODO: Move PropPinger here? otherwise it's connected?
+	// Always route to other servers first, in case we're holding open a stale
+	// connection and the client has already reconnected to a different server.
+	if h.alwaysRoute || !clientConnected {
 		h.metrics.Increment("updates.routed.outgoing")
+		// Abort routing if the connection goes away.
 		var cancelSignal <-chan bool
-		if cn, ok := resp.(http.CloseNotifier); ok {
+		if cn != nil {
 			cancelSignal = cn.CloseNotify()
 		}
-		if _, err = h.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
-			resp.WriteHeader(http.StatusNotFound)
-			resp.Write([]byte("false"))
-			return
+		// Route the update.
+		ok, _ = h.router.Route(cancelSignal, uaid, chid, version,
+			time.Now().UTC(), requestID, data)
+		if ok {
+			return true
 		}
 	}
-
-	if clientConnected {
-		h.app.Server().RequestFlush(client, chid, int64(version), data)
-		h.metrics.Increment("updates.appserver.received")
+	// If the device is not connected to this server, indicate whether routing
+	// was successful.
+	if !clientConnected {
+		return ok
 	}
-
-	resp.Header().Set("Content-Type", "application/json")
-	resp.Write([]byte("{}"))
-	return
+	// Try local delivery if routing failed.
+	err := h.app.Server().RequestFlush(client, chid, version, data)
+	if err != nil {
+		h.metrics.Increment("updates.appserver.rejected")
+		return false
+	}
+	h.metrics.Increment("updates.appserver.received")
+	return true
 }
 
 func (h *EndpointHandler) CloseOnce() error {
@@ -373,6 +384,20 @@ func validPK(pk string) bool {
 		}
 	}
 	return true
+}
+
+func writeJSON(resp http.ResponseWriter, status int, data []byte) {
+	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(status)
+	resp.Write(data)
+}
+
+func writeSuccess(resp http.ResponseWriter) {
+	writeJSON(resp, http.StatusOK, []byte("{}"))
+}
+
+func write404(resp http.ResponseWriter) {
+	writeJSON(resp, http.StatusNotFound, []byte("false"))
 }
 
 // o4fs
