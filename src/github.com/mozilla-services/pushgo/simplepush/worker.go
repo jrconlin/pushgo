@@ -143,6 +143,20 @@ func harmlessConnectionError(err error) (harmless bool) {
 	return
 }
 
+func (self *WorkerWS) Deadline() (t time.Time) {
+	var d time.Duration
+	switch self.state {
+	case WorkerInactive:
+		d = self.helloTimeout
+	case WorkerActive:
+		d = self.pongInterval
+	}
+	if d > 0 {
+		t = time.Now().Add(d)
+	}
+	return
+}
+
 func (self *WorkerWS) sniffer(sock *PushWS) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
@@ -164,13 +178,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 		if self.stopped {
 			return
 		}
-		var deadline time.Time
-		if self.state == WorkerInactive {
-			deadline = time.Now().Add(self.helloTimeout)
-		} else {
-			deadline = time.Now().Add(self.pongInterval)
-		}
-		sock.Socket.SetReadDeadline(deadline)
+		sock.Socket.SetReadDeadline(self.Deadline())
 		if raw, err = sock.Socket.ReadBinary(); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				if self.state == WorkerInactive {
@@ -178,8 +186,10 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 						self.logger.Debug("dash", "Worker Idle connection. Closing socket",
 							LogFields{"rid": self.id})
 					}
-					sock.Socket.Close()
-				} else if err = sock.Socket.WriteText("{}"); err == nil {
+					self.stopped = true
+					continue
+				}
+				if err = sock.Socket.WriteText("{}"); err == nil {
 					continue
 				}
 			}
@@ -288,6 +298,7 @@ func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret 
 // General workhorse loop for the websocket handler.
 func (self *WorkerWS) Run(sock *PushWS) {
 	defer func(sock *PushWS) {
+		sock.Socket.Close()
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
@@ -297,13 +308,11 @@ func (self *WorkerWS) Run(sock *PushWS) {
 					"error": ErrStr(err),
 					"stack": string(stack[:n])})
 			}
-			sock.Socket.Close()
 		}
 		return
 	}(sock)
 
 	self.sniffer(sock)
-	sock.Socket.Close()
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("dash", "Run has completed a shut-down",
