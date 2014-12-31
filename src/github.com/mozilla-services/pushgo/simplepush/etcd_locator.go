@@ -45,6 +45,11 @@ type EtcdLocatorConf struct {
 	// will be considered valid. Defaults to "10s".
 	RefreshInterval string `toml:"refresh_interval" env:"refresh_interval"`
 
+	// StartDelay is the amount of time to wait after registering the host with
+	// etcd. This should be 1-2 times the refresh interval to ensure the locator
+	// has a complete view of the cluster.
+	StartDelay string `toml:"start_delay" env:"start_delay"`
+
 	// CloseDelay is the amount of time to wait after closing the locator and
 	// removing the host from etcd. This should be 1-2 times the refresh interval.
 	CloseDelay string `toml:"close_delay" env:"close_delay"`
@@ -59,6 +64,7 @@ type EtcdLocator struct {
 	metrics         Statistician
 	refreshInterval time.Duration
 	defaultTTL      time.Duration
+	startDelay      time.Duration
 	closeDelay      time.Duration
 	rh              *retry.Helper
 	serverList      []string
@@ -88,6 +94,7 @@ func (*EtcdLocator) ConfigStruct() interface{} {
 		Servers:         []string{"http://localhost:4001"},
 		DefaultTTL:      "1m",
 		RefreshInterval: "10s",
+		StartDelay:      "10s",
 		CloseDelay:      "20s",
 		Retry: retry.Config{
 			Retries:   5,
@@ -121,6 +128,12 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 			"default TTL too short",
 			LogFields{"value": conf.DefaultTTL})
 		return ErrMinTTL
+	}
+	if l.startDelay, err = time.ParseDuration(conf.StartDelay); err != nil {
+		l.logger.Panic("locator", "Could not parse start delay",
+			LogFields{"error": err.Error(),
+				"startDelay": conf.StartDelay})
+		return err
 	}
 	if l.closeDelay, err = time.ParseDuration(conf.CloseDelay); err != nil {
 		l.logger.Panic("locator", "Could not parse close delay",
@@ -181,7 +194,20 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	l.closeWait.Add(2)
 	go l.registerHost()
 	go l.refreshHosts()
+
+	if !l.isReady() {
+		return ErrNoLocator
+	}
 	return nil
+}
+
+func (l *EtcdLocator) isReady() (ok bool) {
+	select {
+	case ok = <-l.closeSignal:
+	case <-time.After(l.startDelay):
+		ok = true
+	}
+	return
 }
 
 func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
