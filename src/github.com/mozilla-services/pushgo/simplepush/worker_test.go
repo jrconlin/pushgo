@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -27,13 +28,13 @@ func revertWorkerMocks() {
 	idGenerate = id.Generate
 }
 
-func newTestApp(t *testing.T) (app *Application) {
+func newTestApp(tb TBLoggingInterface) (app *Application) {
 	app = NewApplication()
 	app.hostname = "test"
 	app.clientMinPing = 10 * time.Second
 	app.clientHelloTimeout = 10 * time.Second
 	app.pushLongPongs = true
-	log, _ := NewLogger(&TestLogger{DEBUG, t})
+	log, _ := NewLogger(&TestLogger{DEBUG, tb})
 	app.SetLogger(log)
 
 	tm := &TestMetrics{
@@ -114,6 +115,51 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 	Convey("Should reject duplicate handshakes for mismatched IDs", t, func() {
 		// ...
 	})
+}
+
+func BenchmarkWorkerRun(b *testing.B) {
+	// I don't believe that goconvey handles benchmark well, so sadly, can't
+	// reuse the test code.
+	installWorkerMocks()
+	defer revertWorkerMocks()
+
+	app := newTestApp(b)
+	rs := NewRecorderSocket()
+
+	// Prebuild the buffers so we're not timing JSON.
+	helob := bytes.NewBuffer([]byte{})
+	regb := bytes.NewBuffer([]byte{})
+	unregb := bytes.NewBuffer([]byte{})
+	json.Compact(helob, []byte(`{
+			"messageType": "hello",
+			"uaid": "",
+			"channelIDs": []
+		}`))
+	helob.WriteByte('\n')
+	json.Compact(regb, []byte(`{
+			"messageType": "register",
+			"channelID": "89101cfa01dd4294a00e3a813cb3da97"
+		}`))
+	regb.WriteByte('\n')
+	json.Compact(unregb, []byte(`{
+			"messageType": "unregister",
+			"channelID": "89101cfa01dd4294a00e3a813cb3da97"
+		}`))
+	unregb.WriteByte('\n')
+
+	// Reset so we only test the bits we care about.
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
+		rs.Incoming.Write(helob.Bytes())
+		rs.Incoming.Write(regb.Bytes())
+		rs.Incoming.WriteString("{}")
+		rs.Incoming.WriteByte('\n')
+		rs.Incoming.Write(unregb.Bytes())
+		wws := NewWorker(app, "test")
+		wws.Run(pws)
+		rs.Outgoing.Truncate(0)
+	}
 }
 
 func TestWorkerRun(t *testing.T) {

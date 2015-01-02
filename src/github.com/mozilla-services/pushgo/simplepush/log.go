@@ -15,7 +15,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/mozilla-services/pushgo/id"
@@ -527,9 +526,13 @@ func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 // TestLogger is used by the go test functions.
 
+type TBLoggingInterface interface {
+	Logf(string, ...interface{})
+}
+
 type TestLogger struct {
 	filter LogLevel
-	t      *testing.T
+	t      TBLoggingInterface
 }
 
 func (r *TestLogger) Init(app *Application, config interface{}) (err error) {
