@@ -74,7 +74,11 @@ func newTestApp(tb TBLoggingInterface) (app *Application) {
 	eh := NewEndpointHandler()
 	ehConf := eh.ConfigStruct().(*EndpointHandlerConfig)
 	ehConf.Listener.Addr = ""
-	eh.Init(app, ehConf)
+	if err := eh.Init(app, ehConf); err != nil {
+		tb.Logf("Could not init Endpoint: %s", err)
+		return nil
+	}
+
 	app.SetEndpointHandler(eh)
 
 	hh := NewHealthHandlers()
