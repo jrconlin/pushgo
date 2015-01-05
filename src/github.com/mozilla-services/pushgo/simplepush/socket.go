@@ -95,6 +95,10 @@ type RecorderSocket struct {
 	outEnc   *json.Encoder
 }
 
+func (rs *RecorderSocket) Record(src []byte) error {
+	return writeJSON(rs.Incoming, src)
+}
+
 func (rs *RecorderSocket) Origin() (origin string, ok bool) {
 	return
 }
@@ -137,4 +141,11 @@ func (rs *RecorderSocket) WriteText(data string) error {
 
 func (rs *RecorderSocket) Close() error {
 	return nil
+}
+
+func writeJSON(dst *bytes.Buffer, src []byte) (err error) {
+	if err = json.Compact(dst, src); err != nil {
+		return err
+	}
+	return dst.WriteByte('\n')
 }
