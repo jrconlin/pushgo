@@ -479,7 +479,15 @@ func TestMockHello(t *testing.T) {
 		mckStore.EXPECT().CanStore(len(channelIDs)).Return(true)
 		mckStore.EXPECT().Exists(deviceID).Return(true)
 		mckBalancer.EXPECT().RedirectURL().Return("", false, nil)
-		mckServ.EXPECT().HandleCommand(gomock.Any(), pws).Return(200, nil)
+		mckServ.EXPECT().HandleCommand(gomock.Eq(PushCommand{
+			Command: HELLO,
+			Arguments: JsMap{
+				"worker":  wws,
+				"uaid":    deviceID,
+				"chids":   channelIDs,
+				"connect": []byte(nil),
+			},
+		}), pws).Return(200, nil)
 		mckStat.EXPECT().Increment("updates.client.hello")
 		mckStore.EXPECT().FetchAll(deviceID, gomock.Any()).Return([]Update{
 			{"263d09f8950b11e4a1f83c15c2c622fe", 2, "I'm a little teapot"},

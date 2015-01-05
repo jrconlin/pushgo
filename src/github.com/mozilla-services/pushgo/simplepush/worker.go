@@ -59,9 +59,9 @@ type RequestHeader struct {
 }
 
 type HelloRequest struct {
-	DeviceID   string          `json:"uaid"`
-	ChannelIDs []interface{}   `json:"channelIDs"`
-	PingData   json.RawMessage `json:"connect"`
+	DeviceID   string            `json:"uaid"`
+	ChannelIDs []json.RawMessage `json:"channelIDs"`
+	PingData   json.RawMessage   `json:"connect"`
 }
 
 type HelloReply struct {
@@ -387,7 +387,7 @@ registerDevice:
 		Arguments: JsMap{
 			"worker":  self,
 			"uaid":    uaid,
-			"chids":   request.ChannelIDs,
+			"chids":   cleanChannelIDs(request.ChannelIDs),
 			"connect": []byte(request.PingData),
 		},
 	}
@@ -809,6 +809,14 @@ func (r *NoWorker) Flush(_ *PushWS, lastAccessed int64, channel string, version 
 	r.Outbuffer, _ = json.Marshal(&FlushData{lastAccessed,
 		channel, version, data})
 	return nil
+}
+
+func cleanChannelIDs(ids []json.RawMessage) (clean []string) {
+	clean = make([]string, len(ids))
+	for i, b := range ids {
+		clean[i] = string(b[1 : len(b)-1])
+	}
+	return
 }
 
 // o4fs
