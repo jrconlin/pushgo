@@ -58,7 +58,7 @@ type Application struct {
 	clients            map[string]*Client
 	clientMux          sync.RWMutex
 	clientCount        int32
-	server             *Serv
+	server             Server
 	store              Store
 	router             Router
 	locator            Locator
@@ -161,7 +161,7 @@ func (a *Application) SetBalancer(b Balancer) error {
 	return nil
 }
 
-func (a *Application) SetServer(server *Serv) error {
+func (a *Application) SetServer(server Server) error {
 	a.server = server
 	return nil
 }
@@ -220,7 +220,7 @@ func (a *Application) Balancer() Balancer {
 	return a.balancer
 }
 
-func (a *Application) Server() *Serv {
+func (a *Application) Server() Server {
 	return a.server
 }
 

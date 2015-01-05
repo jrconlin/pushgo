@@ -199,7 +199,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
 		return nil, err
 	}
-	serv := obj.(*Serv)
+	serv := obj.(Server)
 	app.SetServer(serv)
 
 	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {

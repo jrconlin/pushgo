@@ -251,7 +251,7 @@ type typeTest struct {
 }
 
 func (t typeTest) Run() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.name, err)
 	}
@@ -406,7 +406,7 @@ func TestMessageTypes(t *testing.T) {
 }
 
 func TestNilDeviceId(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -442,7 +442,7 @@ func TestDuplicateRegister(t *testing.T) {
 		t.Log("Duplicate channel IDs not supported; skipping test")
 		return
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -473,7 +473,7 @@ func TestPrematureRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -509,7 +509,7 @@ func TestDuplicateRegisterHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -543,7 +543,7 @@ func TestMultipleRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -581,7 +581,7 @@ func (t idTest) TestHelo() error {
 	}
 	addExistsHook(deviceId, true)
 	defer removeExistsHook(deviceId)
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On handshake test %v, error initializing test server: %#v", t.name, err)
 	}
@@ -633,7 +633,7 @@ func (t idTest) TestHelo() error {
 }
 
 func (t idTest) TestRegister() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On registration test %v, error initializing test server: %#v", t.name, err)
 	}
@@ -741,7 +741,7 @@ func TestPrematureUnregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -768,7 +768,7 @@ func TestPrematureUnregister(t *testing.T) {
 }
 
 func TestUnregister(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -796,7 +796,7 @@ func TestUnregister(t *testing.T) {
 }
 
 func TestUnregisterRace(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -909,7 +909,7 @@ func TestUnregisterRace(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -953,7 +953,7 @@ func TestPrematureACK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -999,7 +999,7 @@ func TestPrematureACK(t *testing.T) {
 }
 
 func TestACK(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}

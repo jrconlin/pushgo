@@ -263,7 +263,7 @@ func TestWorkerHello(t *testing.T) {
 		So(err, ShouldEqual, nil)
 		So(pws.UAID(), ShouldEqual, testID)
 		So(app.ClientExists(testID), ShouldEqual, true)
-		app.Server().Bye(pws)
+		app.Server().HandleCommand(PushCommand{Command: DIE}, pws)
 	})
 
 	Convey("Should reject invalid UUIDs", t, func() {

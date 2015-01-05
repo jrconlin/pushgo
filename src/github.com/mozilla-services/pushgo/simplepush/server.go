@@ -30,6 +30,16 @@ type ServerConfig struct {
 	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
 }
 
+type Server interface {
+	RequestFlush(client *Client, channel string, version int64,
+		data string) (err error)
+	UpdateClient(client *Client, chid, uid string, vers int64,
+		time time.Time, data string) (err error)
+	HandleCommand(cmd PushCommand, sock *PushWS) (
+		result int, args JsMap)
+	Close() error
+}
+
 func NewServer() *Serv {
 	return new(Serv)
 }

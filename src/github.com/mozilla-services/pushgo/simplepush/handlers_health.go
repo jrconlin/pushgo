@@ -43,7 +43,6 @@ type HealthHandlers struct {
 	app      *Application
 	logger   *SimpleLogger
 	metrics  Statistician
-	server   *Serv
 	store    Store
 	pinger   PropPinger
 	router   Router
@@ -60,7 +59,6 @@ func (h *HealthHandlers) Init(app *Application, _ interface{}) error {
 	h.app = app
 	h.logger = app.Logger()
 	h.metrics = app.Metrics()
-	h.server = app.Server()
 	h.store = app.Store()
 	h.pinger = app.PropPinger()
 	h.router = app.Router()

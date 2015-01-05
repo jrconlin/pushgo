@@ -85,7 +85,7 @@ type caseTest struct {
 }
 
 func (t caseTest) TestPing() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}
@@ -108,7 +108,7 @@ func (t caseTest) TestPing() error {
 }
 
 func (t caseTest) TestACK() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}
@@ -152,7 +152,7 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}

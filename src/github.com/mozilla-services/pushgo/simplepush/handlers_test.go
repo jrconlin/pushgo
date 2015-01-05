@@ -209,7 +209,7 @@ func endpointIds(uri *url.URL) (deviceId, channelId string, ok bool) {
 }
 
 func TestBadKey(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -247,7 +247,7 @@ func TestBadKey(t *testing.T) {
 }
 
 func TestMissingKey(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}

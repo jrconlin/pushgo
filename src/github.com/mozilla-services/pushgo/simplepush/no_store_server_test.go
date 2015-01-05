@@ -6,8 +6,8 @@
 
 package simplepush
 
-// Server is a test Simple Push server without storage.
-var Server = &TestServer{
+// testServer is a test Simple Push server without storage.
+var testServer = &TestServer{
 	LogLevel: 0,
 	NewStore: func() (store ConfigStore, configStruct interface{}, err error) {
 		// UAIDExists will return "false" for registration checks for UAID

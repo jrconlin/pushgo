@@ -20,7 +20,7 @@ import (
 var channelIds = id.MustGenerate(maxChannels + 1)
 
 func TestPush(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -156,7 +156,7 @@ func connect(origin string) (deviceId, channelId, endpoint string, err error) {
 }
 
 func TestPushReconnect(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %s", err)
 	}
@@ -176,7 +176,7 @@ func TestDupeDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %s", err)
 	}
@@ -219,7 +219,7 @@ func TestDupeDisconnect(t *testing.T) {
 }
 
 func TestHandshakeWithId(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -247,7 +247,7 @@ func TestDuplicateHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -285,7 +285,7 @@ func TestMultiRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -319,7 +319,7 @@ func TestChannelTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating channel ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -346,7 +346,7 @@ func TestTooManyChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error generating device ID: %#v", err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
@@ -366,7 +366,7 @@ func TestTooManyChannels(t *testing.T) {
 }
 
 func TestRegisterSeparate(t *testing.T) {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		t.Fatalf("Error initializing test server: %#v", err)
 	}
