@@ -17,18 +17,6 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-var testID = "d1c7c768-b1be-4c70-93a6-9b52910d4baa"
-
-func installWorkerMocks() {
-	idGenerate = func() (string, error) {
-		return testID, nil
-	}
-}
-
-func revertWorkerMocks() {
-	idGenerate = id.Generate
-}
-
 func newTestApp(tb TBLoggingInterface) (app *Application) {
 	app = NewApplication()
 	app.hostname = "test"
@@ -89,8 +77,8 @@ func newTestApp(tb TBLoggingInterface) (app *Application) {
 }
 
 func TestWorkerRegister(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -204,8 +192,8 @@ func TestWorkerACK(t *testing.T) {
 }
 
 func TestWorkerHandshakeRedirect(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -279,8 +267,8 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 }
 
 func TestWorkerHandshakeDupe(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -361,8 +349,8 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 }
 
 func TestWorkerError(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -425,8 +413,8 @@ func TestWorkerError(t *testing.T) {
 func BenchmarkWorkerRun(b *testing.B) {
 	// I don't believe that goconvey handles benchmark well, so sadly, can't
 	// reuse the test code.
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	app := newTestApp(b)
 	rs := NewRecorderSocket()
@@ -460,8 +448,8 @@ func BenchmarkWorkerRun(b *testing.B) {
 }
 
 func TestWorkerRun(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	app := newTestApp(t)
 
@@ -535,8 +523,8 @@ func TestWorkerRun(t *testing.T) {
 }
 
 func TestWorkerHello(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -621,8 +609,8 @@ func TestWorkerHello(t *testing.T) {
 }
 
 func TestMockHello(t *testing.T) {
-	installWorkerMocks()
-	defer revertWorkerMocks()
+	installMocks()
+	defer revertMocks()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()

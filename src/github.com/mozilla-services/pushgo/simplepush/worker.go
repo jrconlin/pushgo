@@ -24,8 +24,6 @@ var HarmlessConnectionErrors = []string{
 	"TLS handshake error",
 }
 
-var idGenerate = id.Generate
-
 //    -- Workers
 //      these write back to the websocket.
 
@@ -152,7 +150,7 @@ func (self *WorkerWS) Deadline() (t time.Time) {
 		d = self.pongInterval
 	}
 	if d > 0 {
-		t = time.Now().Add(d)
+		t = timeNow().Add(d)
 	}
 	return
 }
@@ -673,12 +671,12 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 // Dump any records associated with the UAID.
 func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, version int64, data string) (err error) {
 	// flush pending data back to Client
-	timer := time.Now()
+	timer := timeNow()
 	logWarning := self.logger.ShouldLog(WARNING)
 	messageType := "notification"
 	uaid := sock.UAID()
 	defer func(timer time.Time, sock *PushWS) {
-		now := time.Now()
+		now := timeNow()
 		if sock.Logger.ShouldLog(INFO) {
 			sock.Logger.Info("timer",
 				"Client flush completed",
@@ -748,7 +746,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 }
 
 func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err error) {
-	now := time.Now()
+	now := timeNow()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
 			source, ok := sock.Socket.Origin()
