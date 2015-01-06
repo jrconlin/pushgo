@@ -82,6 +82,7 @@ func NewRecorderSocket() *RecorderSocket {
 	out := new(bytes.Buffer)
 	return &RecorderSocket{
 		Incoming: inc,
+		inEnc:    json.NewEncoder(inc),
 		inDec:    json.NewDecoder(inc),
 		Outgoing: out,
 		outEnc:   json.NewEncoder(out),
@@ -90,9 +91,14 @@ func NewRecorderSocket() *RecorderSocket {
 
 type RecorderSocket struct {
 	Incoming *bytes.Buffer
+	inEnc    *json.Encoder
 	inDec    *json.Decoder
 	Outgoing *bytes.Buffer
 	outEnc   *json.Encoder
+}
+
+func (rs *RecorderSocket) RecordJSON(v interface{}) error {
+	return rs.inEnc.Encode(v)
 }
 
 func (rs *RecorderSocket) Record(src []byte) error {
