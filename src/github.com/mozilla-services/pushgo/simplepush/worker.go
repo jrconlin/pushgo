@@ -65,10 +65,10 @@ type HelloRequest struct {
 }
 
 type HelloReply struct {
-	Type        string `json:"messageType"`
-	Status      int    `json:"status"`
-	DeviceID    string `json:"uaid"`
-	RedirectURL string `json:"redirect"`
+	Type        string  `json:"messageType"`
+	Status      int     `json:"status"`
+	DeviceID    string  `json:"uaid"`
+	RedirectURL *string `json:"redirect"`
 }
 
 type RegisterRequest struct {
@@ -358,7 +358,8 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 				self.logger.Warn("worker", "Failed to redirect client", LogFields{
 					"error": err.Error(), "rid": self.id, "cmd": header.Type})
 			}
-			reply := fmt.Sprintf(`{"messageType":"%s","status":429}`, header.Type)
+			reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":429}`,
+				header.Type, uaid, origin)
 			err = sock.Socket.WriteText(reply)
 			self.stopped = true
 			return err
@@ -370,7 +371,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			self.logger.Debug("worker", "Redirecting client", LogFields{
 				"rid": self.id, "cmd": header.Type, "origin": origin})
 		}
-		reply := fmt.Sprintf(`{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
+		reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":307,"redirect":%q}`,
 			header.Type, uaid, origin)
 		err = sock.Socket.WriteText(reply)
 		self.stopped = true
@@ -402,7 +403,7 @@ registerDevice:
 	// 	"messageType": header.Type,
 	// 	"status":      status,
 	// 	"uaid":        uaid})
-	reply := fmt.Sprintf(`{"messageType":"%s","status":%d,"uaid":"%s"}`,
+	reply := fmt.Sprintf(`{"messageType":%q,"status":%d,"uaid":%q}`,
 		header.Type, status, uaid)
 	if err = sock.Socket.WriteText(reply); err != nil {
 		if logWarning {

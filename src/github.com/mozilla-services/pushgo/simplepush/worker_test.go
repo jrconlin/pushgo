@@ -118,10 +118,8 @@ func TestWorkerRegister(t *testing.T) {
 		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
 		pws.SetUAID("")
 		wws := NewWorker(app, "test")
-		err := wws.Register(pws, nil, []byte(`{
-			"messageType": "register",
-			"channelID": "3fc2d1a2950411e49b203c15c2c622fe"
-		}`))
+		err := wws.Register(pws, nil,
+			[]byte(`{"channelID": "3fc2d1a2950411e49b203c15c2c622fe"}`))
 		So(err, ShouldEqual, ErrInvalidCommand)
 	})
 
@@ -133,14 +131,11 @@ func TestWorkerRegister(t *testing.T) {
 		wws := NewWorker(app, "test")
 
 		// Invalid JSON.
-		err = wws.Register(pws, nil, []byte(`{"messageType": "register",}`))
+		err = wws.Register(pws, nil, []byte(`{"channelID": "123",}`))
 		So(err, ShouldEqual, ErrInvalidParams)
 
 		// Invalid channel ID.
-		err = wws.Register(pws, nil, []byte(`{
-			"messageType": "register",
-			"channelID": "123"
-		}`))
+		err = wws.Register(pws, nil, []byte(`{"channelID": "123"}`))
 		So(err, ShouldEqual, ErrInvalidParams)
 	})
 
@@ -156,9 +151,8 @@ func TestWorkerRegister(t *testing.T) {
 		storeErr := errors.New("oops")
 
 		regBytes, _ := json.Marshal(struct {
-			Type      string `json:"messageType"`
 			ChannelID string `json:"channelID"`
-		}{"register", channelID})
+		}{channelID})
 
 		mckStore.EXPECT().Register(deviceID, channelID,
 			int64(0)).Return(storeErr)
@@ -175,9 +169,8 @@ func TestWorkerRegister(t *testing.T) {
 		wws := NewWorker(app, "test")
 
 		regBytes, _ := json.Marshal(struct {
-			Type      string `json:"messageType"`
 			ChannelID string `json:"channelID"`
-		}{"register", channelID})
+		}{channelID})
 
 		mckStore.EXPECT().Register(deviceID, channelID,
 			int64(0)).Return(nil)
@@ -214,14 +207,74 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 	installWorkerMocks()
 	defer revertWorkerMocks()
 
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	app := newTestApp(t)
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	app.SetLogger(mckLogger)
+
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
+	mckStat.EXPECT().Increment(gomock.Not("updates.client.hello")).AnyTimes()
+	app.SetMetrics(mckStat)
+
+	mckStore := NewMockStore(mockCtrl)
+	app.SetStore(mckStore)
+
+	mckServ := NewMockServer(mockCtrl)
+	app.SetServer(mckServ)
+
+	mckBalancer := NewMockBalancer(mockCtrl)
+	app.SetBalancer(mckBalancer)
+
 	Convey("Should return a 307 if the current node is full", t, func() {
-		// ...
+		wws := NewWorker(app, "test")
+		rs := NewRecorderSocket()
+		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID("")
+
+		mckBalancer.EXPECT().RedirectURL().Return("https://example.org/2", true, nil)
+
+		err := wws.Hello(pws, &RequestHeader{Type: "hello"},
+			[]byte(`{"uaid":"","channelIDs":[]}`))
+		So(err, ShouldBeNil)
+		So(wws.stopped, ShouldBeTrue)
+
+		dec := json.NewDecoder(rs.Outgoing)
+		helloReply := new(HelloReply)
+		So(dec.Decode(helloReply), ShouldBeNil)
+		So(helloReply.Type, ShouldEqual, "hello")
+		So(helloReply.Status, ShouldEqual, 307)
+		So(helloReply.DeviceID, ShouldEqual, testID)
+		So(helloReply.RedirectURL, ShouldNotBeNil)
+		So(*helloReply.RedirectURL, ShouldEqual, "https://example.org/2")
 	})
+
 	Convey("Should return a 429 if the cluster is full", t, func() {
-		// ...
-	})
-	Convey("Should not query the balancer for duplicate handshakes", t, func() {
-		// ...
+		wws := NewWorker(app, "test")
+		rs := NewRecorderSocket()
+		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID("")
+
+		mckBalancer.EXPECT().RedirectURL().Return("", false, ErrNoPeers)
+
+		err := wws.Hello(pws, &RequestHeader{Type: "HELLO"},
+			[]byte(`{"uaid":"","channelIDs":[]}`))
+		So(err, ShouldBeNil)
+		So(wws.stopped, ShouldBeTrue)
+
+		dec := json.NewDecoder(rs.Outgoing)
+		helloReply := new(HelloReply)
+		So(dec.Decode(helloReply), ShouldBeNil)
+		So(helloReply.Type, ShouldEqual, "HELLO")
+		So(helloReply.Status, ShouldEqual, 429)
+		So(helloReply.DeviceID, ShouldEqual, testID)
+		So(helloReply.RedirectURL, ShouldBeNil)
 	})
 }
 
@@ -229,14 +282,143 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 	installWorkerMocks()
 	defer revertWorkerMocks()
 
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	app := newTestApp(t)
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	app.SetLogger(mckLogger)
+
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
+	mckStat.EXPECT().Increment(gomock.Not("updates.client.hello")).AnyTimes()
+	app.SetMetrics(mckStat)
+
+	mckStore := NewMockStore(mockCtrl)
+	app.SetStore(mckStore)
+
+	mckServ := NewMockServer(mockCtrl)
+	app.SetServer(mckServ)
+
+	mckBalancer := NewMockBalancer(mockCtrl)
+	app.SetBalancer(mckBalancer)
+
+	mckSocket := NewMockSocket(mockCtrl)
+
+	Convey("Should allow duplicate handshakes for empty IDs", t, func() {
+		deviceID := "4738b3be952911e4a7dc3c15c2c622fe"
+		wws := NewWorker(app, "test")
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID(deviceID)
+
+		mckServ.EXPECT().HandleCommand(gomock.Any(), pws).Return(200, nil)
+		mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil)
+		mckStat.EXPECT().Increment("updates.client.hello")
+		mckStore.EXPECT().FetchAll(deviceID, gomock.Any()).Return(nil, nil, nil)
+		mckStat.EXPECT().Timer("client.flush", gomock.Any())
+
+		err := wws.Hello(pws, &RequestHeader{Type: "hello"},
+			[]byte(`{"uaid":"","channelIDs":[]}`))
+		So(err, ShouldBeNil)
+		So(wws.stopped, ShouldBeFalse)
+	})
+
 	Convey("Should allow duplicate handshakes for matching IDs", t, func() {
-		// ...
+		deviceID := "bd12381c953811e490cb3c15c2c622fe"
+		wws := NewWorker(app, "test")
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID(deviceID)
+
+		mckServ.EXPECT().HandleCommand(gomock.Any(), pws).Return(200, nil)
+		mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil)
+		mckStat.EXPECT().Increment("updates.client.hello")
+		mckStore.EXPECT().FetchAll(deviceID, gomock.Any()).Return(nil, nil, nil)
+		mckStat.EXPECT().Timer("client.flush", gomock.Any())
+
+		helloBytes, _ := json.Marshal(struct {
+			DeviceID   string   `json:"uaid"`
+			ChannelIDs []string `json:"channelIDs"`
+		}{deviceID, []string{}})
+		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, helloBytes)
+		So(err, ShouldBeNil)
+		So(wws.stopped, ShouldBeFalse)
 	})
-	Convey("Should allow duplicate handshakes for omitted IDs", t, func() {
-		// ...
-	})
+
 	Convey("Should reject duplicate handshakes for mismatched IDs", t, func() {
-		// ...
+		deviceID := "479f5444953211e484b43c15c2c622fe"
+		wws := NewWorker(app, "test")
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID(deviceID)
+
+		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, []byte(
+			`{"uaid":"720f6b9a953411e4aadf3c15c2c622fe","channelIDs":[]}`))
+		So(err, ShouldEqual, ErrExistingID)
+	})
+}
+
+func TestWorkerError(t *testing.T) {
+	installWorkerMocks()
+	defer revertWorkerMocks()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	app := newTestApp(t)
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	app.SetLogger(mckLogger)
+
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
+	app.SetMetrics(mckStat)
+
+	mckStore := NewMockStore(mockCtrl)
+	app.SetStore(mckStore)
+
+	mckServ := NewMockServer(mockCtrl)
+	app.SetServer(mckServ)
+
+	mckBalancer := NewMockBalancer(mockCtrl)
+	app.SetBalancer(mckBalancer)
+
+	Convey("Should include request fields in error responses", t, func() {
+		deviceID := "ffb0232c953911e4b5133c15c2c622fe"
+		wws := NewWorker(app, "test")
+		rs := NewRecorderSocket()
+		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID(deviceID)
+
+		newID := "720f6b9a953411e4aadf3c15c2c622fe"
+		channelIDs := id.MustGenerate(1)
+		rs.RecordJSON(struct {
+			Type       string   `json:"messageType"`
+			DeviceID   string   `json:"uaid"`
+			ChannelIDs []string `json:"channelIDs"`
+		}{"HELLO", newID, channelIDs})
+
+		wws.Run(pws)
+
+		dec := json.NewDecoder(rs.Outgoing)
+		var errorReply struct {
+			Status     int      `json:"status"`
+			Error      *string  `json:"error"`
+			Type       string   `json:"messageType"`
+			DeviceID   string   `json:"uaid"`
+			ChannelIDs []string `json:"channelIDs"`
+		}
+		So(dec.Decode(&errorReply), ShouldBeNil)
+		So(errorReply.Status, ShouldEqual, 503)
+		So(errorReply.Error, ShouldNotBeNil)
+		So(errorReply.Type, ShouldEqual, "HELLO")
+		So(errorReply.DeviceID, ShouldEqual, newID)
+		So(errorReply.ChannelIDs, ShouldResemble, channelIDs)
 	})
 }
 
@@ -389,7 +571,7 @@ func TestWorkerHello(t *testing.T) {
 		mckStat.EXPECT().Timer("client.flush", gomock.Any())
 
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, []byte(
-			`{"messageType":"hello","uaid":"","channelIDs": []}`))
+			`{"uaid":"","channelIDs": []}`))
 		So(err, ShouldBeNil)
 
 		So(pws.UAID(), ShouldEqual, testID)
@@ -402,7 +584,7 @@ func TestWorkerHello(t *testing.T) {
 		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
 		wws := NewWorker(app, "test")
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, []byte(
-			`{"messageType":"hello","uaid":"!@#$","channelIDs":[]}`))
+			`{"uaid":"!@#$","channelIDs":[]}`))
 		So(err, ShouldEqual, ErrInvalidID)
 		So(app.ClientExists("!@#$"), ShouldBeFalse)
 	})
@@ -415,10 +597,9 @@ func TestWorkerHello(t *testing.T) {
 		prevID := "ba14b1f1-90d0-4e72-8acf-e6ab71362e91"
 		channelIDs := id.MustGenerate(5)
 		helloBytes, _ := json.Marshal(struct {
-			Type       string   `json:"messageType"`
 			DeviceID   string   `json:"uaid"`
 			ChannelIDs []string `json:"channelIDs"`
-		}{"hello", prevID, channelIDs})
+		}{prevID, channelIDs})
 
 		mckStore.EXPECT().CanStore(len(channelIDs)).Return(false)
 		mckStore.EXPECT().DropAll(prevID)
@@ -468,7 +649,7 @@ func TestMockHello(t *testing.T) {
 	mckServ := NewMockServer(mockCtrl)
 	app.SetServer(mckServ)
 
-	Convey("mock hello", t, func() {
+	Convey("Should flush messages after handshake", t, func() {
 		deviceID := "b0b8afe6950c11e49aa73c15c2c622fe"
 		channelIDs := id.MustGenerate(3)
 
@@ -496,10 +677,9 @@ func TestMockHello(t *testing.T) {
 		mckStat.EXPECT().Timer("client.flush", gomock.Any())
 
 		helloBytes, _ := json.Marshal(struct {
-			Type       string   `json:"messageType"`
 			DeviceID   string   `json:"uaid"`
 			ChannelIDs []string `json:"channelIDs"`
-		}{"hello", deviceID, channelIDs})
+		}{deviceID, channelIDs})
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, helloBytes)
 		So(err, ShouldBeNil)
 
