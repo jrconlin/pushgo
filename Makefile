@@ -94,6 +94,8 @@ test-mocks: $(DEPS)
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_balancer_test.go -package="simplepush"
 	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/server.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_server_test.go -package="simplepush"
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/socket.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_socket_test.go -package="simplepush"
 	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
 	# copied into log.go while this is run, then the mocked config struct needs to be
 	# removed from the mock_log_test.go file.

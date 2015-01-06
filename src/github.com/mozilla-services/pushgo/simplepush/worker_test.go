@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -17,10 +19,17 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
+func enableLongPongs(app *Application, enabled bool) func() {
+	prev := app.pushLongPongs
+	app.pushLongPongs = enabled
+	return func() { app.pushLongPongs = prev }
+}
+
 func newTestApp(tb TBLoggingInterface) (app *Application) {
 	app = NewApplication()
 	app.hostname = "test"
 	app.clientMinPing = 10 * time.Second
+	app.clientPongInterval = 10 * time.Second
 	app.clientHelloTimeout = 10 * time.Second
 	app.pushLongPongs = true
 	log, _ := NewLogger(&TestLogger{DEBUG, tb})
@@ -101,7 +110,7 @@ func TestWorkerRegister(t *testing.T) {
 	mckServ := NewMockServer(mockCtrl)
 	app.SetServer(mckServ)
 
-	Convey("Should reject anonymous clients", t, func() {
+	Convey("Should reject unidentified clients", t, func() {
 		rs := NewRecorderSocket()
 		pws := &PushWS{Socket: rs, Store: app.Store(), Logger: app.Logger()}
 		pws.SetUAID("")
@@ -447,6 +456,19 @@ func BenchmarkWorkerRun(b *testing.B) {
 	}
 }
 
+type netErr struct {
+	timeout   bool
+	temporary bool
+}
+
+func (err *netErr) Error() string {
+	return fmt.Sprintf("netErr: timeout: %v; temporary: %v",
+		err.timeout, err.temporary)
+}
+
+func (err *netErr) Timeout() bool   { return err.timeout }
+func (err *netErr) Temporary() bool { return err.temporary }
+
 func TestWorkerRun(t *testing.T) {
 	installMocks()
 	defer revertMocks()
@@ -603,8 +625,144 @@ func TestWorkerHello(t *testing.T) {
 		So(app.ClientExists(testID), ShouldBeTrue)
 	})
 
+	Convey("Should require the `channelIDs` field", t, func() {
+		// ...
+	})
+
 	Convey("Should issue a new device ID for nonexistent channels", t, func() {
 		// ...
+	})
+}
+
+func TestWorkerPing(t *testing.T) {
+	installMocks()
+	defer revertMocks()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	app := newTestApp(t)
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	app.SetLogger(mckLogger)
+
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
+	app.SetMetrics(mckStat)
+
+	mckSocket := NewMockSocket(mockCtrl)
+	mckSocket.EXPECT().SetReadDeadline(gomock.Any()).AnyTimes()
+
+	Convey("Should allow pings from unidentified connections", t, func() {
+		revertPongs := enableLongPongs(app, false)
+		defer revertPongs()
+
+		wws := NewWorker(app, "test")
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID("")
+
+		gomock.InOrder(
+			mckSocket.EXPECT().WriteText("{}"),
+			mckStat.EXPECT().Increment("updates.client.ping"),
+		)
+
+		err := wws.Ping(pws, &RequestHeader{Type: "ping"}, nil)
+		So(err, ShouldBeNil)
+	})
+
+	Convey("Can respond with short pongs", t, func() {
+		revertPongs := enableLongPongs(app, false)
+		defer revertPongs()
+
+		wws := NewWorker(app, "test")
+		wws.pingInt = 0 // Disable minimum ping interval check.
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+
+		mckStat.EXPECT().Increment("updates.client.ping").Times(4)
+
+		gomock.InOrder(
+			mckSocket.EXPECT().ReadBinary().Return([]byte("{}"), nil),
+			mckSocket.EXPECT().WriteText("{}"),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte("\t{\r\n} "), nil),
+			mckSocket.EXPECT().WriteText("{}"),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte(
+				`{"messageType":"ping"}`), nil),
+			mckSocket.EXPECT().WriteText("{}"),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte(
+				`{"messageType":"PING"}`), nil),
+			mckSocket.EXPECT().WriteText("{}"),
+
+			mckSocket.EXPECT().ReadBinary().Return(nil, io.EOF),
+			mckSocket.EXPECT().Close(),
+		)
+
+		wws.Run(pws)
+	})
+
+	Convey("Can respond with long pongs", t, func() {
+		revertPongs := enableLongPongs(app, true)
+		defer revertPongs()
+
+		wws := NewWorker(app, "test")
+		wws.pingInt = 0
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+
+		mckStat.EXPECT().Increment("updates.client.ping").Times(4)
+
+		gomock.InOrder(
+			mckSocket.EXPECT().ReadBinary().Return([]byte("{}"), nil),
+			mckSocket.EXPECT().WriteJSON(PingReply{Type: "ping", Status: 200}),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte("\t{\r\n} "), nil),
+			mckSocket.EXPECT().WriteJSON(PingReply{Type: "ping", Status: 200}),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte(
+				`{"messageType":"ping"}`), nil),
+			mckSocket.EXPECT().WriteJSON(PingReply{Type: "ping", Status: 200}),
+
+			mckSocket.EXPECT().ReadBinary().Return([]byte(
+				`{"messageType":"PING"}`), nil),
+			mckSocket.EXPECT().WriteJSON(PingReply{Type: "PING", Status: 200}),
+
+			mckSocket.EXPECT().ReadBinary().Return(nil, io.EOF),
+			mckSocket.EXPECT().Close(),
+		)
+
+		wws.Run(pws)
+	})
+
+	Convey("Should return an error for excessive pings", t, func() {
+		var err error
+		wws := NewWorker(app, "test")
+		pws := &PushWS{Socket: mckSocket, Store: app.Store(), Logger: app.Logger()}
+		pws.SetUAID("04b1c85c95e011e49b103c15c2c622fe")
+
+		mckSocket.EXPECT().WriteJSON(PingReply{Type: "ping", Status: 200}).Times(2)
+		mckStat.EXPECT().Increment("updates.client.ping").Times(2)
+
+		err = wws.Ping(pws, &RequestHeader{Type: "ping"}, nil)
+		So(err, ShouldBeNil)
+
+		wws.lastPing = wws.lastPing.Add(-wws.pingInt)
+		err = wws.Ping(pws, &RequestHeader{Type: "ping"}, nil)
+		So(err, ShouldBeNil)
+
+		gomock.InOrder(
+			mckSocket.EXPECT().Origin().Return("https://example.com", true),
+			mckStat.EXPECT().Increment("updates.client.too_many_pings"),
+		)
+
+		wws.lastPing = wws.lastPing.Add(-wws.pingInt / 2)
+		err = wws.Ping(pws, &RequestHeader{Type: "ping"}, nil)
+		So(err, ShouldEqual, ErrTooManyPings)
+
+		So(wws.stopped, ShouldBeTrue)
 	})
 }
 
