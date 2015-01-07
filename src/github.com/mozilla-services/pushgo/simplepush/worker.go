@@ -37,7 +37,6 @@ type WorkerWS struct {
 	logger       *SimpleLogger
 	id           string
 	state        WorkerState
-	stopped      bool
 	lastPing     time.Time
 	pingInt      time.Duration
 	metrics      Statistician
@@ -48,8 +47,9 @@ type WorkerWS struct {
 type WorkerState int
 
 const (
-	WorkerInactive WorkerState = 0
-	WorkerActive               = 1
+	WorkerInactive WorkerState = iota
+	WorkerActive
+	WorkerStopped
 )
 
 type RequestHeader struct {
@@ -121,7 +121,6 @@ func NewWorker(app *Application, id string) *WorkerWS {
 		metrics:      app.Metrics(),
 		id:           id,
 		state:        WorkerInactive,
-		stopped:      false,
 		pingInt:      app.clientMinPing,
 		helloTimeout: app.clientHelloTimeout,
 		pongInterval: app.clientPongInterval,
@@ -161,37 +160,27 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	logWarning := self.logger.ShouldLog(WARNING)
-	var (
-		buf = new(bytes.Buffer)
-	)
+	buf := new(bytes.Buffer)
 
-	for {
+	for !self.stopped() {
 		buf.Reset()
-		var (
-			raw []byte
-			err error
-		)
-
-		// Were we told to shut down?
-		if self.stopped {
-			return
-		}
 		sock.Socket.SetReadDeadline(self.Deadline())
-		if raw, err = sock.Socket.ReadBinary(); err != nil {
+		raw, err := sock.Socket.ReadBinary()
+		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				if self.state == WorkerInactive {
 					if self.logger.ShouldLog(DEBUG) {
 						self.logger.Debug("dash", "Worker Idle connection. Closing socket",
 							LogFields{"rid": self.id})
 					}
-					self.stopped = true
+					self.stop()
 					continue
 				}
 				if err = sock.Socket.WriteText("{}"); err == nil {
 					continue
 				}
 			}
-			self.stopped = true
+			self.stop()
 			if err != io.EOF {
 				if self.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {
 					self.logger.Error("worker", "Websocket Error",
@@ -221,7 +210,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 						LogFields{"rid": self.id, "error": ErrStr(err)})
 				}
 			}
-			self.stopped = true
+			self.stop()
 			continue
 		} else {
 			msg = buf.Bytes()
@@ -248,7 +237,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 				}
 			}
 			self.handleError(sock, msg, ErrUnknownCommand)
-			self.stopped = true
+			self.stop()
 			continue
 		}
 		switch strings.ToLower(header.Type) {
@@ -277,10 +266,18 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 					LogFields{"rid": self.id, "cmd": header.Type, "error": ErrStr(err)})
 			}
 			self.handleError(sock, msg, err)
-			self.stopped = true
+			self.stop()
 			continue
 		}
 	}
+}
+
+func (self *WorkerWS) stopped() bool {
+	return self.state == WorkerStopped
+}
+
+func (self *WorkerWS) stop() {
+	self.state = WorkerStopped
 }
 
 // standardize the error reporting back to the client.
@@ -359,7 +356,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":429}`,
 				header.Type, uaid, origin)
 			err = sock.Socket.WriteText(reply)
-			self.stopped = true
+			self.stop()
 			return err
 		}
 		if !shouldRedirect {
@@ -372,7 +369,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 		reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":307,"redirect":%q}`,
 			header.Type, uaid, origin)
 		err = sock.Socket.WriteText(reply)
-		self.stopped = true
+		self.stop()
 		return err
 	}
 
@@ -692,7 +689,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
-		self.stopped = true
+		self.stop()
 		return nil
 	}
 	// Fetch the pending updates from #storage
@@ -756,7 +753,7 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 			self.logger.Warn("dash", "Client sending too many pings",
 				LogFields{"rid": self.id, "source": source})
 		}
-		self.stopped = true
+		self.stop()
 		self.metrics.Increment("updates.client.too_many_pings")
 		return ErrTooManyPings
 	}

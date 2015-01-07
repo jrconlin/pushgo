@@ -171,10 +171,10 @@ func TestWorkerRegister(t *testing.T) {
 
 		mckStore.EXPECT().Register(deviceID, channelID,
 			int64(0)).Return(nil)
-		mckServ.EXPECT().HandleCommand(gomock.Eq(PushCommand{
+		mckServ.EXPECT().HandleCommand(PushCommand{
 			Command:   REGIS,
 			Arguments: JsMap{"channelID": channelID},
-		}), pws).Return(200, JsMap{
+		}, pws).Return(200, JsMap{
 			"status":        200,
 			"channelID":     channelID,
 			"uaid":          deviceID,
@@ -240,7 +240,7 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"},
 			[]byte(`{"uaid":"","channelIDs":[]}`))
 		So(err, ShouldBeNil)
-		So(wws.stopped, ShouldBeTrue)
+		So(wws.stopped(), ShouldBeTrue)
 
 		dec := json.NewDecoder(rs.Outgoing)
 		helloReply := new(HelloReply)
@@ -263,7 +263,7 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 		err := wws.Hello(pws, &RequestHeader{Type: "HELLO"},
 			[]byte(`{"uaid":"","channelIDs":[]}`))
 		So(err, ShouldBeNil)
-		So(wws.stopped, ShouldBeTrue)
+		So(wws.stopped(), ShouldBeTrue)
 
 		dec := json.NewDecoder(rs.Outgoing)
 		helloReply := new(HelloReply)
@@ -321,7 +321,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"},
 			[]byte(`{"uaid":"","channelIDs":[]}`))
 		So(err, ShouldBeNil)
-		So(wws.stopped, ShouldBeFalse)
+		So(wws.stopped(), ShouldBeFalse)
 	})
 
 	Convey("Should allow duplicate handshakes for matching IDs", t, func() {
@@ -342,7 +342,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 		}{deviceID, []string{}})
 		err := wws.Hello(pws, &RequestHeader{Type: "hello"}, helloBytes)
 		So(err, ShouldBeNil)
-		So(wws.stopped, ShouldBeFalse)
+		So(wws.stopped(), ShouldBeFalse)
 	})
 
 	Convey("Should reject duplicate handshakes for mismatched IDs", t, func() {
@@ -762,7 +762,7 @@ func TestWorkerPing(t *testing.T) {
 		err = wws.Ping(pws, &RequestHeader{Type: "ping"}, nil)
 		So(err, ShouldEqual, ErrTooManyPings)
 
-		So(wws.stopped, ShouldBeTrue)
+		So(wws.stopped(), ShouldBeTrue)
 	})
 }
 
@@ -806,7 +806,7 @@ func TestMockHello(t *testing.T) {
 		mckStore.EXPECT().CanStore(len(channelIDs)).Return(true)
 		mckStore.EXPECT().Exists(deviceID).Return(true)
 		mckBalancer.EXPECT().RedirectURL().Return("", false, nil)
-		mckServ.EXPECT().HandleCommand(gomock.Eq(PushCommand{
+		mckServ.EXPECT().HandleCommand(PushCommand{
 			Command: HELLO,
 			Arguments: JsMap{
 				"worker":  wws,
@@ -814,7 +814,7 @@ func TestMockHello(t *testing.T) {
 				"chids":   channelIDs,
 				"connect": []byte(nil),
 			},
-		}), pws).Return(200, nil)
+		}, pws).Return(200, nil)
 		mckStat.EXPECT().Increment("updates.client.hello")
 		mckStore.EXPECT().FetchAll(deviceID, gomock.Any()).Return([]Update{
 			{"263d09f8950b11e4a1f83c15c2c622fe", 2, "I'm a little teapot"},
