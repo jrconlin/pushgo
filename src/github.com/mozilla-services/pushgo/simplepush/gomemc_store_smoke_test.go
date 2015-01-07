@@ -1,3 +1,4 @@
+// +build smoke
 // +build memcached_server_test
 // +build !cgo !libmemcached
 

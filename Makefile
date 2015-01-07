@@ -107,12 +107,12 @@ test-mocks: $(DEPS)
 
 test-gomc:
 	GOPATH=$(GOPATH) $(GO) test \
-		-tags "memcached_server_test libmemcached" \
+		-tags "smoke memcached_server_test libmemcached" \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test-gomemcache:
 	GOPATH=$(GOPATH) $(GO) test \
-		-tags memcached_server_test \
+		-tags "smoke memcached_server_test" \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 check-cov:
@@ -142,6 +142,7 @@ id-cov: check-cov cov-dir
 simplepush-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) $(GO) test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
 
 # Merge coverage reports for each package. -coverprofile does not support
@@ -160,11 +161,13 @@ travis-cov: test-cov
 
 test:
 	GOPATH=$(GOPATH) $(GO) test -v \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 bench:
 #	GOPATH=$(GOPATH) $(GO) test -v -bench=Router -benchmem -benchtime=5s
 	GOPATH=$(GOPATH) $(GO) test -v -bench . -benchmem -benchtime=5s \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:

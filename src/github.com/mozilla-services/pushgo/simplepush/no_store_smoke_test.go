@@ -1,3 +1,4 @@
+// +build smoke
 // +build !memcached_server_test
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
