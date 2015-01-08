@@ -20,13 +20,12 @@ package simplepush
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"encoding/base64"
 )
 
 func genKey(strength int) ([]byte, error) {
 	k := make([]byte, strength)
-	if _, err := rand.Read(k); err != nil {
+	if _, err := cryptoRandRead(k); err != nil {
 		return nil, err
 	}
 	return k, nil

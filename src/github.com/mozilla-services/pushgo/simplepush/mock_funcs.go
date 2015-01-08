@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"crypto/rand"
 	"os"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // Global aliases to functions that rely on external state. This allows
 // tests to override these functions with deterministic mocks.
 var (
+	cryptoRandRead  func([]byte) (int, error)
 	idGenerate      func() (string, error)
 	idGenerateBytes func() ([]byte, error)
 	osGetPid        func() int
@@ -23,6 +25,7 @@ var (
 // useStdFuncs sets the non-deterministic function aliases to their default
 // values. This can be used by the tests to revert the mocks.
 func useStdFuncs() {
+	cryptoRandRead = rand.Read
 	idGenerate = id.Generate
 	idGenerateBytes = id.GenerateBytes
 	osGetPid = os.Getpid

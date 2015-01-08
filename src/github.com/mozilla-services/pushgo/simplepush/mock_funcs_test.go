@@ -15,6 +15,12 @@ var testID = "d1c7c768b1be4c7093a69b52910d4baa"
 // frozen, the process ID is fixed, and the UUID generation functions return
 // predictable IDs. useMockFuncs is only exposed to tests.
 func useMockFuncs() {
+	cryptoRandRead = func(b []byte) (int, error) {
+		for i := 0; i < len(b); i++ {
+			b[i] = byte(i % 256)
+		}
+		return len(b), nil
+	}
 	idGenerate = func() (string, error) { return testID, nil }
 	idGenerateBytes = func() ([]byte, error) {
 		// d1c7c768-b1be-4c70-93a6-9b52910d4baa.
