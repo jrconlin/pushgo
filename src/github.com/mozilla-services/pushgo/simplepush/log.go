@@ -58,7 +58,6 @@ const (
 type LogFields map[string]string
 
 type Logger interface {
-	HasConfigStruct
 	Log(level LogLevel, messageType, payload string, fields LogFields) error
 	SetFilter(level LogLevel)
 	ShouldLog(level LogLevel) bool

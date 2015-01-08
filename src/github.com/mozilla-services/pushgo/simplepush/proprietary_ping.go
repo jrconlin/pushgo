@@ -18,7 +18,6 @@ import (
 )
 
 type PropPinger interface {
-	HasConfigStruct
 	Register(uaid string, pingData []byte) error
 	Send(uaid string, vers int64, data string) (ok bool, err error)
 	CanBypassWebsocket() bool

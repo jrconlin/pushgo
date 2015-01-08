@@ -25,8 +25,6 @@ var (
 )
 
 type Router interface {
-	HasConfigStruct
-
 	// Start the router
 	Start(chan<- error)
 
