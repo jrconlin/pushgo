@@ -12,11 +12,12 @@ import (
 )
 
 type Handler interface {
-	HasConfigStruct
 	Listener() net.Listener
 	MaxConns() int
 	URL() string
 	ServeMux() *mux.Router
+	Start(chan<- error)
+	Close() error
 }
 
 type ListenerConfig struct {

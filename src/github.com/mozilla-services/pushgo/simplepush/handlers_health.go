@@ -47,8 +47,8 @@ type HealthHandlers struct {
 	pinger   PropPinger
 	router   Router
 	balancer Balancer
-	sh       *SocketHandler
-	eh       *EndpointHandler
+	sh       Handler
+	eh       Handler
 }
 
 func (h *HealthHandlers) ConfigStruct() interface{} {
