@@ -45,16 +45,16 @@ func Encode(key, value []byte) (string, error) {
 		return "", nil
 	}
 
-	iv, err := genKey(len(key))
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-	if block, err := aes.NewCipher(key); err != nil {
+	iv, err := genKey(block.BlockSize())
+	if err != nil {
 		return "", err
-	} else {
-		stream := cipher.NewCTR(block, iv)
-		stream.XORKeyStream(value, value)
 	}
+	stream := cipher.NewCTR(block, iv)
+	stream.XORKeyStream(value, value)
 	enc := append(iv, value...)
 	return base64.URLEncoding.EncodeToString(enc), nil
 }
@@ -66,21 +66,21 @@ func Decode(key []byte, rvalue string) ([]byte, error) {
 	// NOTE: using the URLEncoding.Decode(...) seems to muck with the
 	// returned value. Using string, which wants to return a cleaner
 	// version.
-	value, err := base64.URLEncoding.DecodeString(string(rvalue))
+	value, err := base64.URLEncoding.DecodeString(rvalue)
 	if err != nil {
 		return nil, err
 	}
 
-	keySize := len(key)
-	iv := value[:keySize]
-	value = value[keySize:]
-
-	if block, err := aes.NewCipher(key); err != nil {
+	block, err := aes.NewCipher(key)
+	if err != nil {
 		return nil, err
-	} else {
-		stream := cipher.NewCTR(block, iv)
-		stream.XORKeyStream(value, value)
 	}
+	blockSize := block.BlockSize()
+	iv := value[:blockSize]
+	value = value[blockSize:]
+
+	stream := cipher.NewCTR(block, iv)
+	stream.XORKeyStream(value, value)
 	return value, nil
 }
 
