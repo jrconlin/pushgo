@@ -226,15 +226,8 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 			header.Type = "ping"
 		} else if err = json.Unmarshal(msg, header); err != nil {
 			if logWarning {
-				if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
-					self.logger.Warn("worker", "Mismatched header field types", LogFields{
-						"rid":      self.id,
-						"expected": typeErr.Type.String(),
-						"actual":   typeErr.Value})
-				} else {
-					self.logger.Warn("worker", "Error parsing request payload",
-						LogFields{"rid": self.id, "error": ErrStr(err)})
-				}
+				self.logger.Warn("worker", "Error parsing request header",
+					LogFields{"rid": self.id, "error": ErrStr(err)})
 			}
 			self.handleError(sock, msg, ErrUnknownCommand)
 			self.stop()
@@ -413,11 +406,8 @@ registerDevice:
 			LogFields{"rid": self.id})
 	}
 	self.state = WorkerActive
-	if err == nil {
-		// Get the lastAccessed time from wherever
-		return self.Flush(sock, 0, "", 0, "")
-	}
-	return err
+	// Get the lastAccessed time from wherever
+	return self.Flush(sock, 0, "", 0, "")
 }
 
 func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
@@ -614,7 +604,7 @@ func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []by
 	}
 	sock.Socket.WriteJSON(RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
-	return err
+	return nil
 }
 
 // Unregister a ChannelID.
@@ -727,10 +717,11 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 		if !mod {
 			prefix = "+>"
 		}
-		for index, update := range updates {
-			logStrings[index] = fmt.Sprintf("%s %s.%s = %d", prefix, uaid, update.ChannelID, update.Version)
-			self.metrics.Increment("updates.sent")
+		for i, update := range updates {
+			logStrings[i] = fmt.Sprintf("%s %s.%s = %d", prefix, uaid,
+				update.ChannelID, update.Version)
 		}
+		self.metrics.IncrementBy("updates.sent", int64(len(updates)))
 	}
 
 	if self.logger.ShouldLog(DEBUG) {
