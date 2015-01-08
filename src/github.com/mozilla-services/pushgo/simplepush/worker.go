@@ -66,7 +66,7 @@ type HelloReply struct {
 	Type        string  `json:"messageType"`
 	Status      int     `json:"status"`
 	DeviceID    string  `json:"uaid"`
-	RedirectURL *string `json:"redirect"`
+	RedirectURL *string `json:"redirect,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -499,7 +499,7 @@ forceReset:
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Ack(sock *PushWS, _ *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
@@ -519,7 +519,7 @@ func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	if len(request.Updates) == 0 {
+	if len(request.Updates) == 0 && len(request.Expired) == 0 {
 		return ErrNoParams
 	}
 	self.metrics.Increment("updates.client.ack")
@@ -662,7 +662,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 	logWarning := self.logger.ShouldLog(WARNING)
 	messageType := "notification"
 	uaid := sock.UAID()
-	defer func(timer time.Time, sock *PushWS) {
+	defer func(timer time.Time, sock *PushWS, err *error) {
 		now := timeNow()
 		if sock.Logger.ShouldLog(INFO) {
 			sock.Logger.Info("timer",
@@ -670,8 +670,11 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
 					"uaid": uaid})
 		}
+		if *err != nil || self.stopped() {
+			return
+		}
 		self.metrics.Timer("client.flush", now.Sub(timer))
-	}(timer, sock)
+	}(timer, sock, &err)
 	if uaid == "" {
 		if logWarning {
 			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
