@@ -116,7 +116,7 @@ func (h *SocketHandler) Start(errChan chan<- error) {
 
 func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	requestID := ws.Request().Header.Get(HeaderID)
-	sock := PushWS{Socket: ws,
+	sock := PushWS{Socket: (*WebSocket)(ws),
 		Store:  h.store,
 		Logger: h.logger,
 		Born:   time.Now()}

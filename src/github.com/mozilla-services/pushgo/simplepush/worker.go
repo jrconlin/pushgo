@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/websocket"
-
 	"github.com/mozilla-services/pushgo/id"
 )
 
@@ -39,7 +37,6 @@ type WorkerWS struct {
 	logger       *SimpleLogger
 	id           string
 	state        WorkerState
-	stopped      bool
 	lastPing     time.Time
 	pingInt      time.Duration
 	metrics      Statistician
@@ -50,8 +47,9 @@ type WorkerWS struct {
 type WorkerState int
 
 const (
-	WorkerInactive WorkerState = 0
-	WorkerActive               = 1
+	WorkerInactive WorkerState = iota
+	WorkerActive
+	WorkerStopped
 )
 
 type RequestHeader struct {
@@ -59,9 +57,16 @@ type RequestHeader struct {
 }
 
 type HelloRequest struct {
-	DeviceID   string          `json:"uaid"`
-	ChannelIDs []interface{}   `json:"channelIDs"`
-	PingData   json.RawMessage `json:"connect"`
+	DeviceID   string            `json:"uaid"`
+	ChannelIDs []json.RawMessage `json:"channelIDs"`
+	PingData   json.RawMessage   `json:"connect"`
+}
+
+type HelloReply struct {
+	Type        string  `json:"messageType"`
+	DeviceID    string  `json:"uaid"`
+	Status      int     `json:"status"`
+	RedirectURL *string `json:"redirect,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -115,8 +120,7 @@ func NewWorker(app *Application, id string) *WorkerWS {
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
 		id:           id,
-		state:        WorkerActive,
-		stopped:      false,
+		state:        WorkerInactive,
 		pingInt:      app.clientMinPing,
 		helloTimeout: app.clientHelloTimeout,
 		pongInterval: app.clientPongInterval,
@@ -136,35 +140,55 @@ func harmlessConnectionError(err error) (harmless bool) {
 	return
 }
 
+// ReadDeadline determines the deadline t for the next read. If the handshake
+// timeout and pong interval are not set, t is the zero value.
+func (self *WorkerWS) ReadDeadline(sock *PushWS) (t time.Time) {
+	switch self.state {
+	// For unidentified clients, the deadline is the handshake timeout relative
+	// to the socket creation time. This prevents clients from extending the
+	// timeout by sending pings.
+	case WorkerInactive:
+		if self.helloTimeout > 0 {
+			t = sock.Born.Add(self.helloTimeout)
+		}
+
+	// For clients that have completed the handshake, the deadline is the end of
+	// the next pong interval.
+	case WorkerActive:
+		if self.pongInterval > 0 {
+			t = timeNow().Add(self.pongInterval)
+		}
+	}
+	return
+}
+
 func (self *WorkerWS) sniffer(sock *PushWS) {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
 	logWarning := self.logger.ShouldLog(WARNING)
-	var (
-		buf = new(bytes.Buffer)
-	)
+	buf := new(bytes.Buffer)
 
-	for {
+	for !self.stopped() {
 		buf.Reset()
-		var (
-			raw []byte
-			err error
-		)
-
-		// Were we told to shut down?
-		if self.stopped {
-			return
-		}
-		sock.Socket.SetReadDeadline(time.Now().Add(self.pongInterval))
-		if err = websocket.Message.Receive(sock.Socket, &raw); err != nil {
+		sock.Socket.SetReadDeadline(self.ReadDeadline(sock))
+		raw, err := sock.Socket.ReadBinary()
+		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if err = websocket.Message.Send(sock.Socket, "{}"); err == nil {
+				if self.state == WorkerInactive {
+					if self.logger.ShouldLog(DEBUG) {
+						self.logger.Debug("dash", "Worker Idle connection. Closing socket",
+							LogFields{"rid": self.id})
+					}
+					self.stop()
+					continue
+				}
+				if err = sock.Socket.WriteText("{}"); err == nil {
 					continue
 				}
 			}
-			self.stopped = true
+			self.stop()
 			if err != io.EOF {
 				if self.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {
 					self.logger.Error("worker", "Websocket Error",
@@ -194,7 +218,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 						LogFields{"rid": self.id, "error": ErrStr(err)})
 				}
 			}
-			self.stopped = true
+			self.stop()
 			continue
 		} else {
 			msg = buf.Bytes()
@@ -210,18 +234,11 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 			header.Type = "ping"
 		} else if err = json.Unmarshal(msg, header); err != nil {
 			if logWarning {
-				if typeErr, ok := err.(*json.UnmarshalTypeError); ok {
-					self.logger.Warn("worker", "Mismatched header field types", LogFields{
-						"rid":      self.id,
-						"expected": typeErr.Type.String(),
-						"actual":   typeErr.Value})
-				} else {
-					self.logger.Warn("worker", "Error parsing request payload",
-						LogFields{"rid": self.id, "error": ErrStr(err)})
-				}
+				self.logger.Warn("worker", "Error parsing request header",
+					LogFields{"rid": self.id, "error": ErrStr(err)})
 			}
 			self.handleError(sock, msg, ErrUnknownCommand)
-			self.stopped = true
+			self.stop()
 			continue
 		}
 		switch strings.ToLower(header.Type) {
@@ -250,10 +267,18 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 					LogFields{"rid": self.id, "cmd": header.Type, "error": ErrStr(err)})
 			}
 			self.handleError(sock, msg, err)
-			self.stopped = true
+			self.stop()
 			continue
 		}
 	}
+}
+
+func (self *WorkerWS) stopped() bool {
+	return self.state == WorkerStopped
+}
+
+func (self *WorkerWS) stop() {
+	self.state = WorkerStopped
 }
 
 // standardize the error reporting back to the client.
@@ -263,23 +288,13 @@ func (self *WorkerWS) handleError(sock *PushWS, message []byte, err error) (ret 
 		return
 	}
 	reply["status"], reply["error"] = ErrToStatus(err)
-	return websocket.JSON.Send(sock.Socket, reply)
+	return sock.Socket.WriteJSON(reply)
 }
 
 // General workhorse loop for the websocket handler.
 func (self *WorkerWS) Run(sock *PushWS) {
-	time.AfterFunc(self.helloTimeout,
-		func() {
-			if sock.UAID() == "" {
-				if self.logger.ShouldLog(DEBUG) {
-					self.logger.Debug("dash", "Worker Idle connection. Closing socket",
-						LogFields{"rid": self.id})
-				}
-				sock.Socket.Close()
-			}
-		})
-
 	defer func(sock *PushWS) {
+		sock.Socket.Close()
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
@@ -289,13 +304,11 @@ func (self *WorkerWS) Run(sock *PushWS) {
 					"error": ErrStr(err),
 					"stack": string(stack[:n])})
 			}
-			sock.Socket.Close()
 		}
 		return
 	}(sock)
 
 	self.sniffer(sock)
-	sock.Socket.Close()
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("dash", "Run has completed a shut-down",
@@ -341,9 +354,10 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 				self.logger.Warn("worker", "Failed to redirect client", LogFields{
 					"error": err.Error(), "rid": self.id, "cmd": header.Type})
 			}
-			_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":429}`,
-				header.Type)
-			self.stopped = true
+			reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":429}`,
+				header.Type, uaid)
+			err = sock.Socket.WriteText(reply)
+			self.stop()
 			return err
 		}
 		if !shouldRedirect {
@@ -353,9 +367,10 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 			self.logger.Debug("worker", "Redirecting client", LogFields{
 				"rid": self.id, "cmd": header.Type, "origin": origin})
 		}
-		_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","uaid":"%s","status":307,"redirect":"%s"}`,
+		reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":307,"redirect":%q}`,
 			header.Type, uaid, origin)
-		self.stopped = true
+		err = sock.Socket.WriteText(reply)
+		self.stop()
 		return err
 	}
 
@@ -369,7 +384,6 @@ registerDevice:
 		Arguments: JsMap{
 			"worker":  self,
 			"uaid":    uaid,
-			"chids":   request.ChannelIDs,
 			"connect": []byte(request.PingData),
 		},
 	}
@@ -380,13 +394,9 @@ registerDevice:
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "hello", "uaid": uaid})
 	}
-	// websocket.JSON.Send(sock.Socket, JsMap{
-	// 	"messageType": header.Type,
-	// 	"status":      status,
-	// 	"uaid":        uaid})
-	_, err = fmt.Fprintf(sock.Socket, `{"messageType":"%s","status":%d,"uaid":"%s"}`,
-		header.Type, status, uaid)
-	if err != nil {
+	reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":%d}`,
+		header.Type, uaid, status)
+	if err = sock.Socket.WriteText(reply); err != nil {
 		if logWarning {
 			self.logger.Warn("dash", "Error writing client handshake", LogFields{
 				"rid": self.id, "error": err.Error()})
@@ -399,11 +409,8 @@ registerDevice:
 			LogFields{"rid": self.id})
 	}
 	self.state = WorkerActive
-	if err == nil {
-		// Get the lastAccessed time from wherever
-		return self.Flush(sock, 0, "", 0, "")
-	}
-	return err
+	// Get the lastAccessed time from wherever
+	return self.Flush(sock, 0, "", 0, "")
 }
 
 func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
@@ -487,7 +494,7 @@ func (self *WorkerWS) handshake(sock *PushWS, request *HelloRequest) (
 	return request.DeviceID, true, nil
 
 forceReset:
-	if deviceID, err = id.Generate(); err != nil {
+	if deviceID, err = idGenerate(); err != nil {
 		return "", false, err
 	}
 	return deviceID, true, nil
@@ -495,7 +502,7 @@ forceReset:
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (err error) {
+func (self *WorkerWS) Ack(sock *PushWS, _ *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
@@ -515,7 +522,7 @@ func (self *WorkerWS) Ack(sock *PushWS, header *RequestHeader, message []byte) (
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	if len(request.Updates) == 0 {
+	if len(request.Updates) == 0 && len(request.Expired) == 0 {
 		return ErrNoParams
 	}
 	self.metrics.Increment("updates.client.ack")
@@ -598,9 +605,9 @@ func (self *WorkerWS) Register(sock *PushWS, header *RequestHeader, message []by
 			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	websocket.JSON.Send(sock.Socket, RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
+	sock.Socket.WriteJSON(RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
-	return err
+	return nil
 }
 
 // Unregister a ChannelID.
@@ -646,7 +653,7 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "unregister"})
 	}
-	websocket.JSON.Send(sock.Socket, UnregisterReply{header.Type, 200, request.ChannelID})
+	sock.Socket.WriteJSON(UnregisterReply{header.Type, 200, request.ChannelID})
 	self.metrics.Increment("updates.client.unregister")
 	return nil
 }
@@ -654,20 +661,23 @@ func (self *WorkerWS) Unregister(sock *PushWS, header *RequestHeader, message []
 // Dump any records associated with the UAID.
 func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, version int64, data string) (err error) {
 	// flush pending data back to Client
-	timer := time.Now()
+	timer := timeNow()
 	logWarning := self.logger.ShouldLog(WARNING)
 	messageType := "notification"
 	uaid := sock.UAID()
-	defer func(timer time.Time, sock *PushWS) {
-		now := time.Now()
+	defer func(timer time.Time, sock *PushWS, err *error) {
+		now := timeNow()
 		if sock.Logger.ShouldLog(INFO) {
 			sock.Logger.Info("timer",
 				"Client flush completed",
 				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
 					"uaid": uaid})
 		}
+		if *err != nil || self.stopped() {
+			return
+		}
 		self.metrics.Timer("client.flush", now.Sub(timer))
-	}(timer, sock)
+	}(timer, sock, &err)
 	if uaid == "" {
 		if logWarning {
 			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
@@ -675,7 +685,7 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
-		self.stopped = true
+		self.stop()
 		return nil
 	}
 	// Fetch the pending updates from #storage
@@ -713,10 +723,11 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 		if !mod {
 			prefix = "+>"
 		}
-		for index, update := range updates {
-			logStrings[index] = fmt.Sprintf("%s %s.%s = %d", prefix, uaid, update.ChannelID, update.Version)
-			self.metrics.Increment("updates.sent")
+		for i, update := range updates {
+			logStrings[i] = fmt.Sprintf("%s %s.%s = %d", prefix, uaid,
+				update.ChannelID, update.Version)
 		}
+		self.metrics.IncrementBy("updates.sent", int64(len(updates)))
 	}
 
 	if self.logger.ShouldLog(DEBUG) {
@@ -724,26 +735,30 @@ func (self *WorkerWS) Flush(sock *PushWS, lastAccessed int64, channel string, ve
 			"rid":     self.id,
 			"updates": fmt.Sprintf("[%s]", strings.Join(logStrings, ", "))})
 	}
-	websocket.JSON.Send(sock.Socket, reply)
+	sock.Socket.WriteJSON(reply)
 	return nil
 }
 
 func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err error) {
-	now := time.Now()
+	now := timeNow()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
+			source := sock.Socket.Origin()
+			if len(source) == 0 {
+				source = "No Socket Origin"
+			}
 			self.logger.Warn("dash", "Client sending too many pings",
-				LogFields{"rid": self.id, "source": sock.Origin()})
+				LogFields{"rid": self.id, "source": source})
 		}
-		self.stopped = true
+		self.stop()
 		self.metrics.Increment("updates.client.too_many_pings")
 		return ErrTooManyPings
 	}
 	self.lastPing = now
 	if self.app.pushLongPongs {
-		websocket.JSON.Send(sock.Socket, PingReply{header.Type, 200})
+		sock.Socket.WriteJSON(PingReply{header.Type, 200})
 	} else {
-		websocket.Message.Send(sock.Socket, "{}")
+		sock.Socket.WriteText("{}")
 	}
 	self.metrics.Increment("updates.client.ping")
 	return nil
@@ -757,7 +772,7 @@ func (self *WorkerWS) Purge(sock *PushWS, _ *RequestHeader, _ []byte) (err error
 	       Arguments:JsMap{"uaid": sock.UAID()}}
 	   result := <-sock.Scmd
 	*/
-	websocket.Message.Send(sock.Socket, "{}")
+	sock.Socket.WriteText("{}")
 	return nil
 }
 

@@ -58,13 +58,13 @@ type Application struct {
 	clients            map[string]*Client
 	clientMux          sync.RWMutex
 	clientCount        int32
-	server             *Serv
+	server             Server
 	store              Store
 	router             Router
 	locator            Locator
 	balancer           Balancer
-	sh                 *SocketHandler
-	eh                 *EndpointHandler
+	sh                 Handler
+	eh                 Handler
 	propping           PropPinger
 	closeWait          sync.WaitGroup
 	closeChan          chan bool
@@ -161,18 +161,18 @@ func (a *Application) SetBalancer(b Balancer) error {
 	return nil
 }
 
-func (a *Application) SetServer(server *Serv) error {
+func (a *Application) SetServer(server Server) error {
 	a.server = server
 	return nil
 }
 
-func (a *Application) SetSocketHandler(handlers *SocketHandler) error {
-	a.sh = handlers
+func (a *Application) SetSocketHandler(h Handler) error {
+	a.sh = h
 	return nil
 }
 
-func (a *Application) SetEndpointHandler(handlers *EndpointHandler) error {
-	a.eh = handlers
+func (a *Application) SetEndpointHandler(h Handler) error {
+	a.eh = h
 	return nil
 }
 
@@ -220,15 +220,15 @@ func (a *Application) Balancer() Balancer {
 	return a.balancer
 }
 
-func (a *Application) Server() *Serv {
+func (a *Application) Server() Server {
 	return a.server
 }
 
-func (a *Application) SocketHandler() *SocketHandler {
+func (a *Application) SocketHandler() Handler {
 	return a.sh
 }
 
-func (a *Application) EndpointHandler() *EndpointHandler {
+func (a *Application) EndpointHandler() Handler {
 	return a.eh
 }
 

@@ -149,7 +149,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginMetrics, app); err != nil {
 		return nil, err
 	}
-	metrics := obj.(*Metrics)
+	metrics := obj.(Statistician)
 	if err = app.SetMetrics(metrics); err != nil {
 		return nil, err
 	}
@@ -199,13 +199,13 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
 		return nil, err
 	}
-	serv := obj.(*Serv)
+	serv := obj.(Server)
 	app.SetServer(serv)
 
 	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
 		return nil, err
 	}
-	sh := obj.(*SocketHandler)
+	sh := obj.(Handler)
 	app.SetSocketHandler(sh)
 
 	// Set up the balancer.
@@ -221,7 +221,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	if obj, err = l.loadPlugin(PluginEndpoint, app); err != nil {
 		return nil, err
 	}
-	eh := obj.(*EndpointHandler)
+	eh := obj.(Handler)
 	app.SetEndpointHandler(eh)
 
 	// Loaded for side effects only.

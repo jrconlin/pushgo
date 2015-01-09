@@ -1,3 +1,4 @@
+// +build smoke
 // +build !memcached_server_test
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -6,8 +7,8 @@
 
 package simplepush
 
-// Server is a test Simple Push server without storage.
-var Server = &TestServer{
+// testServer is a test Simple Push server without storage.
+var testServer = &TestServer{
 	LogLevel: 0,
 	NewStore: func() (store ConfigStore, configStruct interface{}, err error) {
 		// UAIDExists will return "false" for registration checks for UAID

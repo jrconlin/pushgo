@@ -5,21 +5,20 @@
 package simplepush
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
-
-	"github.com/mozilla-services/pushgo/client"
 )
 
-func newTestHandler(t *testing.T) *Application {
+func newTestHandler(tb TBLoggingInterface) *Application {
 
-	tlogger, _ := NewLogger(&TestLogger{DEBUG, t})
+	tlogger, _ := NewLogger(&TestLogger{DEBUG, tb})
 
 	mx := &TestMetrics{}
 	mx.Init(nil, nil)
@@ -47,10 +46,69 @@ func newTestHandler(t *testing.T) *Application {
 	eh := NewEndpointHandler()
 	ehConfig := eh.ConfigStruct()
 	ehConfig.(*EndpointHandlerConfig).MaxDataLen = 140
-	eh.Init(app, ehConfig)
+	if err := eh.Init(app, ehConfig); err != nil {
+		tb.Logf("Failed to create endpoint: %s", err)
+		return nil
+	}
 	app.SetEndpointHandler(eh)
 
 	return app
+}
+
+var rbuf = make([]byte, 64)
+
+func randomText() string {
+	rand.Read(rbuf)
+	for i := 0; i < len(rbuf); i++ {
+		rbuf[i] = uint8(rbuf[i])%94 + 32
+	}
+	return string(rbuf)
+}
+
+func Benchmark_UpdateHandler(b *testing.B) {
+	uaid := "deadbeef000000000000000000000000"
+	chid := "decafbad000000000000000000000000"
+	app := newTestHandler(b)
+	defer app.CloseOnce()
+	if app == nil {
+		b.Fatal()
+	}
+	noPush := &PushWS{
+		Socket: nil,
+		Born:   time.Now(),
+	}
+	noPush.SetUAID(uaid)
+	worker := &NoWorker{
+		Socket: noPush,
+		Logger: app.Logger(),
+	}
+	app.AddClient(uaid, &Client{
+		Worker(worker),
+		noPush,
+		uaid})
+	resp := httptest.NewRecorder()
+	key, _ := app.Store().IDsToKey(uaid, chid)
+	updateUrl := fmt.Sprintf("http://test/update/%s", key)
+	tmux := app.EndpointHandler().ServeMux()
+	vals := make(url.Values)
+	// Begin benchmark:
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req, err := http.NewRequest("PUT", updateUrl, nil)
+		if req == nil || err != nil {
+			b.Errorf("PUT failed: %s", err)
+			b.Fail()
+		}
+		req.Form = vals
+		req.Form.Set("version", strconv.FormatInt(int64(i), 10))
+		req.Form.Set("data", randomText())
+		tmux.ServeHTTP(resp, req)
+		if resp.Body.String() != "{}" {
+			b.Errorf(`Unexpected response from server: "%s"`, resp.Body.String())
+			b.Fail()
+		}
+		resp.Body.Reset()
+	}
 }
 
 func Test_UpdateHandler(t *testing.T) {
@@ -60,6 +118,7 @@ func Test_UpdateHandler(t *testing.T) {
 	data := "This is a test of the emergency broadcasting system."
 
 	app := newTestHandler(t)
+	defer app.CloseOnce()
 	noPush := &PushWS{
 		Socket: nil,
 		Born:   time.Now(),
@@ -125,99 +184,4 @@ func Test_UpdateHandler(t *testing.T) {
 		t.Error("Returned version does not match expected value")
 	}
 
-}
-
-func endpointIds(uri *url.URL) (deviceId, channelId string, ok bool) {
-	if !uri.IsAbs() {
-		ok = false
-		return
-	}
-	pathPrefix := "/update/"
-	i := strings.Index(uri.Path, pathPrefix)
-	if i < 0 {
-		ok = false
-		return
-	}
-	key := strings.SplitN(uri.Path[i+len(pathPrefix):], ".", 2)
-	if len(key) < 2 {
-		ok = false
-		return
-	}
-	return key[0], key[1], true
-}
-
-func TestBadKey(t *testing.T) {
-	origin, err := Server.Origin()
-	if err != nil {
-		t.Fatalf("Error initializing test server: %#v", err)
-	}
-	conn, deviceId, err := client.Dial(origin)
-	if err != nil {
-		t.Fatalf("Error dialing origin: %#v", err)
-	}
-	defer conn.Close()
-	channelId, endpoint, err := conn.Subscribe()
-	if err != nil {
-		t.Fatalf("Error subscribing to channel: %#v", err)
-	}
-	uri, err := url.ParseRequestURI(endpoint)
-	if err != nil {
-		t.Fatalf("Error parsing push endpoint %#v: %#v", endpoint, err)
-	}
-	keyDevice, keyChannel, ok := endpointIds(uri)
-	if !ok {
-		t.Errorf("Incomplete push endpoint: %#v", endpoint)
-	}
-	if keyDevice != deviceId {
-		t.Errorf("Mismatched device IDs: got %#v; want %#v", keyDevice, deviceId)
-	}
-	if keyChannel != channelId {
-		t.Errorf("Mismatched channel IDs: got %#v; want %#v", keyChannel, channelId)
-	}
-	newURI, _ := uri.Parse(fmt.Sprintf("/update/%s", keyDevice))
-	err = client.Notify(newURI.String(), 1)
-	clientErr, ok := err.(client.Error)
-	if !ok {
-		t.Errorf("Type assertion failed for endpoint error: %#v", err)
-	} else if clientErr.Status() != 404 {
-		t.Errorf("Unexpected endpoint status: got %#v; want 404", clientErr.Status())
-	}
-}
-
-func TestMissingKey(t *testing.T) {
-	origin, err := Server.Origin()
-	if err != nil {
-		t.Fatalf("Error initializing test server: %#v", err)
-	}
-	conn, deviceId, err := client.Dial(origin)
-	if err != nil {
-		t.Fatalf("Error dialing origin: %#v", err)
-	}
-	defer conn.Close()
-	channelId, endpoint, err := conn.Subscribe()
-	if err != nil {
-		t.Fatalf("Error subscribing to channel: %#v", err)
-	}
-	uri, err := url.ParseRequestURI(endpoint)
-	if err != nil {
-		t.Fatalf("Error parsing push endpoint %#v: %#v", endpoint, err)
-	}
-	keyDevice, keyChannel, ok := endpointIds(uri)
-	if !ok {
-		t.Errorf("Incomplete push endpoint: %#v", endpoint)
-	}
-	if keyDevice != deviceId {
-		t.Errorf("Mismatched device IDs: got %#v; want %#v", keyDevice, deviceId)
-	}
-	if keyChannel != channelId {
-		t.Errorf("Mismatched channel IDs: got %#v; want %#v", keyChannel, channelId)
-	}
-	newURI, _ := uri.Parse(fmt.Sprintf("/update/%s.", keyDevice))
-	err = client.Notify(newURI.String(), 1)
-	clientErr, ok := err.(client.Error)
-	if !ok {
-		t.Errorf("Type assertion failed for endpoint error: %#v", err)
-	} else if clientErr.Status() != 404 {
-		t.Errorf("Unexpected endpoint status: got %#v; want 404", clientErr.Status())
-	}
 }

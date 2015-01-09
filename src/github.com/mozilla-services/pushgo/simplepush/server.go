@@ -9,7 +9,6 @@ import (
 	"errors"
 	"runtime"
 	"strconv"
-	"strings"
 	"text/template"
 	"time"
 )
@@ -28,6 +27,16 @@ type Client struct {
 // Basic global server options
 type ServerConfig struct {
 	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
+}
+
+type Server interface {
+	RequestFlush(client *Client, channel string, version int64,
+		data string) (err error)
+	UpdateClient(client *Client, chid, uid string, vers int64,
+		time time.Time, data string) (err error)
+	HandleCommand(cmd PushCommand, sock *PushWS) (
+		result int, args JsMap)
+	Close() error
 }
 
 func NewServer() *Serv {
@@ -79,13 +88,8 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	uaid := args["uaid"].(string)
 
 	if self.logger.ShouldLog(INFO) {
-		chidss := ""
-		if chids, ok := args["channelIDs"]; ok {
-			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
-		}
 		self.logger.Info("server", "handling 'hello'",
-			LogFields{"uaid": uaid,
-				"channelIDs": chidss})
+			LogFields{"uaid": uaid})
 	}
 
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {

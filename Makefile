@@ -90,8 +90,14 @@ test-mocks: $(DEPS)
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
 	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
-	./mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/balancer.go \
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/balancer.go \
 		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_balancer_test.go -package="simplepush"
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/server.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_server_test.go -package="simplepush"
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/socket.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_socket_test.go -package="simplepush"
+	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/handlers.go \
+		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_handlers_test.go -package="simplepush"
 	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
 	# copied into log.go while this is run, then the mocked config struct needs to be
 	# removed from the mock_log_test.go file.
@@ -103,12 +109,12 @@ test-mocks: $(DEPS)
 
 test-gomc:
 	GOPATH=$(GOPATH) $(GO) test \
-		-tags "memcached_server_test libmemcached" \
+		-tags "smoke memcached_server_test libmemcached" \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 test-gomemcache:
 	GOPATH=$(GOPATH) $(GO) test \
-		-tags memcached_server_test \
+		-tags "smoke memcached_server_test" \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 check-cov:
@@ -138,6 +144,7 @@ id-cov: check-cov cov-dir
 simplepush-cov: check-cov cov-dir
 	GOPATH=$(GOPATH) $(GO) test \
 		-covermode=$(COVER_MODE) -coverprofile=$(COVER_PATH)/simplepush.out \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
 
 # Merge coverage reports for each package. -coverprofile does not support
@@ -156,10 +163,13 @@ travis-cov: test-cov
 
 test:
 	GOPATH=$(GOPATH) $(GO) test -v \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 bench:
-	GOPATH=$(GOPATH) $(GO) test -v -bench=Router -benchmem -benchtime=5s \
+#	GOPATH=$(GOPATH) $(GO) test -v -bench=Router -benchmem -benchtime=5s
+	GOPATH=$(GOPATH) $(GO) test -v -bench . -benchmem -benchtime=5s \
+		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 vet:
