@@ -36,7 +36,6 @@ type EndpointHandler struct {
 	store       Store
 	router      Router
 	pinger      PropPinger
-	balancer    Balancer
 	hostname    string
 	tokenKey    []byte
 	listener    net.Listener
@@ -69,7 +68,6 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 	h.store = app.Store()
 	h.router = app.Router()
 	h.pinger = app.PropPinger()
-	h.balancer = app.Balancer()
 
 	h.tokenKey = app.TokenKey()
 
@@ -215,7 +213,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	}
 
 	if req.Method != "PUT" {
-		http.Error(resp, "", http.StatusMethodNotAllowed)
+		writeJSON(resp, http.StatusMethodNotAllowed, []byte(`"Method Not Allowed"`))
 		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -227,9 +225,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	svers := req.FormValue("version")
 	if svers != "" {
 		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
-			resp.Header().Set("Content-Type", "application/json")
-			resp.WriteHeader(http.StatusBadRequest)
-			resp.Write([]byte(`"Invalid Version"`))
+			writeJSON(resp, http.StatusBadRequest, []byte(`"Invalid Version"`))
 			h.metrics.Increment("updates.appserver.invalid")
 			return
 		}
@@ -243,8 +239,8 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 			h.logger.Warn("handlers_endpoint", "Data too large, rejecting request",
 				LogFields{"rid": requestID})
 		}
-		http.Error(resp, fmt.Sprintf("Data exceeds max length of %d bytes",
-			h.maxDataLen), http.StatusRequestEntityTooLarge)
+		writeJSON(resp, http.StatusRequestEntityTooLarge, []byte(fmt.Sprintf(
+			`"Data exceeds max length of %d bytes"`, h.maxDataLen)))
 		h.metrics.Increment("updates.appserver.toolong")
 		return
 	}
@@ -260,7 +256,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 			h.logger.Warn("handlers_endpoint", "Invalid primary key for update",
 				LogFields{"error": err.Error(), "rid": requestID, "token": token})
 		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
+		writeJSON(resp, http.StatusNotFound, []byte(`"Invalid Token"`))
 		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -299,7 +295,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 		}
 		status, _ := ErrToStatus(err)
 		h.metrics.Increment("updates.appserver.error")
-		http.Error(resp, "Could not update channel version", status)
+		writeJSON(resp, status, []byte(`"Could not update channel version"`))
 		return
 	}
 
