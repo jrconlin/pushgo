@@ -64,8 +64,8 @@ type HelloRequest struct {
 
 type HelloReply struct {
 	Type        string  `json:"messageType"`
-	Status      int     `json:"status"`
 	DeviceID    string  `json:"uaid"`
+	Status      int     `json:"status"`
 	RedirectURL *string `json:"redirect,omitempty"`
 }
 
@@ -347,7 +347,7 @@ func (self *WorkerWS) Hello(sock *PushWS, header *RequestHeader, message []byte)
 					"error": err.Error(), "rid": self.id, "cmd": header.Type})
 			}
 			reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":429}`,
-				header.Type, uaid, origin)
+				header.Type, uaid)
 			err = sock.Socket.WriteText(reply)
 			self.stop()
 			return err
@@ -387,12 +387,8 @@ registerDevice:
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.id, "cmd": "hello", "uaid": uaid})
 	}
-	// sock.Socket.WriteJSON(JsMap{
-	// 	"messageType": header.Type,
-	// 	"status":      status,
-	// 	"uaid":        uaid})
-	reply := fmt.Sprintf(`{"messageType":%q,"status":%d,"uaid":%q}`,
-		header.Type, status, uaid)
+	reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":%d}`,
+		header.Type, uaid, status)
 	if err = sock.Socket.WriteText(reply); err != nil {
 		if logWarning {
 			self.logger.Warn("dash", "Error writing client handshake", LogFields{
