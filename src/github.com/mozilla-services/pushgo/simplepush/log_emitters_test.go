@@ -36,8 +36,8 @@ func BenchmarkNewMessage(b *testing.B) {
 }
 
 func TestTextEmitter(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	buf := new(bytes.Buffer)
 	te := NewTextEmitter(buf)
@@ -55,8 +55,8 @@ func TestTextEmitter(t *testing.T) {
 }
 
 func TestJSONEmitter(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	buf := new(bytes.Buffer)
 	je := NewJSONEmitter(buf, "2", "example.com", "test-json-emitter")
@@ -102,8 +102,8 @@ func TestJSONEmitter(t *testing.T) {
 }
 
 func TestProtobufEmitter(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	buf := new(bytes.Buffer)
 	pe := NewProtobufEmitter(buf, "2", "example.com", "test-json-emitter")

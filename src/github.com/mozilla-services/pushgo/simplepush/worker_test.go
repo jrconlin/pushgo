@@ -493,8 +493,8 @@ func TestWorkerUnregister(t *testing.T) {
 }
 
 func TestWorkerHandshakeRedirect(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -703,8 +703,8 @@ func TestWorkerError(t *testing.T) {
 func BenchmarkWorkerRun(b *testing.B) {
 	// I don't believe that goconvey handles benchmark well, so sadly, can't
 	// reuse the test code.
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	mockCtrl := gomock.NewController(b)
 	defer mockCtrl.Finish()
@@ -800,8 +800,8 @@ func (err *netErr) Timeout() bool   { return err.timeout }
 func (err *netErr) Temporary() bool { return err.temporary }
 
 func TestWorkerRun(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	app := NewApplication()
 	app.clientMinPing = 10 * time.Second
@@ -1028,8 +1028,8 @@ func TestWorkerRun(t *testing.T) {
 }
 
 func TestRunCase(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -1096,8 +1096,8 @@ func TestRunCase(t *testing.T) {
 }
 
 func TestWorkerHello(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -1243,8 +1243,8 @@ func TestWorkerHello(t *testing.T) {
 }
 
 func TestWorkerPing(t *testing.T) {
-	installMocks()
-	defer revertMocks()
+	useMockFuncs()
+	defer useStdFuncs()
 
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
