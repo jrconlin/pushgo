@@ -216,7 +216,12 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 			if client != nil {
 				uaid = client.UAID
 			}
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if flushErr, ok := r.(error); ok {
+				err = flushErr
+			} else {
+				err = errors.New("Error requesting flush")
+			}
+			if self.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
 				self.logger.Error("server",
@@ -244,7 +249,7 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 		}
 
 		// Attempt to send the command
-		client.Worker.Flush(client.PushWS, 0, channel, version, data)
+		return client.Worker.Flush(client.PushWS, 0, channel, version, data)
 	}
 	return nil
 }
@@ -275,11 +280,12 @@ func (self *Serv) Update(chid, uid string, vers int64, time time.Time, data stri
 
 func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
 	time time.Time, data string) (err error) {
-	reason := "Unknown UID"
 
+	var reason string
 	pk, ok := self.store.IDsToKey(uid, chid)
 	if !ok {
 		reason = "Failed to generate PK"
+		err = errors.New("Invalid storage key")
 		goto updateError
 	}
 
@@ -288,10 +294,11 @@ func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
 		goto updateError
 	}
 
-	if err = self.RequestFlush(client, chid, vers, data); err == nil {
-		return
+	if err = self.RequestFlush(client, chid, vers, data); err != nil {
+		reason = "Failed to flush"
+		goto updateError
 	}
-	reason = "Failed to flush"
+	return nil
 
 updateError:
 	if self.logger.ShouldLog(ERROR) {
