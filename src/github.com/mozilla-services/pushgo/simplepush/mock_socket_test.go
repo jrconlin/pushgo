@@ -29,19 +29,18 @@ func (_m *MockSocket) EXPECT() *_MockSocketRecorder {
 	return _m.recorder
 }
 
-func (_m *MockSocket) Origin() (string, bool) {
+func (_m *MockSocket) Origin() string {
 	ret := _m.ctrl.Call(_m, "Origin")
 	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(bool)
-	return ret0, ret1
+	return ret0
 }
 
 func (_mr *_MockSocketRecorder) Origin() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Origin")
 }
 
-func (_m *MockSocket) SetReadDeadline(_param0 time.Time) error {
-	ret := _m.ctrl.Call(_m, "SetReadDeadline", _param0)
+func (_m *MockSocket) SetReadDeadline(t time.Time) error {
+	ret := _m.ctrl.Call(_m, "SetReadDeadline", t)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -50,8 +49,8 @@ func (_mr *_MockSocketRecorder) SetReadDeadline(arg0 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "SetReadDeadline", arg0)
 }
 
-func (_m *MockSocket) SetWriteDeadline(_param0 time.Time) error {
-	ret := _m.ctrl.Call(_m, "SetWriteDeadline", _param0)
+func (_m *MockSocket) SetWriteDeadline(t time.Time) error {
+	ret := _m.ctrl.Call(_m, "SetWriteDeadline", t)
 	ret0, _ := ret[0].(error)
 	return ret0
 }

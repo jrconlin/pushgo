@@ -140,16 +140,24 @@ func harmlessConnectionError(err error) (harmless bool) {
 	return
 }
 
-func (self *WorkerWS) Deadline() (t time.Time) {
-	var d time.Duration
+// ReadDeadline determines the deadline t for the next read. If the handshake
+// timeout and pong interval are not set, t is the zero value.
+func (self *WorkerWS) ReadDeadline(sock *PushWS) (t time.Time) {
 	switch self.state {
+	// For unidentified clients, the deadline is the handshake timeout relative
+	// to the socket creation time. This prevents clients from extending the
+	// timeout by sending pings.
 	case WorkerInactive:
-		d = self.helloTimeout
+		if self.helloTimeout > 0 {
+			t = sock.Born.Add(self.helloTimeout)
+		}
+
+	// For clients that have completed the handshake, the deadline is the end of
+	// the next pong interval.
 	case WorkerActive:
-		d = self.pongInterval
-	}
-	if d > 0 {
-		t = timeNow().Add(d)
+		if self.pongInterval > 0 {
+			t = timeNow().Add(self.pongInterval)
+		}
 	}
 	return
 }
@@ -164,7 +172,7 @@ func (self *WorkerWS) sniffer(sock *PushWS) {
 
 	for !self.stopped() {
 		buf.Reset()
-		sock.Socket.SetReadDeadline(self.Deadline())
+		sock.Socket.SetReadDeadline(self.ReadDeadline(sock))
 		raw, err := sock.Socket.ReadBinary()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
@@ -376,7 +384,6 @@ registerDevice:
 		Arguments: JsMap{
 			"worker":  self,
 			"uaid":    uaid,
-			"chids":   cleanChannelIDs(request.ChannelIDs),
 			"connect": []byte(request.PingData),
 		},
 	}
@@ -736,8 +743,8 @@ func (self *WorkerWS) Ping(sock *PushWS, header *RequestHeader, _ []byte) (err e
 	now := timeNow()
 	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
 		if self.logger.ShouldLog(WARNING) {
-			source, ok := sock.Socket.Origin()
-			if !ok {
+			source := sock.Socket.Origin()
+			if len(source) == 0 {
 				source = "No Socket Origin"
 			}
 			self.logger.Warn("dash", "Client sending too many pings",
@@ -795,14 +802,6 @@ func (r *NoWorker) Flush(_ *PushWS, lastAccessed int64, channel string, version 
 	r.Outbuffer, _ = json.Marshal(&FlushData{lastAccessed,
 		channel, version, data})
 	return nil
-}
-
-func cleanChannelIDs(ids []json.RawMessage) (clean []string) {
-	clean = make([]string, len(ids))
-	for i, b := range ids {
-		clean[i] = string(b[1 : len(b)-1])
-	}
-	return
 }
 
 // o4fs

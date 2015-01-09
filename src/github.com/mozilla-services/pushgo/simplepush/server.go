@@ -9,7 +9,6 @@ import (
 	"errors"
 	"runtime"
 	"strconv"
-	"strings"
 	"text/template"
 	"time"
 )
@@ -89,13 +88,8 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	uaid := args["uaid"].(string)
 
 	if self.logger.ShouldLog(INFO) {
-		chidss := ""
-		if chids, ok := args["channelIDs"]; ok {
-			chidss = "[" + strings.Join(chids.([]string), ", ") + "]"
-		}
 		self.logger.Info("server", "handling 'hello'",
-			LogFields{"uaid": uaid,
-				"channelIDs": chidss})
+			LogFields{"uaid": uaid})
 	}
 
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
