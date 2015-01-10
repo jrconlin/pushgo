@@ -148,13 +148,6 @@ func (self *Serv) Bye(sock *PushWS) {
 	sock.Close()
 }
 
-func (self *Serv) Unreg(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
-	// This is effectively a no-op, since we don't hold client session info
-	args := cmd.Arguments
-	args["status"] = 200
-	return 200, args
-}
-
 func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
@@ -168,28 +161,16 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	if !ok {
 		return 500, nil
 	}
-	// if there is a key, encrypt the token
-	if len(self.key) != 0 {
-		btoken := []byte(token)
-		if token, err = Encode(self.key, btoken); err != nil {
-			if self.logger.ShouldLog(ERROR) {
-				self.logger.Error("server", "Token Encoding error",
-					LogFields{"uaid": uaid,
-						"channelID": chid})
-			}
-			return 500, nil
+	if token, err = self.encodePK(token); err != nil {
+		if self.logger.ShouldLog(ERROR) {
+			self.logger.Error("server", "Token Encoding error",
+				LogFields{"uaid": uaid,
+					"channelID": chid})
 		}
+		return 500, nil
 	}
 
-	// cheezy variable replacement.
-	endpoint := new(bytes.Buffer)
-	if err = self.template.Execute(endpoint, struct {
-		Token       string
-		CurrentHost string
-	}{
-		token,
-		self.app.EndpointHandler().URL(),
-	}); err != nil {
+	if args["push.endpoint"], err = self.genEndpoint(token); err != nil {
 		if self.logger.ShouldLog(ERROR) {
 			self.logger.Error("server",
 				"Could not generate Push Endpoint",
@@ -197,7 +178,6 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 		}
 		return 500, nil
 	}
-	args["push.endpoint"] = endpoint.String()
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("server",
 			"Generated Push Endpoint",
@@ -209,6 +189,30 @@ func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments Js
 	return 200, args
 }
 
+func (self *Serv) encodePK(key string) (token string, err error) {
+	if len(self.key) == 0 {
+		return key, nil
+	}
+	// if there is a key, encrypt the token
+	btoken := []byte(key)
+	return Encode(self.key, btoken)
+}
+
+func (self *Serv) genEndpoint(token string) (string, error) {
+	// cheezy variable replacement.
+	endpoint := new(bytes.Buffer)
+	if err := self.template.Execute(endpoint, struct {
+		Token       string
+		CurrentHost string
+	}{
+		token,
+		self.app.EndpointHandler().URL(),
+	}); err != nil {
+		return "", err
+	}
+	return endpoint.String(), nil
+}
+
 func (self *Serv) RequestFlush(client *Client, channel string, version int64, data string) (err error) {
 	defer func(client *Client, version int64) {
 		if r := recover(); r != nil {
@@ -216,7 +220,12 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 			if client != nil {
 				uaid = client.UAID
 			}
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if flushErr, ok := r.(error); ok {
+				err = flushErr
+			} else {
+				err = errors.New("Error requesting flush")
+			}
+			if self.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
 				self.logger.Error("server",
@@ -244,42 +253,19 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 		}
 
 		// Attempt to send the command
-		client.Worker.Flush(client.PushWS, 0, channel, version, data)
+		return client.Worker.Flush(client.PushWS, 0, channel, version, data)
 	}
 	return nil
 }
 
-func (self *Serv) Purge(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
-	result = 200
-	return
-}
-
-func (self *Serv) Update(chid, uid string, vers int64, time time.Time, data string) (err error) {
-	updateErr := errors.New("Update Error")
-	reason := "Unknown UID"
-
-	client, ok := self.app.GetClient(uid)
-	if !ok {
-		err = updateErr
-		if self.logger.ShouldLog(ERROR) {
-			self.logger.Error("server", reason,
-				LogFields{"error": err.Error(),
-					"uaid": uid,
-					"chid": chid})
-		}
-		return err
-	}
-
-	return self.UpdateClient(client, chid, uid, vers, time, data)
-}
-
 func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
 	time time.Time, data string) (err error) {
-	reason := "Unknown UID"
 
+	var reason string
 	pk, ok := self.store.IDsToKey(uid, chid)
 	if !ok {
 		reason = "Failed to generate PK"
+		err = errors.New("Invalid storage key")
 		goto updateError
 	}
 
@@ -288,10 +274,11 @@ func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
 		goto updateError
 	}
 
-	if err = self.RequestFlush(client, chid, vers, data); err == nil {
-		return
+	if err = self.RequestFlush(client, chid, vers, data); err != nil {
+		reason = "Failed to flush"
+		goto updateError
 	}
-	reason = "Failed to flush"
+	return nil
 
 updateError:
 	if self.logger.ShouldLog(ERROR) {
@@ -318,11 +305,6 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		}
 		worker := args["worker"].(Worker)
 		result, ret = self.Hello(worker, cmd, sock)
-	case UNREG:
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server", "Handling UNREG event", nil)
-		}
-		result, ret = self.Unreg(cmd, sock)
 	case REGIS:
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling REGIS event", nil)
@@ -334,11 +316,6 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		}
 		self.Bye(sock)
 		return 0, nil
-	case PURGE:
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("Server", "Purge", nil)
-		}
-		self.Purge(cmd, sock)
 	}
 
 	args["uaid"] = ret["uaid"]

@@ -103,10 +103,8 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 		a.hostname = conf.Hostname
 	}
 
-	if len(conf.TokenKey) > 0 {
-		if a.tokenKey, err = base64.URLEncoding.DecodeString(conf.TokenKey); err != nil {
-			return fmt.Errorf("Malformed token key: %s", err)
-		}
+	if err = a.SetTokenKey(conf.TokenKey); err != nil {
+		return fmt.Errorf("Malformed token key: %s", err)
 	}
 
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
@@ -234,6 +232,15 @@ func (a *Application) EndpointHandler() Handler {
 
 func (a *Application) TokenKey() []byte {
 	return a.tokenKey
+}
+
+func (a *Application) SetTokenKey(key string) (err error) {
+	if len(key) == 0 {
+		a.tokenKey = nil
+	} else {
+		a.tokenKey, err = base64.URLEncoding.DecodeString(key)
+	}
+	return
 }
 
 func (a *Application) ClientCount() (count int) {

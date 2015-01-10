@@ -12,29 +12,19 @@ import (
 type CommandType int
 
 const (
-	UNREG CommandType = iota
-	REGIS
+	REGIS CommandType = iota
 	HELLO
-	ACK
-	FLUSH
-	RETRN
 	DIE
-	PURGE
 )
 
 var cmdLabels = map[CommandType]string{
-	UNREG: "Unregister",
 	REGIS: "Register",
 	HELLO: "Hello",
-	ACK:   "ACK",
-	FLUSH: "Flush",
-	RETRN: "Return",
-	DIE:   "Die",
-	PURGE: "Purge"}
+	DIE:   "Die"}
 
 type PushCommand struct {
 	// Use mutable int value
-	Command   CommandType //command type (UNREG, REGIS, ACK, etc)
+	Command   CommandType //command type
 	Arguments JsMap       //command arguments
 }
 

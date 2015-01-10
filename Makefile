@@ -16,6 +16,7 @@ PLATFORM=$(shell uname)
 PATH := $(HERE)/bin:$(DEPS)/bin:$(PATH)
 
 PACKAGE = github.com/mozilla-services/pushgo
+PREFIX = src/$(PACKAGE)/simplepush
 TARGET = simplepush
 COVER_MODE = count
 COVER_PATH = $(HERE)/.coverage
@@ -46,8 +47,7 @@ $(DEPS):
 
 build: $(DEPS)
 
-gen: $(addprefix $(HERE)/src/github.com/mozilla-services/pushgo/simplepush/,\
-	log_message.pb.go routable.capnp.go)
+gen: $(addprefix $(HERE)/$(PREFIX)/,log_message.pb.go routable.capnp.go)
 
 %.pb.go: %.proto
 	$(PROTOC) -I$(DEPS)/src/github.com/gogo/protobuf/gogoproto \
@@ -79,33 +79,19 @@ $(TARGET):
 	GOPATH=$(GOPATH) $(GO) build \
 		-ldflags "$(GOLDFLAGS)" -tags libmemcached -o $(TARGET) $(PACKAGE)
 
-test-mocks: $(DEPS)
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/config.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_config_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/worker.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_worker_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/storage.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_store_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/locator.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_locator_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/metrics.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_metrics_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/balancer.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_balancer_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/server.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_server_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/socket.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_socket_test.go -package="simplepush"
-	mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/handlers.go \
-		-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_handlers_test.go -package="simplepush"
-	# Note that to generate the log/router mock, the HasConfigStruct needs to be manually
-	# copied into log.go while this is run, then the mocked config struct needs to be
-	# removed from the mock_log_test.go file.
-	# Issue: https://code.google.com/p/gomock/issues/detail?id=16
-	#mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/log.go \
-	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_log_test.go -package="simplepush"
-	#mockgen -source=src/github.com/mozilla-services/pushgo/simplepush/router.go \
-	#	-destination=src/github.com/mozilla-services/pushgo/simplepush/mock_router_test.go -package="simplepush"
+MOCK_INTERFACES = config.go worker.go storage.go locator.go metrics.go\
+	balancer.go server.go socket.go handlers.go log.go router.go\
+	proprietary_ping.go
+
+mock_%_test.go: %.go $(DEPS)
+	mockgen -source=$< -destination=$@ -package="simplepush"
+
+test-mocks: $(addprefix $(PREFIX)/,$(patsubst %.go,mock_%_test.go,\
+	$(MOCK_INTERFACES)))
+
+clean-mocks:
+	rm -f $(addprefix $(PREFIX)/,$(patsubst %.go,mock_%_test.go,\
+		$(MOCK_INTERFACES)))
 
 test-gomc:
 	GOPATH=$(GOPATH) $(GO) test \
@@ -175,6 +161,6 @@ bench:
 vet:
 	GOPATH=$(GOPATH) $(GO) vet $(addprefix $(PACKAGE)/,client id retry simplepush)
 
-clean: clean-cov
+clean: clean-cov clean-mocks
 	rm -rf bin $(DEPS)
 	rm -f $(TARGET)
