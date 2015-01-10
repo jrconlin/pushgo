@@ -66,7 +66,6 @@ type Application struct {
 	sh                 Handler
 	eh                 Handler
 	propping           PropPinger
-	closeWait          sync.WaitGroup
 	closeChan          chan bool
 }
 
@@ -182,6 +181,7 @@ func (a *Application) Run() (errChan chan error) {
 	go a.eh.Start(errChan)
 	go a.router.Start(errChan)
 
+	go a.sendClientCount()
 	return errChan
 }
 
@@ -318,7 +318,6 @@ func (a *Application) CloseOnce() error {
 	a.closeClients()
 	// Stop publishing client counts.
 	close(a.closeChan)
-	a.closeWait.Wait()
 	if l := a.Locator(); l != nil {
 		// Deregister from the discovery service.
 		if err := a.locator.Close(); err != nil {
@@ -338,7 +337,6 @@ func (a *Application) CloseOnce() error {
 }
 
 func (a *Application) sendClientCount() {
-	defer a.closeWait.Done()
 	ticker := time.NewTicker(1 * time.Second)
 	for ok := true; ok; {
 		select {
