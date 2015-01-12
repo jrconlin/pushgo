@@ -21,7 +21,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
+	"strconv"
 )
+
+type ValueSizeError int
+
+func (v ValueSizeError) Error() string {
+	return "crypt: invalid value size " + strconv.Itoa(int(v))
+}
 
 func genKey(strength int) ([]byte, error) {
 	k := make([]byte, strength)
@@ -59,7 +66,10 @@ func Encode(key, value []byte) (string, error) {
 }
 
 func Decode(key []byte, rvalue string) ([]byte, error) {
-	if key == nil || len(key) == 0 {
+	if len(rvalue) == 0 {
+		return nil, nil
+	}
+	if len(key) == 0 {
 		return []byte(rvalue), nil
 	}
 	// NOTE: using the URLEncoding.Decode(...) seems to muck with the
@@ -75,6 +85,9 @@ func Decode(key []byte, rvalue string) ([]byte, error) {
 		return nil, err
 	}
 	blockSize := block.BlockSize()
+	if len(value) < blockSize {
+		return nil, ValueSizeError(len(value))
+	}
 	iv := value[:blockSize]
 	value = value[blockSize:]
 
