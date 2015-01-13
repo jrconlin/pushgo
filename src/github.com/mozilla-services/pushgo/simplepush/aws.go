@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -20,13 +21,33 @@ var (
 	ErrElastiCacheTimeout StorageError = "ElastiCache query timed out"
 )
 
-/* Get the public AWS hostname for this machine.
- * TODO: Make this a generic utility for getting public info from
- * the aws meta server?
- */
-func GetAWSPublicHostname() (hostname string, err error) {
-	resp, err := http.Get(
-		"http://169.254.169.254/latest/meta-data/public-hostname")
+// InstanceInfo returns information about the current instance.
+type InstanceInfo interface {
+	LocalHostname() (hostname string, err error)
+	PublicHostname() (hostname string, err error)
+}
+
+// LocalInfo returns static instance info.
+type LocalInfo struct {
+	Hostname string
+}
+
+func (l LocalInfo) LocalHostname() (string, error)  { return l.Hostname, nil }
+func (l LocalInfo) PublicHostname() (string, error) { return l.Hostname, nil }
+
+// EC2Info fetches instance info from the EC2 metadata service. See
+// http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html
+type EC2Info struct {
+	http.Client
+}
+
+func (e *EC2Info) Get(path string) (body string, err error) {
+	baseURI := &url.URL{Scheme: "http", Host: "169.254.169.254"}
+	uri, err := baseURI.Parse(path)
+	if err != nil {
+		return
+	}
+	resp, err := e.Client.Do(&http.Request{Method: "GET", URL: uri})
 	if err != nil {
 		return
 	}
@@ -34,11 +55,21 @@ func GetAWSPublicHostname() (hostname string, err error) {
 		err = fmt.Errorf("Unexpected status code: %d", resp.StatusCode)
 		return
 	}
-	hostBytes, err := ioutil.ReadAll(resp.Body)
+	respBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
-	return string(hostBytes), nil
+	return string(respBytes), nil
+}
+
+// Get the private hostname for this machine.
+func (e *EC2Info) LocalHostname() (hostname string, err error) {
+	return e.Get("/latest/meta-data/local-hostname")
+}
+
+// Get the public AWS hostname for this machine.
+func (e *EC2Info) PublicHostname() (hostname string, err error) {
+	return e.Get("/latest/meta-data/public-hostname")
 }
 
 // GetElastiCacheEndpoints queries the ElastiCache Auto Discovery service

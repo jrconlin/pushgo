@@ -45,6 +45,7 @@ func NewApplication() (a *Application) {
 
 type Application struct {
 	Closable
+	info               InstanceInfo
 	hostname           string
 	host               string
 	port               int
@@ -89,17 +90,18 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
 	if conf.UseAwsHost {
-		if a.hostname, err = GetAWSPublicHostname(); err != nil {
-			return fmt.Errorf("Error querying AWS instance metadata service: %s", err)
-		}
+		a.info = new(EC2Info)
 	} else if conf.ResolveHost {
 		addr, err := net.ResolveIPAddr("ip", conf.Hostname)
 		if err != nil {
 			return fmt.Errorf("Error resolving hostname: %s", err)
 		}
-		a.hostname = addr.String()
+		a.info = LocalInfo{addr.String()}
 	} else {
-		a.hostname = conf.Hostname
+		a.info = LocalInfo{conf.Hostname}
+	}
+	if a.hostname, err = a.info.PublicHostname(); err != nil {
+		return fmt.Errorf("Error determining hostname: %s", err)
 	}
 
 	if err = a.SetTokenKey(conf.TokenKey); err != nil {
@@ -187,6 +189,10 @@ func (a *Application) Run() (errChan chan error) {
 
 func (a *Application) Hostname() string {
 	return a.hostname
+}
+
+func (a *Application) InstanceInfo() InstanceInfo {
+	return a.info
 }
 
 func (a *Application) Logger() *SimpleLogger {

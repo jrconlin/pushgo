@@ -19,6 +19,7 @@ type StatusReport struct {
 	Plugins          []PluginReport `json:"plugins"`
 	Goroutines       int            `json:"goroutines"`
 	Version          string         `json:"version"`
+	LocalHostname    string         `json:"localHostname"`
 }
 
 // TODO: Remove; add a Typ() method to HasConfigStruct.
@@ -49,6 +50,7 @@ type HealthHandlers struct {
 	balancer Balancer
 	sh       Handler
 	eh       Handler
+	info     InstanceInfo
 }
 
 func (h *HealthHandlers) ConfigStruct() interface{} {
@@ -65,6 +67,7 @@ func (h *HealthHandlers) Init(app *Application, _ interface{}) error {
 	h.balancer = app.Balancer()
 	h.sh = app.SocketHandler()
 	h.eh = app.EndpointHandler()
+	h.info = app.InstanceInfo()
 
 	// Register health check handlers with muxes.
 	clientMux := h.sh.ServeMux()
@@ -111,10 +114,12 @@ func (h *HealthHandlers) StatusHandler(resp http.ResponseWriter,
 func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 
+	lh, _ := h.info.LocalHostname()
 	status := StatusReport{
 		MaxClientConns:   h.sh.MaxConns(),
 		MaxEndpointConns: h.eh.MaxConns(),
 		Version:          VERSION,
+		LocalHostname:    lh,
 	}
 
 	healthy := true
