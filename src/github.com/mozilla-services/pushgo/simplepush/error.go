@@ -38,8 +38,13 @@ const (
 	ErrNonexistentRecord  ErrorCode = 115
 	ErrRecordUpdateFailed ErrorCode = 116
 	ErrBadPayload         ErrorCode = 117
-	ErrTooManyPings       ErrorCode = 201
-	ErrServerError        ErrorCode = 999
+
+	ErrTooManyPings ErrorCode = 201
+
+	ErrBadVersion  ErrorCode = 301
+	ErrDataTooLong ErrorCode = 302
+
+	ErrServerError ErrorCode = 999
 )
 
 // Error returns a human-readable error message.

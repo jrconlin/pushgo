@@ -55,9 +55,8 @@ func newTestHandler(tb TBLoggingInterface) *Application {
 	return app
 }
 
-var rbuf = make([]byte, 64)
-
-func randomText() string {
+func randomText(size int) string {
+	rbuf := make([]byte, size)
 	rand.Read(rbuf)
 	for i := 0; i < len(rbuf); i++ {
 		rbuf[i] = uint8(rbuf[i])%94 + 32
@@ -91,6 +90,7 @@ func Benchmark_UpdateHandler(b *testing.B) {
 	updateUrl := fmt.Sprintf("http://test/update/%s", key)
 	tmux := app.EndpointHandler().ServeMux()
 	vals := make(url.Values)
+	data := randomText(64)
 	// Begin benchmark:
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -101,7 +101,7 @@ func Benchmark_UpdateHandler(b *testing.B) {
 		}
 		req.Form = vals
 		req.Form.Set("version", strconv.FormatInt(int64(i), 10))
-		req.Form.Set("data", randomText())
+		req.Form.Set("data", data)
 		tmux.ServeHTTP(resp, req)
 		if resp.Body.String() != "{}" {
 			b.Errorf(`Unexpected response from server: "%s"`, resp.Body.String())

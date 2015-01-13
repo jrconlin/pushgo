@@ -11,14 +11,18 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 )
 
+// defaultMaxBytes is the maximum HTTP entity body size for PUT requests.
+// Defaults to 4 MB.
+var defaultMaxBytes int64 = 4 * 1024 * 1024
+
 func NewEndpointHandler() (h *EndpointHandler) {
-	h = new(EndpointHandler)
+	h = &EndpointHandler{mux: mux.NewRouter()}
 	h.Closable.CloserOnce = h
+	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
 	return h
 }
 
@@ -61,15 +65,7 @@ func (h *EndpointHandler) ConfigStruct() interface{} {
 
 func (h *EndpointHandler) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EndpointHandlerConfig)
-
-	h.app = app
-	h.logger = app.Logger()
-	h.metrics = app.Metrics()
-	h.store = app.Store()
-	h.router = app.Router()
-	h.pinger = app.PropPinger()
-
-	h.tokenKey = app.TokenKey()
+	h.setApp(app)
 
 	if h.listener, err = conf.Listener.Listen(); err != nil {
 		h.logger.Panic("handlers_endpoint", "Could not attach update listener",
@@ -90,9 +86,23 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 	h.maxDataLen = conf.MaxDataLen
 	h.alwaysRoute = conf.AlwaysRoute
 
-	h.mux = mux.NewRouter()
-	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
+	return nil
+}
 
+func (h *EndpointHandler) Listener() net.Listener { return h.listener }
+func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
+func (h *EndpointHandler) URL() string            { return h.url }
+func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
+
+// setApp sets the parent application for this endpoint handler.
+func (h *EndpointHandler) setApp(app *Application) {
+	h.app = app
+	h.logger = app.Logger()
+	h.metrics = app.Metrics()
+	h.store = app.Store()
+	h.router = app.Router()
+	h.pinger = app.PropPinger()
+	h.tokenKey = app.TokenKey()
 	h.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
@@ -103,19 +113,12 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 		},
 		Handler: &LogHandler{h.mux, h.logger},
 		ErrorLog: log.New(&LogWriter{
-			Logger: h.logger.Logger,
+			Logger: h.logger,
 			Name:   "handlers_endpoint",
 			Level:  ERROR,
 		}, "", 0),
 	})
-
-	return nil
 }
-
-func (h *EndpointHandler) Listener() net.Listener { return h.listener }
-func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
-func (h *EndpointHandler) URL() string            { return h.url }
-func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
 
 func (h *EndpointHandler) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
@@ -176,21 +179,43 @@ func (h *EndpointHandler) doPropPing(uaid string, version int64, data string) (o
 	return h.pinger.CanBypassWebsocket(), nil
 }
 
+// getUpdateParams extracts the update version and data from req.
+func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, data string, err error) {
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type",
+			"application/x-www-form-urlencoded")
+	}
+	svers := req.FormValue("version")
+	if svers != "" {
+		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
+			return 0, "", ErrBadVersion
+		}
+	} else {
+		version = timeNow().UTC().Unix()
+	}
+
+	data = req.FormValue("data")
+	if len(data) > h.maxDataLen {
+		return 0, "", ErrDataTooLong
+	}
+	return
+}
+
 // -- REST
 func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
-	timer := time.Now()
+	timer := timeNow()
 	requestID := req.Header.Get(HeaderID)
 	logWarning := h.logger.ShouldLog(WARNING)
 	var (
 		err        error
+		updateSent bool
 		version    int64
 		uaid, chid string
 	)
 
-	defer func(err *error) {
-		now := time.Now()
-		ok := *err == nil
+	defer func() {
+		now := timeNow()
 		if h.logger.ShouldLog(DEBUG) {
 			h.logger.Debug("handlers_endpoint", "+++++++++++++ DONE +++",
 				LogFields{"rid": requestID})
@@ -200,12 +225,12 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 				"rid":        requestID,
 				"uaid":       uaid,
 				"chid":       chid,
-				"successful": strconv.FormatBool(ok)})
+				"successful": strconv.FormatBool(updateSent)})
 		}
-		if ok {
+		if updateSent {
 			h.metrics.Timer("updates.handled", now.Sub(timer))
 		}
-	}(&err)
+	}()
 
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Handling Update",
@@ -218,30 +243,24 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type",
-			"application/x-www-form-urlencoded")
+	if req.Body != nil {
+		// Restrict the incoming entity body size.
+		req.Body = http.MaxBytesReader(resp, req.Body, defaultMaxBytes)
 	}
-	svers := req.FormValue("version")
-	if svers != "" {
-		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
-			writeJSON(resp, http.StatusBadRequest, []byte(`"Invalid Version"`))
-			h.metrics.Increment("updates.appserver.invalid")
+	version, data, err := h.getUpdateParams(req)
+	if err != nil {
+		if err == ErrDataTooLong {
+			if logWarning {
+				h.logger.Warn("handlers_endpoint", "Data too large, rejecting request",
+					LogFields{"rid": requestID})
+			}
+			writeJSON(resp, http.StatusRequestEntityTooLarge, []byte(fmt.Sprintf(
+				`"Data exceeds max length of %d bytes"`, h.maxDataLen)))
+			h.metrics.Increment("updates.appserver.toolong")
 			return
 		}
-	} else {
-		version = time.Now().UTC().Unix()
-	}
-
-	data := req.FormValue("data")
-	if len(data) > h.maxDataLen {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Data too large, rejecting request",
-				LogFields{"rid": requestID})
-		}
-		writeJSON(resp, http.StatusRequestEntityTooLarge, []byte(fmt.Sprintf(
-			`"Data exceeds max length of %d bytes"`, h.maxDataLen)))
-		h.metrics.Increment("updates.appserver.toolong")
+		writeJSON(resp, http.StatusBadRequest, []byte(`"Invalid Version"`))
+		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
@@ -265,13 +284,12 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	h.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	canBypass, err := h.doPropPing(uaid, version, data)
-	if err != nil {
+	if updateSent, err = h.doPropPing(uaid, version, data); err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not send proprietary ping",
 				LogFields{"rid": requestID, "uaid": uaid, "error": err.Error()})
 		}
-	} else if canBypass {
+	} else if updateSent {
 		// Neat! Might as well return.
 		h.metrics.Increment("updates.appserver.received")
 		writeSuccess(resp)
@@ -301,14 +319,16 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 
 	cn, _ := resp.(http.CloseNotifier)
 	if !h.deliver(cn, uaid, chid, version, requestID, data) {
-		write404(resp)
+		writeJSON(resp, http.StatusNotFound, []byte("false"))
 		return
 	}
+
 	writeSuccess(resp)
+	updateSent = true
 	return
 }
 
-// Deliver the message to the appropriate server.
+// deliver routes an incoming update to the appropriate server.
 func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, version int64, requestID string, data string) (ok bool) {
 	client, clientConnected := h.app.GetClient(uaid)
 	// Always route to other servers first, in case we're holding open a stale
@@ -322,7 +342,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, vers
 		}
 		// Route the update.
 		ok, _ = h.router.Route(cancelSignal, uaid, chid, version,
-			time.Now().UTC(), requestID, data)
+			timeNow().UTC(), requestID, data)
 		if ok {
 			return true
 		}
@@ -390,10 +410,6 @@ func writeJSON(resp http.ResponseWriter, status int, data []byte) {
 
 func writeSuccess(resp http.ResponseWriter) {
 	writeJSON(resp, http.StatusOK, []byte("{}"))
-}
-
-func write404(resp http.ResponseWriter) {
-	writeJSON(resp, http.StatusNotFound, []byte("false"))
 }
 
 // o4fs
