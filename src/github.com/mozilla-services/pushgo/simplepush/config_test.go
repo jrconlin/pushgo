@@ -260,7 +260,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockLogger, mockMetrics, mockStore); err != nil {
 				return nil, err
 			}
-			h := NewSocketHandler()
+			h := new(SocketHandler)
 			mockSocket = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
 				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)

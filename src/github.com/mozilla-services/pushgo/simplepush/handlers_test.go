@@ -68,7 +68,7 @@ func Benchmark_UpdateHandler(b *testing.B) {
 	uaid := "deadbeef000000000000000000000000"
 	chid := "decafbad000000000000000000000000"
 	app := newTestHandler(b)
-	defer app.CloseOnce()
+	defer app.Close()
 	if app == nil {
 		b.Fatal()
 	}
@@ -118,7 +118,7 @@ func Test_UpdateHandler(t *testing.T) {
 	data := "This is a test of the emergency broadcasting system."
 
 	app := newTestHandler(t)
-	defer app.CloseOnce()
+	defer app.Close()
 	noPush := &PushWS{
 		Socket: nil,
 		Born:   time.Now(),

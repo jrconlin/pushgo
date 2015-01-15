@@ -55,7 +55,6 @@ type EtcdLocatorConf struct {
 
 // EtcdLocator stores routing endpoints in etcd and polls for new contacts.
 type EtcdLocator struct {
-	Closable
 	logger          *SimpleLogger
 	metrics         Statistician
 	refreshInterval time.Duration
@@ -71,6 +70,7 @@ type EtcdLocator struct {
 	contacts        []string
 	contactsErr     error
 	lastFetch       time.Time
+	closeOnce       Once
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
 }
@@ -79,7 +79,6 @@ func NewEtcdLocator() (l *EtcdLocator) {
 	l = &EtcdLocator{
 		closeSignal: make(chan bool),
 	}
-	l.Closable.CloserOnce = l
 	return l
 }
 
@@ -212,9 +211,12 @@ func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
 	return nil
 }
 
-// Close stops the locator and closes the etcd client connection. Implements
-// CloserOnce.CloseOnce().
-func (l *EtcdLocator) CloseOnce() (err error) {
+// Close stops the locator and closes the etcd client connection.
+func (l *EtcdLocator) Close() error {
+	return l.closeOnce.Do(l.close)
+}
+
+func (l *EtcdLocator) close() (err error) {
 	if l.logger.ShouldLog(INFO) {
 		l.logger.Info("locator", "Closing etcd locator",
 			LogFields{"key": l.key})
@@ -247,7 +249,7 @@ func (l *EtcdLocator) CloseOnce() (err error) {
 // Contacts returns a shuffled list of all nodes in the Simple Push cluster.
 // Implements Locator.Contacts().
 func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
-	if l.IsClosed() {
+	if l.closeOnce.IsDone() {
 		return
 	}
 	l.contactsLock.RLock()
@@ -263,7 +265,7 @@ func (l *EtcdLocator) Contacts(string) (contacts []string, err error) {
 // Status determines whether etcd can respond to requests. Implements
 // Locator.Status().
 func (l *EtcdLocator) Status() (ok bool, err error) {
-	if l.IsClosed() {
+	if l.closeOnce.IsDone() {
 		return
 	}
 	if ok, err = IsEtcdHealthy(l.client); err != nil {

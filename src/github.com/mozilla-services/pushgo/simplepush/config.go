@@ -396,7 +396,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			h := NewSocketHandler()
+			h := new(SocketHandler)
 			if err := LoadConfigForSection(app, "websocket", h, env, configFile); err != nil {
 				return nil, err
 			}

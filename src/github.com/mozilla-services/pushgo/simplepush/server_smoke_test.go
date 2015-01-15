@@ -168,7 +168,7 @@ func (t *TestServer) load() (*Application, error) {
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			sh := NewSocketHandler()
+			sh := new(SocketHandler)
 			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
 			shConf.Listener.Addr = t.ClientAddr
 			if err := sh.Init(app, shConf); err != nil {

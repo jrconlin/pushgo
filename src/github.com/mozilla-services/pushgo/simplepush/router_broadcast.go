@@ -61,7 +61,6 @@ type BroadcastRouterConfig struct {
 // Router proxies incoming updates to the Simple Push server ("contact") that
 // currently maintains a WebSocket connection to the target device.
 type BroadcastRouter struct {
-	Closable
 	app         *Application
 	hostname    string
 	locator     Locator
@@ -78,13 +77,13 @@ type BroadcastRouter struct {
 	closeSignal chan bool
 	maxDataLen  int
 	routerMux   *mux.Router
+	closeOnce   Once
 }
 
 func NewBroadcastRouter() (r *BroadcastRouter) {
 	r = &BroadcastRouter{
 		closeSignal: make(chan bool),
 	}
-	r.Closable.CloserOnce = r
 	return r
 }
 
@@ -299,7 +298,11 @@ func (r *BroadcastRouter) Status() (bool, error) {
 	return true, nil
 }
 
-func (r *BroadcastRouter) CloseOnce() error {
+func (r *BroadcastRouter) Close() error {
+	return r.closeOnce.Do(r.close)
+}
+
+func (r *BroadcastRouter) close() error {
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Closing router",
 			LogFields{"url": r.url})

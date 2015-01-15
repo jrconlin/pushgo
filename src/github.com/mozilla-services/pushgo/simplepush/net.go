@@ -109,7 +109,6 @@ func NewServeCloser(srv *http.Server) (s *ServeCloser) {
 		Server: srv,
 		conns:  make(map[net.Conn]bool),
 	}
-	s.Closable.CloserOnce = s
 	if srv.ConnState != nil {
 		s.stateHook = srv.ConnState
 	}
@@ -120,15 +119,19 @@ func NewServeCloser(srv *http.Server) (s *ServeCloser) {
 // ServeCloser is an HTTP server with graceful shutdown support. Closing a
 // server cancels any pending requests by closing the underlying connections.
 type ServeCloser struct {
-	Closable
 	*http.Server
 	stateHook func(net.Conn, http.ConnState)
 	connsLock sync.Mutex // Protects conns.
 	conns     map[net.Conn]bool
+	closeOnce Once
 }
 
 // Close stops the server.
-func (s *ServeCloser) CloseOnce() error {
+func (s *ServeCloser) Close() error {
+	return s.closeOnce.Do(s.close)
+}
+
+func (s *ServeCloser) close() error {
 	s.connsLock.Lock()
 	defer s.connsLock.Unlock()
 	for c := range s.conns {
@@ -139,7 +142,7 @@ func (s *ServeCloser) CloseOnce() error {
 }
 
 func (s *ServeCloser) addConn(c net.Conn) {
-	if s.IsClosed() {
+	if s.closeOnce.IsDone() {
 		c.Close()
 		return
 	}
@@ -149,7 +152,7 @@ func (s *ServeCloser) addConn(c net.Conn) {
 }
 
 func (s *ServeCloser) removeConn(c net.Conn) {
-	if s.IsClosed() {
+	if s.closeOnce.IsDone() {
 		c.Close()
 		return
 	}
