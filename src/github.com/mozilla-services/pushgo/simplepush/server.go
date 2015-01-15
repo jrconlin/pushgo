@@ -89,6 +89,10 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	}
 
 	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
+		if self.logger.ShouldLog(DEBUG) {
+			self.logger.Debug("server", "Storing proprietary connection info",
+				LogFields{"connect": string(connect)})
+		}
 		if err := self.prop.Register(uaid, connect); err != nil {
 			if self.logger.ShouldLog(WARNING) {
 				self.logger.Warn("server", "Could not set proprietary info",

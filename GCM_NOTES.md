@@ -40,6 +40,11 @@ It is recommended that separate keys be created for:
 This will prevent overuse of a given key from impacting other systems
 reliant on that particular key.
 
+NOTE: You will need to provide the Project Number to clients. You can
+get this value by going to the Google Developers Console, and going to
+the Project Dashboard. The Project Number is currently located near
+the top of the page above the "Project Dashboard" header.
+
 
 Client Use
 ---
