@@ -19,7 +19,7 @@ type StatusReport struct {
 	Plugins          []PluginReport `json:"plugins"`
 	Goroutines       int            `json:"goroutines"`
 	Version          string         `json:"version"`
-	LocalHostname    string         `json:"localHostname"`
+	InstanceID       string         `json:"instance,omitempty"`
 }
 
 // TODO: Remove; add a Typ() method to HasConfigStruct.
@@ -114,12 +114,12 @@ func (h *HealthHandlers) StatusHandler(resp http.ResponseWriter,
 func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 
-	lh, _ := h.info.LocalHostname()
+	id, _ := h.info.InstanceID()
 	status := StatusReport{
 		MaxClientConns:   h.sh.MaxConns(),
 		MaxEndpointConns: h.eh.MaxConns(),
 		Version:          VERSION,
-		LocalHostname:    lh,
+		InstanceID:       id,
 	}
 
 	healthy := true

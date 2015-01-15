@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -23,7 +24,7 @@ var (
 
 // InstanceInfo returns information about the current instance.
 type InstanceInfo interface {
-	LocalHostname() (hostname string, err error)
+	InstanceID() (id string, err error)
 	PublicHostname() (hostname string, err error)
 }
 
@@ -32,7 +33,7 @@ type LocalInfo struct {
 	Hostname string
 }
 
-func (l LocalInfo) LocalHostname() (string, error)  { return l.Hostname, nil }
+func (l LocalInfo) InstanceID() (string, error)     { return "", nil }
 func (l LocalInfo) PublicHostname() (string, error) { return l.Hostname, nil }
 
 // EC2Info fetches instance info from the EC2 metadata service. See
@@ -41,13 +42,15 @@ type EC2Info struct {
 	http.Client
 }
 
-func (e *EC2Info) Get(path string) (body string, err error) {
-	baseURI := &url.URL{Scheme: "http", Host: "169.254.169.254"}
-	uri, err := baseURI.Parse(path)
-	if err != nil {
-		return
-	}
-	resp, err := e.Client.Do(&http.Request{Method: "GET", URL: uri})
+func (e *EC2Info) Get(item string) (body string, err error) {
+	resp, err := e.Client.Do(&http.Request{
+		Method: "GET",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "169.254.169.254",
+			Path:   path.Join("/latest/meta-data", item),
+		},
+	})
 	if err != nil {
 		return
 	}
@@ -62,14 +65,14 @@ func (e *EC2Info) Get(path string) (body string, err error) {
 	return string(respBytes), nil
 }
 
-// Get the private hostname for this machine.
-func (e *EC2Info) LocalHostname() (hostname string, err error) {
-	return e.Get("/latest/meta-data/local-hostname")
+// Get the EC2 instance ID for this machine.
+func (e *EC2Info) InstanceID() (id string, err error) {
+	return e.Get("instance-id")
 }
 
 // Get the public AWS hostname for this machine.
 func (e *EC2Info) PublicHostname() (hostname string, err error) {
-	return e.Get("/latest/meta-data/public-hostname")
+	return e.Get("public-hostname")
 }
 
 // GetElastiCacheEndpoints queries the ElastiCache Auto Discovery service
