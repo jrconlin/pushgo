@@ -6,16 +6,46 @@ package simplepush
 
 import (
 	"net"
+	"net/http"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
+// ServeMux is an HTTP request multiplexer, implemented by the RouteMux and
+// http.ServeMux types.
+type ServeMux interface {
+	Handle(string, http.Handler)
+	HandleFunc(string, func(http.ResponseWriter, *http.Request))
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}
+
+// RouteMux implements the ServeMux interface for a *mux.Router.
+type RouteMux mux.Router
+
+// Handle wraps mux.Router.Handle, ignoring the returned *mux.Router for
+// compatibility with the ServeMux interface.
+func (r *RouteMux) Handle(path string, handler http.Handler) {
+	(*mux.Router)(r).Handle(path, handler)
+}
+
+// HandleFunc wraps mux.Router.HandleFunc, ignoring the return value.
+func (r *RouteMux) HandleFunc(path string,
+	f func(http.ResponseWriter, *http.Request)) {
+
+	(*mux.Router)(r).HandleFunc(path, f)
+}
+
+// ServeHTTP wraps mux.Router.ServeHTTP.
+func (r *RouteMux) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	(*mux.Router)(r).ServeHTTP(res, req)
+}
+
 type Handler interface {
 	Listener() net.Listener
 	MaxConns() int
 	URL() string
-	ServeMux() *mux.Router
+	ServeMux() ServeMux
 	Start(chan<- error)
 	Close() error
 }

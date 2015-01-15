@@ -4,10 +4,55 @@
 package simplepush
 
 import (
-	gomock "github.com/rafrombrc/gomock/gomock"
+	http "net/http"
 	net "net"
-	mux "github.com/gorilla/mux"
+	gomock "github.com/rafrombrc/gomock/gomock"
 )
+
+// Mock of ServeMux interface
+type MockServeMux struct {
+	ctrl     *gomock.Controller
+	recorder *_MockServeMuxRecorder
+}
+
+// Recorder for MockServeMux (not exported)
+type _MockServeMuxRecorder struct {
+	mock *MockServeMux
+}
+
+func NewMockServeMux(ctrl *gomock.Controller) *MockServeMux {
+	mock := &MockServeMux{ctrl: ctrl}
+	mock.recorder = &_MockServeMuxRecorder{mock}
+	return mock
+}
+
+func (_m *MockServeMux) EXPECT() *_MockServeMuxRecorder {
+	return _m.recorder
+}
+
+func (_m *MockServeMux) Handle(_param0 string, _param1 http.Handler) {
+	_m.ctrl.Call(_m, "Handle", _param0, _param1)
+}
+
+func (_mr *_MockServeMuxRecorder) Handle(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Handle", arg0, arg1)
+}
+
+func (_m *MockServeMux) HandleFunc(_param0 string, _param1 func(http.ResponseWriter, *http.Request)) {
+	_m.ctrl.Call(_m, "HandleFunc", _param0, _param1)
+}
+
+func (_mr *_MockServeMuxRecorder) HandleFunc(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "HandleFunc", arg0, arg1)
+}
+
+func (_m *MockServeMux) ServeHTTP(_param0 http.ResponseWriter, _param1 *http.Request) {
+	_m.ctrl.Call(_m, "ServeHTTP", _param0, _param1)
+}
+
+func (_mr *_MockServeMuxRecorder) ServeHTTP(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "ServeHTTP", arg0, arg1)
+}
 
 // Mock of Handler interface
 type MockHandler struct {
@@ -60,9 +105,9 @@ func (_mr *_MockHandlerRecorder) URL() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "URL")
 }
 
-func (_m *MockHandler) ServeMux() *mux.Router {
+func (_m *MockHandler) ServeMux() ServeMux {
 	ret := _m.ctrl.Call(_m, "ServeMux")
-	ret0, _ := ret[0].(*mux.Router)
+	ret0, _ := ret[0].(ServeMux)
 	return ret0
 }
 
