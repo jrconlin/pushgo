@@ -267,7 +267,6 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	// (Note, this would allow us to use smarter FE proxies.)
 	token := mux.Vars(req)["key"]
 	if uaid, chid, err = h.resolvePK(token); err != nil {
-		// Note: dumping the []uint8 keys can produce terminal glitches
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Invalid primary key for update",
 				LogFields{"error": err.Error(), "rid": requestID, "token": token})

@@ -112,7 +112,7 @@ func TestEndpointResolveKey(t *testing.T) {
 			So(body.String(), ShouldEqual, `"Invalid Token"`)
 		})
 
-		Convey("Should not decode plaintext tokens", func() {
+		Convey("Should not decode plaintext tokens without a key", func() {
 			var err error
 
 			app.SetTokenKey("")
@@ -166,6 +166,10 @@ func TestEndpointResolveKey(t *testing.T) {
 			So(err, ShouldNotBeNil)
 
 			_, _, err = eh.resolvePK(invalidKey)
+			So(err, ShouldNotBeNil)
+
+			// Reject plaintext tokens if a key is specified.
+			_, _, err = eh.resolvePK(validKey)
 			So(err, ShouldNotBeNil)
 
 			mckStore.EXPECT().KeyToIDs(validKey).Return("", "", false)
