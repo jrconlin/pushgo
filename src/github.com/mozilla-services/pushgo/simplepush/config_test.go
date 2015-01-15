@@ -284,7 +284,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockSocket, mockEndpoint); err != nil {
 				return nil, err
 			}
-			h := NewHealthHandlers()
+			h := new(HealthHandlers)
 			mockHealth = newMockPlugin(PluginHealth, h)
 			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)

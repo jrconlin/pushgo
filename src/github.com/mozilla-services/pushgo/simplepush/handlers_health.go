@@ -36,10 +36,6 @@ type PluginReport struct {
 	Error   error  `json:"error,omitempty"`
 }
 
-func NewHealthHandlers() *HealthHandlers {
-	return new(HealthHandlers)
-}
-
 type HealthHandlers struct {
 	app      *Application
 	logger   *SimpleLogger

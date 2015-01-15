@@ -186,7 +186,7 @@ func (t *TestServer) load() (*Application, error) {
 			return eh, nil
 		},
 		PluginHealth: func(app *Application) (HasConfigStruct, error) {
-			h := NewHealthHandlers()
+			h := new(HealthHandlers)
 			if err := h.Init(app, h.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
 			}

@@ -410,7 +410,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return h, nil
 		},
 		PluginHealth: func(app *Application) (HasConfigStruct, error) {
-			h := NewHealthHandlers()
+			h := new(HealthHandlers)
 			if err := h.Init(app, h.ConfigStruct()); err != nil {
 				return nil, err
 			}
