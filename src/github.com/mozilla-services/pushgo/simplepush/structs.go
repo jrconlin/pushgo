@@ -5,7 +5,6 @@
 package simplepush
 
 import (
-	"sync"
 	"time"
 )
 
@@ -29,48 +28,32 @@ type PushCommand struct {
 }
 
 type PushWS struct {
-	uaidLock sync.RWMutex
-	uaid     string // Hex-encoded client ID; not normalized
-	Socket   Socket // Remote connection
+	uaid   string // Hex-encoded client ID; not normalized
+	Socket Socket // Remote connection
 	Store
 	Logger    *SimpleLogger
 	Metrics   *Metrics
 	Born      time.Time
-	closeLock sync.RWMutex
-	closed    bool
+	closeOnce Once
 }
 
 func (ws *PushWS) UAID() (uaid string) {
-	ws.uaidLock.RLock()
-	uaid = ws.uaid
-	ws.uaidLock.RUnlock()
-	return
+	return ws.uaid
 }
 
 func (ws *PushWS) SetUAID(uaid string) {
-	ws.uaidLock.Lock()
 	ws.uaid = uaid
-	ws.uaidLock.Unlock()
 }
 
 func (ws *PushWS) IsClosed() (closed bool) {
-	ws.closeLock.RLock()
-	closed = ws.closed
-	ws.closeLock.RUnlock()
-	return
+	return ws.closeOnce.IsDone()
 }
 
 func (ws *PushWS) Close() error {
-	if ws == nil {
-		return nil
-	}
-	ws.closeLock.Lock()
-	if ws.closed {
-		ws.closeLock.Unlock()
-		return nil
-	}
-	ws.closed = true
-	ws.closeLock.Unlock()
+	return ws.closeOnce.Do(ws.close)
+}
+
+func (ws *PushWS) close() error {
 	socket := ws.Socket
 	if socket == nil {
 		return nil
