@@ -190,7 +190,7 @@ func TestEndpointContentType(t *testing.T) {
 		app := NewApplication()
 		eh := NewEndpointHandler()
 		eh.setApp(app)
-		eh.maxDataLen = 4096
+		eh.setMaxDataLen(4096)
 		app.SetEndpointHandler(eh)
 
 		Convey("Should supply a content type if omitted", func() {
@@ -263,7 +263,7 @@ func TestEndpointInvalidParams(t *testing.T) {
 
 		eh := NewEndpointHandler()
 		eh.setApp(app)
-		eh.maxDataLen = 512
+		eh.setMaxDataLen(512)
 		app.SetEndpointHandler(eh)
 
 		Convey("Should require PUT requests", func() {
@@ -324,7 +324,7 @@ func TestEndpointInvalidParams(t *testing.T) {
 
 		Convey("Should reject oversized payloads", func() {
 			vals := make(url.Values)
-			vals.Set("data", randomText(1024))
+			vals.Set("data", randomText(eh.maxDataLen+1))
 
 			resp := httptest.NewRecorder()
 			req := &http.Request{
@@ -373,7 +373,7 @@ func TestEndpointPinger(t *testing.T) {
 
 		eh := NewEndpointHandler()
 		eh.setApp(app)
-		eh.maxDataLen = 4096
+		eh.setMaxDataLen(4096)
 		app.SetEndpointHandler(eh)
 
 		Convey("Should return early if the pinger can bypass the WebSocket", func() {

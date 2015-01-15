@@ -15,10 +15,6 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// defaultMaxBytes is the maximum HTTP entity body size for PUT requests.
-// Defaults to 4 MB.
-var defaultMaxBytes int64 = 4 * 1024 * 1024
-
 func NewEndpointHandler() (h *EndpointHandler) {
 	h = &EndpointHandler{mux: mux.NewRouter()}
 	h.Closable.CloserOnce = h
@@ -83,7 +79,7 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 	h.url = CanonicalURL(scheme, host, port)
 
 	h.maxConns = conf.Listener.MaxConns
-	h.maxDataLen = conf.MaxDataLen
+	h.setMaxDataLen(conf.MaxDataLen)
 	h.alwaysRoute = conf.AlwaysRoute
 
 	return nil
@@ -118,6 +114,11 @@ func (h *EndpointHandler) setApp(app *Application) {
 			Level:  ERROR,
 		}, "", 0),
 	})
+}
+
+// setMaxDataLen sets the maximum data length to v
+func (h *EndpointHandler) setMaxDataLen(v int) {
+	h.maxDataLen = v
 }
 
 func (h *EndpointHandler) Start(errChan chan<- error) {
@@ -243,10 +244,6 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	if req.Body != nil {
-		// Restrict the incoming entity body size.
-		req.Body = http.MaxBytesReader(resp, req.Body, defaultMaxBytes)
-	}
 	version, data, err := h.getUpdateParams(req)
 	if err != nil {
 		if err == ErrDataTooLong {
