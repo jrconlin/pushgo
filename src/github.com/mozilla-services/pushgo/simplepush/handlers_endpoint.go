@@ -280,7 +280,8 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	h.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	if updateSent, err = h.doPropPing(uaid, version, data); err != nil {
+	updateSent, err = h.doPropPing(uaid, version, data)
+	if err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not send proprietary ping",
 				LogFields{"rid": requestID, "uaid": uaid, "error": err.Error()})
@@ -346,7 +347,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, vers
 	// If the device is not connected to this server, indicate whether routing
 	// was successful.
 	if !clientConnected {
-		return ok
+		return
 	}
 	// Try local delivery if routing failed.
 	err := h.app.Server().RequestFlush(client, chid, version, data)
