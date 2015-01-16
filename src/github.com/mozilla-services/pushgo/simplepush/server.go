@@ -262,14 +262,7 @@ func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
 	time time.Time, data string) (err error) {
 
 	var reason string
-	pk, ok := self.store.IDsToKey(uid, chid)
-	if !ok {
-		reason = "Failed to generate PK"
-		err = errors.New("Invalid storage key")
-		goto updateError
-	}
-
-	if err = self.store.Update(pk, vers); err != nil {
+	if err = self.store.Update(uid, chid, vers); err != nil {
 		reason = "Failed to update channel"
 		goto updateError
 	}

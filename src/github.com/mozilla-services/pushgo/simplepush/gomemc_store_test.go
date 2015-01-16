@@ -210,26 +210,23 @@ func Test_Update(t *testing.T) {
 		t.Skip("Skipping, no server.")
 	}
 
-	var err error
-	validKey, _ := testGm.IDsToKey(TESTUAID, TESTCHID)
-
-	err = testGm.Update(validKey, 12345)
+	err := testGm.Update(TESTUAID, TESTCHID, 12345)
 	if err != nil {
 		t.Errorf("Update returned error: %v", err)
 	}
-	err = testGm.Update("."+TESTCHID, 12345)
+	err = testGm.Update("", TESTCHID, 12345)
 	if err == nil {
 		t.Error("Update failed to reject empty UAID")
 	}
-	err = testGm.Update(TESTUAID+".", 12345)
+	err = testGm.Update(TESTUAID, "", 12345)
 	if err == nil {
 		t.Error("Update failed to reject empty ChannelID")
 	}
-	err = testGm.Update("Invalid."+TESTCHID, 12345)
+	err = testGm.Update("Invalid", TESTCHID, 12345)
 	if err == nil {
 		t.Error("Update failed to reject invalid UAID")
 	}
-	err = testGm.Update(TESTUAID+".Invalid", 12345)
+	err = testGm.Update(TESTUAID, "Invalid", 12345)
 	if err == nil {
 		t.Error("Update failed to reject invalid ChannelID")
 	}

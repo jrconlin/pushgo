@@ -112,7 +112,7 @@ type Store interface {
 	Register(suaid, schid string, version int64) error
 
 	// Update updates the channel record version.
-	Update(key string, version int64) error
+	Update(suaid, schid string, version int64) error
 
 	// Unregister marks a channel record as inactive.
 	Unregister(suaid, schid string) error
