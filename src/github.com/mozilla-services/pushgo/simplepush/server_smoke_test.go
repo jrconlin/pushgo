@@ -168,7 +168,7 @@ func (t *TestServer) load() (*Application, error) {
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			sh := new(SocketHandler)
+			sh := NewSocketHandler()
 			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
 			shConf.Listener.Addr = t.ClientAddr
 			if err := sh.Init(app, shConf); err != nil {
@@ -186,7 +186,7 @@ func (t *TestServer) load() (*Application, error) {
 			return eh, nil
 		},
 		PluginHealth: func(app *Application) (HasConfigStruct, error) {
-			h := new(HealthHandlers)
+			h := NewHealthHandlers()
 			if err := h.Init(app, h.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
 			}

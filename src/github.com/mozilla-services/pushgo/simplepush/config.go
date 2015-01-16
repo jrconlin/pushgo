@@ -396,7 +396,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			h := new(SocketHandler)
+			h := NewSocketHandler()
 			if err := LoadConfigForSection(app, "websocket", h, env, configFile); err != nil {
 				return nil, err
 			}
@@ -410,7 +410,7 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return h, nil
 		},
 		PluginHealth: func(app *Application) (HasConfigStruct, error) {
-			h := new(HealthHandlers)
+			h := NewHealthHandlers()
 			if err := h.Init(app, h.ConfigStruct()); err != nil {
 				return nil, err
 			}

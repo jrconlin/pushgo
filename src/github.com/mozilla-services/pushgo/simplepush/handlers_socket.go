@@ -16,6 +16,10 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+func NewSocketHandler() *SocketHandler {
+	return new(SocketHandler)
+}
+
 type SocketHandlerConfig struct {
 	Origins  []string
 	Listener ListenerConfig

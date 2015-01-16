@@ -260,7 +260,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockLogger, mockMetrics, mockStore); err != nil {
 				return nil, err
 			}
-			h := new(SocketHandler)
+			h := NewSocketHandler()
 			mockSocket = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
 				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
@@ -284,7 +284,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockSocket, mockEndpoint); err != nil {
 				return nil, err
 			}
-			h := new(HealthHandlers)
+			h := NewHealthHandlers()
 			mockHealth = newMockPlugin(PluginHealth, h)
 			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
