@@ -105,7 +105,7 @@ func (h *HealthHandlers) MetricsHandler(resp http.ResponseWriter, req *http.Requ
 func (h *HealthHandlers) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d,"version":"%s"}`,
-		h.app.ClientCount(), VERSION))
+		h.app.WorkerCount(), VERSION))
 
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write(reply)
@@ -142,7 +142,7 @@ func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 
 	status.Healthy = healthy
 
-	status.Clients = h.app.ClientCount()
+	status.Clients = h.app.WorkerCount()
 	status.Goroutines = runtime.NumGoroutine()
 
 	resp.Header().Set("Content-Type", "application/json")

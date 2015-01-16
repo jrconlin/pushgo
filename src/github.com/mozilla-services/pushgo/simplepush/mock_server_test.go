@@ -29,8 +29,8 @@ func (_m *MockServer) EXPECT() *_MockServerRecorder {
 	return _m.recorder
 }
 
-func (_m *MockServer) RequestFlush(client *Client, channel string, version int64, data string) error {
-	ret := _m.ctrl.Call(_m, "RequestFlush", client, channel, version, data)
+func (_m *MockServer) RequestFlush(w Worker, chid string, vers int64, data string) error {
+	ret := _m.ctrl.Call(_m, "RequestFlush", w, chid, vers, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -39,18 +39,18 @@ func (_mr *_MockServerRecorder) RequestFlush(arg0, arg1, arg2, arg3 interface{})
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "RequestFlush", arg0, arg1, arg2, arg3)
 }
 
-func (_m *MockServer) UpdateClient(client *Client, chid string, uid string, vers int64, time time.Time, data string) error {
-	ret := _m.ctrl.Call(_m, "UpdateClient", client, chid, uid, vers, time, data)
+func (_m *MockServer) UpdateWorker(w Worker, chid string, vers int64, sentAt time.Time, data string) error {
+	ret := _m.ctrl.Call(_m, "UpdateWorker", w, chid, vers, sentAt, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockServerRecorder) UpdateClient(arg0, arg1, arg2, arg3, arg4, arg5 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "UpdateClient", arg0, arg1, arg2, arg3, arg4, arg5)
+func (_mr *_MockServerRecorder) UpdateWorker(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "UpdateWorker", arg0, arg1, arg2, arg3, arg4)
 }
 
-func (_m *MockServer) HandleCommand(cmd PushCommand, sock *PushWS) (int, JsMap) {
-	ret := _m.ctrl.Call(_m, "HandleCommand", cmd, sock)
+func (_m *MockServer) HandleCommand(cmd PushCommand, w Worker) (int, JsMap) {
+	ret := _m.ctrl.Call(_m, "HandleCommand", cmd, w)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(JsMap)
 	return ret0, ret1
@@ -58,14 +58,4 @@ func (_m *MockServer) HandleCommand(cmd PushCommand, sock *PushWS) (int, JsMap) 
 
 func (_mr *_MockServerRecorder) HandleCommand(arg0, arg1 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "HandleCommand", arg0, arg1)
-}
-
-func (_m *MockServer) Close() error {
-	ret := _m.ctrl.Call(_m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-func (_mr *_MockServerRecorder) Close() *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
 }

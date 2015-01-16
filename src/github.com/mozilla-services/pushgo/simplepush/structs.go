@@ -4,10 +4,6 @@
 
 package simplepush
 
-import (
-	"time"
-)
-
 type CommandType int
 
 const (
@@ -25,40 +21,6 @@ type PushCommand struct {
 	// Use mutable int value
 	Command   CommandType //command type
 	Arguments JsMap       //command arguments
-}
-
-type PushWS struct {
-	uaid   string // Hex-encoded client ID; not normalized
-	Socket Socket // Remote connection
-	Store
-	Logger    *SimpleLogger
-	Metrics   *Metrics
-	Born      time.Time
-	closeOnce Once
-}
-
-func (ws *PushWS) UAID() (uaid string) {
-	return ws.uaid
-}
-
-func (ws *PushWS) SetUAID(uaid string) {
-	ws.uaid = uaid
-}
-
-func (ws *PushWS) IsClosed() (closed bool) {
-	return ws.closeOnce.IsDone()
-}
-
-func (ws *PushWS) Close() error {
-	return ws.closeOnce.Do(ws.close)
-}
-
-func (ws *PushWS) close() error {
-	socket := ws.Socket
-	if socket == nil {
-		return nil
-	}
-	return socket.Close()
 }
 
 // o4fs

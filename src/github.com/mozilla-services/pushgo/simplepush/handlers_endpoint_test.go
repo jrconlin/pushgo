@@ -382,8 +382,7 @@ func TestEndpointPinger(t *testing.T) {
 
 		Convey("Should return early if the pinger can bypass the WebSocket", func() {
 			uaid := "91357e1a34714cadacb3f13cf47a2736"
-			client := &Client{Worker: mckWorker, UAID: uaid}
-			app.AddClient(uaid, client)
+			app.AddWorker(uaid, mckWorker)
 
 			resp := httptest.NewRecorder()
 			req := &http.Request{
@@ -410,8 +409,7 @@ func TestEndpointPinger(t *testing.T) {
 
 		Convey("Should continue if the pinger cannot bypass the WebSocket", func() {
 			uaid := "e3fc2cf1dc44424685010148b076d08b"
-			client := &Client{Worker: mckWorker, UAID: uaid}
-			app.AddClient(uaid, client)
+			app.AddWorker(uaid, mckWorker)
 
 			data := randomText(eh.maxDataLen)
 			vals := make(url.Values)
@@ -430,7 +428,7 @@ func TestEndpointPinger(t *testing.T) {
 				mckPinger.EXPECT().Send(uaid, int64(1257894000), data).Return(true, nil),
 				mckPinger.EXPECT().CanBypassWebsocket().Return(false),
 				mckStore.EXPECT().Update(uaid, "456", int64(1257894000)),
-				mckServ.EXPECT().RequestFlush(client, "456", int64(1257894000), data),
+				mckServ.EXPECT().RequestFlush(mckWorker, "456", int64(1257894000), data),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 				mckStat.EXPECT().Timer("updates.handled", gomock.Any()),
 			)
@@ -444,8 +442,7 @@ func TestEndpointPinger(t *testing.T) {
 
 		Convey("Should continue if the pinger fails", func() {
 			uaid := "8f412f5cb2384183bf60f7da26737271"
-			client := &Client{Worker: mckWorker, UAID: uaid}
-			app.AddClient(uaid, client)
+			app.AddWorker(uaid, mckWorker)
 
 			vals := make(url.Values)
 			vals.Set("version", "7")
@@ -462,7 +459,7 @@ func TestEndpointPinger(t *testing.T) {
 				mckPinger.EXPECT().Send(uaid, int64(7), "").Return(
 					true, errors.New("oops")),
 				mckStore.EXPECT().Update(uaid, "456", int64(7)),
-				mckServ.EXPECT().RequestFlush(client, "456", int64(7), ""),
+				mckServ.EXPECT().RequestFlush(mckWorker, "456", int64(7), ""),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 				mckStat.EXPECT().Timer("updates.handled", gomock.Any()),
 			)
@@ -487,11 +484,11 @@ func TestEndpointDelivery(t *testing.T) {
 	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(),
 		gomock.Any(), gomock.Any()).AnyTimes()
-
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
 	mckRouter := NewMockRouter(mockCtrl)
 	mckServ := NewMockServer(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
 
 	Convey("Update delivery", t, func() {
 		app := NewApplication()
@@ -545,11 +542,10 @@ func TestEndpointDelivery(t *testing.T) {
 			Convey("Should return a 404 if local delivery fails", func() {
 				uaid := "9e98d6415d8e4fd099ab1bad7178f750"
 				chid := "0eecf572e99f4d508666d8da6c0b15a9"
-				client := &Client{}
-				app.AddClient(uaid, client)
+				app.AddWorker(uaid, mckWorker)
 
 				gomock.InOrder(
-					mckServ.EXPECT().RequestFlush(client, chid, int64(3), "").Return(
+					mckServ.EXPECT().RequestFlush(mckWorker, chid, int64(3), "").Return(
 						errors.New("client gone")),
 					mckStat.EXPECT().Increment("updates.appserver.rejected"),
 				)
@@ -588,8 +584,7 @@ func TestEndpointDelivery(t *testing.T) {
 			app.SetEndpointHandler(eh)
 
 			uaid := "6952a68ee0e7444ebc54f935c4444b13"
-			client := &Client{}
-			app.AddClient(uaid, client)
+			app.AddWorker(uaid, mckWorker)
 
 			chid := "b7ede546585f4cc9b95e9340e3406951"
 			version := int64(1)
@@ -599,7 +594,7 @@ func TestEndpointDelivery(t *testing.T) {
 				mckStat.EXPECT().Increment("updates.routed.outgoing"),
 				mckRouter.EXPECT().Route(nil, uaid, chid, version,
 					gomock.Any(), "", data).Return(false, nil),
-				mckServ.EXPECT().RequestFlush(client, chid, version, data).Return(nil),
+				mckServ.EXPECT().RequestFlush(mckWorker, chid, version, data).Return(nil),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 			)
 

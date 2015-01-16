@@ -31,7 +31,7 @@ func (b *StaticBalancer) Init(app *Application, config interface{}) error {
 	b.redirects = conf.Redirects
 	b.threshold = conf.Threshold
 
-	b.workerCount = app.ClientCount
+	b.workerCount = app.WorkerCount
 	b.maxWorkers = app.SocketHandler().MaxConns()
 
 	return nil

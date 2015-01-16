@@ -17,26 +17,26 @@ import (
 // clients (e.g. wakes client when data is ready, potentially issues remote
 // wake command to client, etc.)
 
-type Client struct {
-	// client descriptor info.
-	Worker Worker
-	PushWS *PushWS `json:"-"`
-	UAID   string  `json:"uaid"`
-}
-
 // Basic global server options
 type ServerConfig struct {
 	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
 }
 
+// Server responds to client commands and delivers updates.
 type Server interface {
-	RequestFlush(client *Client, channel string, version int64,
-		data string) (err error)
-	UpdateClient(client *Client, chid, uid string, vers int64,
-		time time.Time, data string) (err error)
-	HandleCommand(cmd PushCommand, sock *PushWS) (
-		result int, args JsMap)
-	Close() error
+	// RequestFlush sends an update containing chid, vers, and data to w. If w is
+	// nil, RequestFlush is a no-op. If RequestFlush panics and a proprietary
+	// pinger is registered, the update will be delivered via the proprietary
+	// mechanism.
+	RequestFlush(w Worker, chid string, vers int64, data string) (err error)
+
+	// UpdateWorker updates the storage backend and flushes an update to w.
+	// sentAt indicates when the update was sent by the application server.
+	UpdateWorker(w Worker, chid string, vers int64,
+		sentAt time.Time, data string) (err error)
+
+	// HandleCommand responds to cmd issued by w.
+	HandleCommand(cmd PushCommand, w Worker) (result int, args JsMap)
 }
 
 func NewServer() *Serv {
@@ -82,7 +82,7 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 }
 
 // A client connects!
-func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
+func (self *Serv) Hello(cmd PushCommand, w Worker) (result int, arguments JsMap) {
 
 	args := cmd.Arguments
 	uaid := args["uaid"].(string)
@@ -104,12 +104,7 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 
 	// Create a new, live client entry for this record.
 	// See Bye for discussion of potential longer term storage of this info
-	client := &Client{
-		Worker: worker,
-		PushWS: sock,
-		UAID:   uaid,
-	}
-	self.app.AddClient(uaid, client)
+	self.app.AddWorker(uaid, w)
 	self.router.Register(uaid)
 	self.logger.Info("dash", "Client registered", nil)
 
@@ -120,7 +115,7 @@ func (self *Serv) Hello(worker Worker, cmd PushCommand, sock *PushWS) (result in
 	return result, arguments
 }
 
-func (self *Serv) Bye(sock *PushWS) {
+func (self *Serv) Bye(w Worker) {
 	// Remove the UAID as a registered listener.
 	// NOTE: in instances where proprietary wake-ups are issued, you may
 	// wish not to delete the record from Clients, since this is the only
@@ -130,7 +125,7 @@ func (self *Serv) Bye(sock *PushWS) {
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
 	now := time.Now()
-	uaid := sock.UAID()
+	uaid := w.UAID()
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("server", "Cleaning up socket",
 			LogFields{"uaid": uaid})
@@ -139,23 +134,22 @@ func (self *Serv) Bye(sock *PushWS) {
 		self.logger.Info("dash", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
-				"duration": strconv.FormatInt(int64(now.Sub(sock.Born)), 10)})
+				"duration": strconv.FormatInt(int64(now.Sub(w.Born())), 10)})
 	}
-	if !sock.IsClosed() {
+	if removed := self.app.RemoveWorker(uaid, w); removed {
 		self.router.Unregister(uaid)
-		self.app.RemoveClient(uaid)
 	}
-	sock.Close()
+	w.Close()
 }
 
-func (self *Serv) Regis(cmd PushCommand, sock *PushWS) (result int, arguments JsMap) {
+func (self *Serv) Regis(cmd PushCommand, w Worker) (result int, arguments JsMap) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
 	var err error
 	args := cmd.Arguments
 	args["status"] = 200
 	// Generate the call back URL
-	uaid := sock.UAID()
+	uaid := w.UAID()
 	chid, _ := args["channelID"].(string)
 	token, ok := self.store.IDsToKey(uaid, chid)
 	if !ok {
@@ -213,13 +207,13 @@ func (self *Serv) genEndpoint(token string) (string, error) {
 	return endpoint.String(), nil
 }
 
-func (self *Serv) RequestFlush(client *Client, channel string, version int64, data string) (err error) {
-	defer func(client *Client, version int64) {
+// RequestFlush implements Server.RequestFlush.
+func (self *Serv) RequestFlush(w Worker, channel string,
+	version int64, data string) (err error) {
+
+	var uaid string
+	defer func() {
 		if r := recover(); r != nil {
-			var uaid string
-			if client != nil {
-				uaid = client.UAID
-			}
 			if flushErr, ok := r.(error); ok {
 				err = flushErr
 			} else {
@@ -239,13 +233,14 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 			}
 		}
 		return
-	}(client, version)
+	}()
 
-	if client != nil {
+	if w != nil {
+		uaid = w.UAID()
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("server",
 				"Requesting flush",
-				LogFields{"uaid": client.UAID,
+				LogFields{"uaid": uaid,
 					"chid":    channel,
 					"version": strconv.FormatInt(version, 10),
 					"data":    data,
@@ -253,21 +248,26 @@ func (self *Serv) RequestFlush(client *Client, channel string, version int64, da
 		}
 
 		// Attempt to send the command
-		return client.Worker.Flush(client.PushWS, 0, channel, version, data)
+		return w.Flush(0, channel, version, data)
 	}
 	return nil
 }
 
-func (self *Serv) UpdateClient(client *Client, chid, uid string, vers int64,
-	time time.Time, data string) (err error) {
+// UpdateWorker implements Server.UpdateWorker.
+func (self *Serv) UpdateWorker(w Worker, chid string,
+	vers int64, time time.Time, data string) (err error) {
 
+	if w == nil {
+		return nil
+	}
+	uaid := w.UAID()
 	var reason string
-	if err = self.store.Update(uid, chid, vers); err != nil {
+	if err = self.store.Update(uaid, chid, vers); err != nil {
 		reason = "Failed to update channel"
 		goto updateError
 	}
 
-	if err = self.RequestFlush(client, chid, vers, data); err != nil {
+	if err = self.RequestFlush(w, chid, vers, data); err != nil {
 		reason = "Failed to flush"
 		goto updateError
 	}
@@ -277,13 +277,14 @@ updateError:
 	if self.logger.ShouldLog(ERROR) {
 		self.logger.Error("server", reason,
 			LogFields{"error": err.Error(),
-				"uaid": uid,
+				"uaid": uaid,
 				"chid": chid})
 	}
 	return err
 }
 
-func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args JsMap) {
+// HandleCommand implements Server.HandleCommand.
+func (self *Serv) HandleCommand(cmd PushCommand, w Worker) (result int, args JsMap) {
 	var ret JsMap
 	if cmd.Arguments != nil {
 		args = cmd.Arguments
@@ -296,27 +297,22 @@ func (self *Serv) HandleCommand(cmd PushCommand, sock *PushWS) (result int, args
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling HELLO event", nil)
 		}
-		worker := args["worker"].(Worker)
-		result, ret = self.Hello(worker, cmd, sock)
+		result, ret = self.Hello(cmd, w)
 	case REGIS:
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Handling REGIS event", nil)
 		}
-		result, ret = self.Regis(cmd, sock)
+		result, ret = self.Regis(cmd, w)
 	case DIE:
 		if self.logger.ShouldLog(DEBUG) {
 			self.logger.Debug("server", "Cleanup", nil)
 		}
-		self.Bye(sock)
+		self.Bye(w)
 		return 0, nil
 	}
 
 	args["uaid"] = ret["uaid"]
 	return result, args
-}
-
-func (self *Serv) Close() error {
-	return nil
 }
 
 // o4fs
