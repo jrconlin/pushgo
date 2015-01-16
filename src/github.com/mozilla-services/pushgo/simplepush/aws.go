@@ -7,6 +7,7 @@ package simplepush
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -54,7 +55,9 @@ func (e *EC2Info) Get(item string) (body string, err error) {
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(ioutil.Discard, resp.Body)
 		err = fmt.Errorf("Unexpected status code: %d", resp.StatusCode)
 		return
 	}
