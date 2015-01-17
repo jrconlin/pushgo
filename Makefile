@@ -150,7 +150,8 @@ travis-cov: test-cov
 test:
 	GOPATH=$(GOPATH) $(GO) test -v \
 		-tags smoke \
-		-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
+		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
+		#-ldflags "$(GOLDFLAGS)" $(addprefix $(PACKAGE)/,id retry simplepush)
 
 bench:
 #	GOPATH=$(GOPATH) $(GO) test -v -bench=Router -benchmem -benchtime=5s
