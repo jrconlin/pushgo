@@ -166,12 +166,10 @@ func NewGCMPing() (r *GCMPing) {
 	r = &GCMPing{
 		closeSignal: make(chan bool),
 	}
-	r.Closable.CloserOnce = r
 	return r
 }
 
 type GCMPing struct {
-	Closable
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
@@ -182,6 +180,7 @@ type GCMPing struct {
 	apiKey      string
 	ttl         uint64
 	rh          *retry.Helper
+	closeOnce   Once
 	closeSignal chan bool
 }
 
@@ -398,7 +397,11 @@ func (r *GCMPing) CloseNotify() <-chan bool {
 	return r.closeSignal
 }
 
-func (r *GCMPing) CloseOnce() error {
+func (r *GCMPing) Close() error {
+	return r.closeOnce.Do(r.close)
+}
+
+func (r *GCMPing) close() error {
 	close(r.closeSignal)
 	return nil
 }

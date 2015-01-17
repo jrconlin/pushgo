@@ -94,7 +94,7 @@ type EtcdBalancer struct {
 	ttl            time.Duration
 	closeDelay     time.Duration
 
-	Closable
+	closeOnce   Once
 	closeWait   sync.WaitGroup
 	closeSignal chan bool
 }
@@ -145,7 +145,6 @@ func NewEtcdBalancer() (b *EtcdBalancer) {
 	b = &EtcdBalancer{
 		closeSignal: make(chan bool),
 	}
-	b.Closable.CloserOnce = b
 	return b
 }
 
@@ -230,7 +229,7 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 }
 
 func (b *EtcdBalancer) shouldRedirect() (currentConns int64, ok bool) {
-	if b.IsClosed() {
+	if b.closeOnce.IsDone() {
 		return
 	}
 	currentConns = int64(b.connCount())
@@ -294,7 +293,7 @@ func (b *EtcdBalancer) publishCounts() {
 
 // Status determines whether etcd is available. Implements Balancer.Status().
 func (b *EtcdBalancer) Status() (ok bool, err error) {
-	if b.IsClosed() {
+	if b.closeOnce.IsDone() {
 		return
 	}
 	if ok, err = IsEtcdHealthy(b.client); err != nil {
@@ -306,9 +305,12 @@ func (b *EtcdBalancer) Status() (ok bool, err error) {
 	return
 }
 
-// CloseOnce stops the balancer and closes the connection to etcd. Implements
-// CloserOnce.CloseOnce().
-func (b *EtcdBalancer) CloseOnce() (err error) {
+// Close stops the balancer and closes the connection to etcd.
+func (b *EtcdBalancer) Close() error {
+	return b.closeOnce.Do(b.close)
+}
+
+func (b *EtcdBalancer) close() (err error) {
 	if b.log.ShouldLog(INFO) {
 		b.log.Info("balancer", "Closing etcd balancer",
 			LogFields{"key": b.key})

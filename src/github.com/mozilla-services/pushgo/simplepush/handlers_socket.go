@@ -16,10 +16,8 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func NewSocketHandler() (h *SocketHandler) {
-	h = new(SocketHandler)
-	h.Closable.CloserOnce = h
-	return h
+func NewSocketHandler() *SocketHandler {
+	return new(SocketHandler)
 }
 
 type SocketHandlerConfig struct {
@@ -28,17 +26,17 @@ type SocketHandlerConfig struct {
 }
 
 type SocketHandler struct {
-	Closable
-	app      *Application
-	logger   *SimpleLogger
-	metrics  Statistician
-	store    Store
-	origins  []*url.URL
-	listener net.Listener
-	server   *ServeCloser
-	mux      *mux.Router
-	url      string
-	maxConns int
+	app       *Application
+	logger    *SimpleLogger
+	metrics   Statistician
+	store     Store
+	origins   []*url.URL
+	listener  net.Listener
+	server    *ServeCloser
+	mux       *mux.Router
+	url       string
+	maxConns  int
+	closeOnce Once
 }
 
 func (h *SocketHandler) ConfigStruct() interface{} {
@@ -169,7 +167,11 @@ func (h *SocketHandler) checkOrigin(conf *websocket.Config, req *http.Request) (
 	return ErrInvalidOrigin
 }
 
-func (h *SocketHandler) CloseOnce() error {
+func (h *SocketHandler) Close() error {
+	return h.closeOnce.Do(h.close)
+}
+
+func (h *SocketHandler) close() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
 			LogFields{"url": h.url})

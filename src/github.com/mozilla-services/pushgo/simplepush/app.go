@@ -39,12 +39,10 @@ func NewApplication() (a *Application) {
 		clients:   make(map[string]*Client),
 		closeChan: make(chan bool),
 	}
-	a.Closable.CloserOnce = a
 	return a
 }
 
 type Application struct {
-	Closable
 	info               InstanceInfo
 	hostname           string
 	host               string
@@ -68,6 +66,7 @@ type Application struct {
 	eh                 Handler
 	propping           PropPinger
 	closeChan          chan bool
+	closeOnce          Once
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -266,7 +265,7 @@ func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
 }
 
 func (a *Application) AddClient(uaid string, client *Client) {
-	if a.IsClosed() {
+	if a.closeOnce.IsDone() {
 		client.PushWS.Close()
 		return
 	}
@@ -277,7 +276,7 @@ func (a *Application) AddClient(uaid string, client *Client) {
 }
 
 func (a *Application) RemoveClient(uaid string) {
-	if a.IsClosed() {
+	if a.closeOnce.IsDone() {
 		return
 	}
 	var ok bool
@@ -300,7 +299,11 @@ func (a *Application) closeClients() {
 	}
 }
 
-func (a *Application) CloseOnce() error {
+func (a *Application) Close() error {
+	return a.closeOnce.Do(a.close)
+}
+
+func (a *Application) close() error {
 	var errors MultipleError
 	if eh := a.EndpointHandler(); eh != nil {
 		// Stop the update listener; close all connections.

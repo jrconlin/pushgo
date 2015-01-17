@@ -17,7 +17,6 @@ import (
 
 func NewEndpointHandler() (h *EndpointHandler) {
 	h = &EndpointHandler{mux: mux.NewRouter()}
-	h.Closable.CloserOnce = h
 	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
 	return h
 }
@@ -29,13 +28,13 @@ type EndpointHandlerConfig struct {
 }
 
 type EndpointHandler struct {
-	Closable
 	app         *Application
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
 	router      Router
 	pinger      PropPinger
+	balancer    Balancer
 	hostname    string
 	tokenKey    []byte
 	listener    net.Listener
@@ -45,6 +44,7 @@ type EndpointHandler struct {
 	maxConns    int
 	maxDataLen  int
 	alwaysRoute bool
+	closeOnce   Once
 }
 
 func (h *EndpointHandler) ConfigStruct() interface{} {
@@ -359,7 +359,11 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, vers
 	return true
 }
 
-func (h *EndpointHandler) CloseOnce() error {
+func (h *EndpointHandler) Close() error {
+	return h.closeOnce.Do(h.close)
+}
+
+func (h *EndpointHandler) close() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})
