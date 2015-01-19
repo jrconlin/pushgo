@@ -96,10 +96,10 @@ type Store interface {
 	Close() error
 
 	// KeyToIDs extracts the device and channel IDs from a storage key.
-	KeyToIDs(key string) (suaid, schid string, ok bool)
+	KeyToIDs(key string) (suaid, schid string, err error)
 
 	// IDsToKey encodes the device and channel IDs into a composite key.
-	IDsToKey(suaid, schid string) (key string, ok bool)
+	IDsToKey(suaid, schid string) (key string, err error)
 
 	// Status indicates whether the adapter's backing store is healthy.
 	Status() (bool, error)

@@ -43,17 +43,17 @@ func Test_KeyToIDs(t *testing.T) {
 	testGm := NewGomemc()
 	testGm.logger, _ = NewLogger(&TestLogger{DEBUG, t})
 
-	tu, tc, ok := testGm.KeyToIDs("alpha.beta")
-	if tu != "alpha" || tc != "beta" || !ok {
+	tu, tc, err := testGm.KeyToIDs("alpha.beta")
+	if tu != "alpha" || tc != "beta" || err != nil {
 		t.Error("GomemStore KeyToIDs failed to convert")
 	}
-	tu, tc, ok = testGm.KeyToIDs("invalid")
-	if ok {
+	tu, tc, err = testGm.KeyToIDs("invalid")
+	if err == nil {
 		t.Error("GomemStore KeyToIDs accepted invalid content")
 	}
 
-	tu, tc, ok = testGm.KeyToIDs("alpha.beta.gamma")
-	if tu != "alpha" || tc != "beta.gamma" || !ok {
+	tu, tc, err = testGm.KeyToIDs("alpha.beta.gamma")
+	if tu != "alpha" || tc != "beta.gamma" || err != nil {
 		t.Error("GomemStore KeyToIDs failed to properly break key")
 	}
 
@@ -63,13 +63,13 @@ func Test_IDsToKey(t *testing.T) {
 	testGm := NewGomemc()
 	testGm.logger, _ = NewLogger(&TestLogger{DEBUG, t})
 
-	if key, ok := testGm.IDsToKey("alpha", "beta"); !ok || key != "alpha.beta" {
+	if key, err := testGm.IDsToKey("alpha", "beta"); err != nil || key != "alpha.beta" {
 		t.Error("GomemStore IDsToKey unable to generate proper key")
 	}
-	if _, ok := testGm.IDsToKey("", "beta"); ok {
+	if _, err := testGm.IDsToKey("", "beta"); err == nil {
 		t.Error("GomemStore IDsToKey created invalid key")
 	}
-	if _, ok := testGm.IDsToKey("alpha", ""); ok {
+	if _, err := testGm.IDsToKey("alpha", ""); err == nil {
 		t.Error("GomemStore IDsToKey created invalid key")
 	}
 }

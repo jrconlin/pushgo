@@ -178,7 +178,7 @@ func TestServerRegister(t *testing.T) {
 
 			gomock.InOrder(
 				mckWorker.EXPECT().UAID().Return(uaid),
-				mckStore.EXPECT().IDsToKey(uaid, chid).Return("", false),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("", ErrInvalidKey),
 			)
 
 			inArgs := JsMap{"channelID": chid}
@@ -202,7 +202,7 @@ func TestServerRegister(t *testing.T) {
 
 			gomock.InOrder(
 				mckWorker.EXPECT().UAID().Return(uaid),
-				mckStore.EXPECT().IDsToKey(uaid, chid).Return("abc", true),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("abc", nil),
 				mckEndHandler.EXPECT().URL().Return("https://example.com"),
 			)
 
@@ -228,7 +228,7 @@ func TestServerRegister(t *testing.T) {
 
 			gomock.InOrder(
 				mckWorker.EXPECT().UAID().Return(uaid),
-				mckStore.EXPECT().IDsToKey(uaid, chid).Return("456", true),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("456", nil),
 				mckEndHandler.EXPECT().URL().Return("https://example.org"),
 			)
 			inArgs := JsMap{"channelID": chid}
@@ -254,7 +254,7 @@ func TestServerRegister(t *testing.T) {
 
 			gomock.InOrder(
 				mckWorker.EXPECT().UAID().Return(uaid),
-				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", true),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
 			)
 
 			inArgs := JsMap{"channelID": chid}

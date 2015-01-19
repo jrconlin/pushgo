@@ -128,30 +128,46 @@ func (s *GomemcStore) Close() (err error) {
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements Store.KeyToIDs().
-func (s *GomemcStore) KeyToIDs(key string) (uaid, chid string, ok bool) {
+func (s *GomemcStore) KeyToIDs(key string) (uaid, chid string, err error) {
+	logWarning := s.logger.ShouldLog(WARNING)
 	items := strings.SplitN(key, ".", 2)
-	if len(items) < 2 {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Invalid Key, returning blank IDs",
+	if len(items) == 0 {
+		if logWarning {
+			s.logger.Warn("gomemc", "Key missing device ID",
 				LogFields{"key": key})
 		}
-		return "", "", false
+		return "", "", ErrNoID
 	}
-	return items[0], items[1], true
+	if len(items) == 1 || len(items[1]) == 0 {
+		if logWarning {
+			s.logger.Warn("gomemc", "Key missing channel ID",
+				LogFields{"key": key})
+		}
+		return "", "", ErrNoChannel
+	}
+	return items[0], items[1], nil
 }
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // Store.IDsToKey().
-func (s *GomemcStore) IDsToKey(uaid, chid string) (string, bool) {
-	if len(uaid) == 0 || len(chid) == 0 {
-		if s.logger.ShouldLog(WARNING) {
-			s.logger.Warn("gomemc", "Invalid IDs, returning blank Key",
+func (s *GomemcStore) IDsToKey(uaid, chid string) (string, error) {
+	logWarning := s.logger.ShouldLog(WARNING)
+	if len(uaid) == 0 {
+		if logWarning {
+			s.logger.Warn("gomemc", "Missing device ID",
 				LogFields{"uaid": uaid, "chid": chid})
 		}
-		return "", false
+		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", uaid, chid), true
+	if len(chid) == 0 {
+		if logWarning {
+			s.logger.Warn("gomemc", "Missing channel ID",
+				LogFields{"uaid": uaid, "chid": chid})
+		}
+		return "", ErrInvalidKey
+	}
+	return fmt.Sprintf("%s.%s", uaid, chid), nil
 }
 
 // Status queries whether memcached is available for reading and writing.
@@ -215,9 +231,9 @@ func (s *GomemcStore) Exists(uaid string) bool {
 
 // Stores a new channel record in memcached.
 func (s *GomemcStore) storeRegister(uaid, chid string, version int64) error {
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidID
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -263,9 +279,9 @@ func (s *GomemcStore) Register(uaid, chid string, version int64) (err error) {
 
 // Updates a channel record in memcached.
 func (s *GomemcStore) storeUpdate(uaid, chid string, version int64) error {
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -322,9 +338,9 @@ func (s *GomemcStore) Update(uaid, chid string, version int64) (err error) {
 
 // Marks a memcached channel record as expired.
 func (s *GomemcStore) storeUnregister(uaid, chid string) error {
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
@@ -396,9 +412,9 @@ func (s *GomemcStore) Drop(uaid, chid string) (err error) {
 	if !id.Valid(chid) {
 		return ErrInvalidChannel
 	}
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	if err = s.client.Delete(key); err != nil && err != mc.ErrCacheMiss {
 		return err
@@ -422,7 +438,10 @@ func (s *GomemcStore) FetchAll(uaid string, since time.Time) ([]Update, []string
 	keys := make([]string, 0, 20)
 
 	for _, chid := range chids {
-		key, _ := s.IDsToKey(uaid, chid)
+		key, err := s.IDsToKey(uaid, chid)
+		if err != nil {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	if s.logger.ShouldLog(INFO) {
@@ -509,9 +528,9 @@ func (s *GomemcStore) DropAll(uaid string) error {
 		return err
 	}
 	for _, chid := range chids {
-		key, ok := s.IDsToKey(uaid, chid)
-		if !ok {
-			return ErrInvalidKey
+		key, err := s.IDsToKey(uaid, chid)
+		if err != nil {
+			return err
 		}
 		s.client.Delete(key)
 	}

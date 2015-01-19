@@ -153,13 +153,7 @@ func (h *EndpointHandler) resolvePK(token string) (uaid, chid string, err error)
 		err = fmt.Errorf("Invalid primary key: %q", pk)
 		return "", "", err
 	}
-	uaid, chid, ok := h.store.KeyToIDs(pk)
-	if !ok {
-		err = fmt.Errorf("Could not resolve primary key: %q", pk)
-		return "", "", err
-	}
-	if len(chid) == 0 {
-		err = fmt.Errorf("Primary key missing channel ID: %q", pk)
+	if uaid, chid, err = h.store.KeyToIDs(pk); err != nil {
 		return "", "", err
 	}
 	return uaid, chid, nil

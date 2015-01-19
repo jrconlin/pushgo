@@ -21,27 +21,43 @@ type NoStore struct {
 	maxChannels int
 }
 
-func (n *NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
+func (n *NoStore) KeyToIDs(key string) (suaid, schid string, err error) {
+	logWarning := n.logger.ShouldLog(WARNING)
 	items := strings.SplitN(key, ".", 2)
-	if len(items) < 2 {
-		if n.logger.ShouldLog(WARNING) {
-			n.logger.Warn("nostore", "Invalid Key, returning blank IDs",
+	if len(items) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Key missing device ID",
 				LogFields{"key": key})
 		}
-		return "", "", false
+		return "", "", ErrNoID
 	}
-	return items[0], items[1], true
+	if len(items) == 1 || len(items[1]) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Key missing channel ID",
+				LogFields{"key": key})
+		}
+		return "", "", ErrNoChannel
+	}
+	return items[0], items[1], nil
 }
 
-func (n *NoStore) IDsToKey(suaid, schid string) (string, bool) {
-	if len(suaid) == 0 || len(schid) == 0 {
-		if n.logger.ShouldLog(WARNING) {
-			n.logger.Warn("nostore", "Invalid IDs, returning blank Key",
+func (n *NoStore) IDsToKey(suaid, schid string) (string, error) {
+	logWarning := n.logger.ShouldLog(WARNING)
+	if len(suaid) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Missing device ID",
 				LogFields{"uaid": suaid, "chid": schid})
 		}
-		return "", false
+		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", suaid, schid), true
+	if len(schid) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Missing channel ID",
+				LogFields{"uaid": suaid, "chid": schid})
+		}
+		return "", ErrInvalidKey
+	}
+	return fmt.Sprintf("%s.%s", suaid, schid), nil
 }
 
 func (*NoStore) ConfigStruct() interface{} {

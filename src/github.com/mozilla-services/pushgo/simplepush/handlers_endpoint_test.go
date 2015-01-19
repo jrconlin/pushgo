@@ -101,7 +101,7 @@ func TestEndpointResolveKey(t *testing.T) {
 					Path: "/update/j1bqzFq9WiwFZbqay-y7xVlfSvtO1eY="}, // "123.456"
 			}
 			gomock.InOrder(
-				mckStore.EXPECT().KeyToIDs("123.456").Return("", "", false),
+				mckStore.EXPECT().KeyToIDs("123.456").Return("", "", ErrInvalidKey),
 				mckStat.EXPECT().Increment("updates.appserver.invalid"),
 			)
 			eh.ServeMux().ServeHTTP(resp, req)
@@ -141,7 +141,7 @@ func TestEndpointResolveKey(t *testing.T) {
 
 			// decodePK should trim whitespace from encoded keys.
 			mckStore.EXPECT().KeyToIDs(
-				fmt.Sprintf("%s.%s", uaid, chid)).Return(uaid, chid, true)
+				fmt.Sprintf("%s.%s", uaid, chid)).Return(uaid, chid, nil)
 			actualUAID, actualCHID, err := eh.resolvePK(encodedKey)
 			So(err, ShouldBeNil)
 			So(actualUAID, ShouldEqual, uaid)
@@ -172,15 +172,11 @@ func TestEndpointResolveKey(t *testing.T) {
 			_, _, err = eh.resolvePK(validKey)
 			So(err, ShouldNotBeNil)
 
-			mckStore.EXPECT().KeyToIDs(validKey).Return("", "", false)
+			mckStore.EXPECT().KeyToIDs(validKey).Return("", "", ErrInvalidKey)
 			_, _, err = eh.resolvePK(encodedKey)
 			So(err, ShouldNotBeNil)
 
-			mckStore.EXPECT().KeyToIDs(validKey).Return(uaid, "", true)
-			_, _, err = eh.resolvePK(encodedKey)
-			So(err, ShouldNotBeNil)
-
-			mckStore.EXPECT().KeyToIDs(validKey).Return(uaid, chid, true)
+			mckStore.EXPECT().KeyToIDs(validKey).Return(uaid, chid, nil)
 			actualUAID, actualCHID, err := eh.resolvePK(encodedKey)
 			So(err, ShouldBeNil)
 			So(actualUAID, ShouldEqual, uaid)
@@ -392,7 +388,7 @@ func TestEndpointPinger(t *testing.T) {
 				Body:   nil,
 			}
 			gomock.InOrder(
-				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", true),
+				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", nil),
 				mckStat.EXPECT().Increment("updates.appserver.incoming"),
 				mckPinger.EXPECT().Send(uaid, int64(1257894000), "").Return(true, nil),
 				mckPinger.EXPECT().CanBypassWebsocket().Return(true),
@@ -423,7 +419,7 @@ func TestEndpointPinger(t *testing.T) {
 				Body:   formReader(vals),
 			}
 			gomock.InOrder(
-				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", true),
+				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", nil),
 				mckStat.EXPECT().Increment("updates.appserver.incoming"),
 				mckPinger.EXPECT().Send(uaid, int64(1257894000), data).Return(true, nil),
 				mckPinger.EXPECT().CanBypassWebsocket().Return(false),
@@ -454,7 +450,7 @@ func TestEndpointPinger(t *testing.T) {
 				Body:   formReader(vals),
 			}
 			gomock.InOrder(
-				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", true),
+				mckStore.EXPECT().KeyToIDs("123").Return(uaid, "456", nil),
 				mckStat.EXPECT().Increment("updates.appserver.incoming"),
 				mckPinger.EXPECT().Send(uaid, int64(7), "").Return(
 					true, errors.New("oops")),
@@ -524,7 +520,7 @@ func TestEndpointDelivery(t *testing.T) {
 					Body:   formReader(url.Values{"version": {"1"}}),
 				}
 				gomock.InOrder(
-					mckStore.EXPECT().KeyToIDs("123").Return("123", "456", true),
+					mckStore.EXPECT().KeyToIDs("123").Return("123", "456", nil),
 					mckStat.EXPECT().Increment("updates.appserver.incoming"),
 					mckStore.EXPECT().Update("123", "456", int64(1)).Return(nil),
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
@@ -563,7 +559,7 @@ func TestEndpointDelivery(t *testing.T) {
 				}
 				updateErr := ErrInvalidChannel
 				gomock.InOrder(
-					mckStore.EXPECT().KeyToIDs("123").Return("123", "456", true),
+					mckStore.EXPECT().KeyToIDs("123").Return("123", "456", nil),
 					mckStat.EXPECT().Increment("updates.appserver.incoming"),
 					mckStore.EXPECT().Update("123", "456", int64(2)).Return(updateErr),
 					mckStat.EXPECT().Increment("updates.appserver.error"),

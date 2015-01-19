@@ -151,8 +151,8 @@ func (self *Serv) Regis(cmd PushCommand, w Worker) (result int, arguments JsMap)
 	// Generate the call back URL
 	uaid := w.UAID()
 	chid, _ := args["channelID"].(string)
-	token, ok := self.store.IDsToKey(uaid, chid)
-	if !ok {
+	token, err := self.store.IDsToKey(uaid, chid)
+	if err != nil {
 		return 500, nil
 	}
 	if token, err = self.encodePK(token); err != nil {

@@ -244,22 +244,25 @@ func (s *EmceeStore) Close() (err error) {
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements Store.KeyToIDs().
-func (*EmceeStore) KeyToIDs(key string) (uaid, chid string, ok bool) {
+func (*EmceeStore) KeyToIDs(key string) (uaid, chid string, err error) {
 	items := strings.SplitN(key, ".", 2)
-	if len(items) < 2 {
-		return "", "", false
+	if len(items) == 0 {
+		return "", "", ErrNoID
 	}
-	return items[0], items[1], true
+	if len(items) == 1 || len(items[1]) == 0 {
+		return "", "", ErrNoChannel
+	}
+	return items[0], items[1], nil
 }
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // Store.IDsToKey().
-func (*EmceeStore) IDsToKey(uaid, chid string) (string, bool) {
+func (*EmceeStore) IDsToKey(uaid, chid string) (string, error) {
 	if len(uaid) == 0 || len(chid) == 0 {
-		return "", false
+		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", uaid, chid), true
+	return fmt.Sprintf("%s.%s", uaid, chid), nil
 }
 
 // Status queries whether memcached is available for reading and writing.
@@ -340,9 +343,9 @@ func (s *EmceeStore) storeRegister(uaid, chid string, version int64) error {
 		rec.State = StateLive
 		rec.Version = uint64(version)
 	}
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	if err = s.storeRec(key, rec); err != nil {
 		return err
@@ -371,9 +374,9 @@ func (s *EmceeStore) Register(uaid, chid string, version int64) (err error) {
 
 // Updates a channel record in memcached.
 func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
@@ -448,9 +451,9 @@ func (s *EmceeStore) storeUnregister(uaid, chid string) error {
 	if pos < 0 {
 		return ErrNonexistentChannel
 	}
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
@@ -514,9 +517,9 @@ func (s *EmceeStore) Drop(uaid, chid string) (err error) {
 		return err
 	}
 	defer s.releaseWithout(client, &err)
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
+	key, err := s.IDsToKey(uaid, chid)
+	if err != nil {
+		return err
 	}
 	if err = client.Delete(key, 0); err == nil || isMissing(err) {
 		return nil
@@ -544,7 +547,10 @@ func (s *EmceeStore) FetchAll(uaid string, since time.Time) ([]Update, []string,
 	keys := make([]string, 0, 20)
 
 	for _, chid := range chids {
-		key, _ := s.IDsToKey(uaid, chid)
+		key, err := s.IDsToKey(uaid, chid)
+		if err != nil {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	if s.logger.ShouldLog(INFO) {
@@ -640,9 +646,9 @@ func (s *EmceeStore) DropAll(uaid string) error {
 	}
 	defer s.releaseWithout(client, &err)
 	for _, chid := range chids {
-		key, ok := s.IDsToKey(uaid, chid)
-		if !ok {
-			return ErrInvalidKey
+		key, err := s.IDsToKey(uaid, chid)
+		if err != nil {
+			return err
 		}
 		client.Delete(key, 0)
 	}

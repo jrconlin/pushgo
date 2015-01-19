@@ -88,7 +88,7 @@ func TestWorkerRegister(t *testing.T) {
 			gomock.InOrder(
 				mckStore.EXPECT().Register(uaid, chid,
 					int64(0)).Return(nil),
-				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", true),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
 				mckEndHandler.EXPECT().URL().Return("https://example.com"),
 				mckSocket.EXPECT().WriteJSON(RegisterReply{
 					Type:      "register",
@@ -664,7 +664,7 @@ func BenchmarkWorkerRun(b *testing.B) {
 
 	mckStore := NewMockStore(mockCtrl)
 	mckStore.EXPECT().IDsToKey(testID,
-		"89101cfa01dd4294a00e3a813cb3da97").Return("123", true).Times(b.N)
+		"89101cfa01dd4294a00e3a813cb3da97").Return("123", nil).Times(b.N)
 	mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(
 		nil, nil, nil).Times(b.N)
 	mckStore.EXPECT().Register(testID,
