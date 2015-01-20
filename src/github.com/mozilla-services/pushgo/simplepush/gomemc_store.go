@@ -129,23 +129,14 @@ func (s *GomemcStore) Close() (err error) {
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements Store.KeyToIDs().
 func (s *GomemcStore) KeyToIDs(key string) (uaid, chid string, err error) {
-	logWarning := s.logger.ShouldLog(WARNING)
-	items := strings.SplitN(key, ".", 2)
-	if len(items) == 0 {
-		if logWarning {
-			s.logger.Warn("gomemc", "Key missing device ID",
-				LogFields{"key": key})
+	if uaid, chid, err = splitIDs(key); err != nil {
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("gomemc", "Invalid key",
+				LogFields{"error": err.Error(), "key": key})
 		}
-		return "", "", ErrNoID
+		return "", "", ErrInvalidKey
 	}
-	if len(items) == 1 || len(items[1]) == 0 {
-		if logWarning {
-			s.logger.Warn("gomemc", "Key missing channel ID",
-				LogFields{"key": key})
-		}
-		return "", "", ErrNoChannel
-	}
-	return items[0], items[1], nil
+	return
 }
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
@@ -167,7 +158,7 @@ func (s *GomemcStore) IDsToKey(uaid, chid string) (string, error) {
 		}
 		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", uaid, chid), nil
+	return joinIDs(uaid, chid), nil
 }
 
 // Status queries whether memcached is available for reading and writing.
@@ -231,10 +222,7 @@ func (s *GomemcStore) Exists(uaid string) bool {
 
 // Stores a new channel record in memcached.
 func (s *GomemcStore) storeRegister(uaid, chid string, version int64) error {
-	key, err := s.IDsToKey(uaid, chid)
-	if err != nil {
-		return err
-	}
+	key := joinIDs(uaid, chid)
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
 		return err
@@ -279,10 +267,7 @@ func (s *GomemcStore) Register(uaid, chid string, version int64) (err error) {
 
 // Updates a channel record in memcached.
 func (s *GomemcStore) storeUpdate(uaid, chid string, version int64) error {
-	key, err := s.IDsToKey(uaid, chid)
-	if err != nil {
-		return err
-	}
+	key := joinIDs(uaid, chid)
 	cRec, err := s.fetchRec(key)
 	if err != nil && err != mc.ErrCacheMiss {
 		if s.logger.ShouldLog(ERROR) {
@@ -338,10 +323,7 @@ func (s *GomemcStore) Update(uaid, chid string, version int64) (err error) {
 
 // Marks a memcached channel record as expired.
 func (s *GomemcStore) storeUnregister(uaid, chid string) error {
-	key, err := s.IDsToKey(uaid, chid)
-	if err != nil {
-		return err
-	}
+	key := joinIDs(uaid, chid)
 	chids, err := s.fetchAppIDArray(uaid)
 	if err != nil && err != mc.ErrCacheMiss {
 		return err
@@ -412,10 +394,7 @@ func (s *GomemcStore) Drop(uaid, chid string) (err error) {
 	if !id.Valid(chid) {
 		return ErrInvalidChannel
 	}
-	key, err := s.IDsToKey(uaid, chid)
-	if err != nil {
-		return err
-	}
+	key := joinIDs(uaid, chid)
 	if err = s.client.Delete(key); err != nil && err != mc.ErrCacheMiss {
 		return err
 	}
@@ -435,14 +414,10 @@ func (s *GomemcStore) FetchAll(uaid string, since time.Time) ([]Update, []string
 
 	updates := make([]Update, 0, 20)
 	expired := make([]string, 0, 20)
-	keys := make([]string, 0, 20)
 
-	for _, chid := range chids {
-		key, err := s.IDsToKey(uaid, chid)
-		if err != nil {
-			continue
-		}
-		keys = append(keys, key)
+	keys := make([]string, len(chids))
+	for i, chid := range chids {
+		keys[i] = joinIDs(uaid, chid)
 	}
 	if s.logger.ShouldLog(INFO) {
 		s.logger.Info("gomemc", "Fetching items", LogFields{
@@ -528,10 +503,7 @@ func (s *GomemcStore) DropAll(uaid string) error {
 		return err
 	}
 	for _, chid := range chids {
-		key, err := s.IDsToKey(uaid, chid)
-		if err != nil {
-			return err
-		}
+		key := joinIDs(uaid, chid)
 		s.client.Delete(key)
 	}
 	if err = s.client.Delete(uaid); err != nil && err != mc.ErrCacheMiss {

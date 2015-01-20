@@ -5,8 +5,6 @@
 package simplepush
 
 import (
-	"fmt"
-	"strings"
 	"time"
 )
 
@@ -22,23 +20,14 @@ type NoStore struct {
 }
 
 func (n *NoStore) KeyToIDs(key string) (suaid, schid string, err error) {
-	logWarning := n.logger.ShouldLog(WARNING)
-	items := strings.SplitN(key, ".", 2)
-	if len(items) == 0 {
-		if logWarning {
-			n.logger.Warn("nostore", "Key missing device ID",
-				LogFields{"key": key})
+	if suaid, schid, err = splitIDs(key); err != nil {
+		if n.logger.ShouldLog(WARNING) {
+			n.logger.Warn("nostore", "Invalid key",
+				LogFields{"error": err.Error(), "key": key})
 		}
-		return "", "", ErrNoID
+		return "", "", ErrInvalidKey
 	}
-	if len(items) == 1 || len(items[1]) == 0 {
-		if logWarning {
-			n.logger.Warn("nostore", "Key missing channel ID",
-				LogFields{"key": key})
-		}
-		return "", "", ErrNoChannel
-	}
-	return items[0], items[1], nil
+	return
 }
 
 func (n *NoStore) IDsToKey(suaid, schid string) (string, error) {
@@ -57,7 +46,7 @@ func (n *NoStore) IDsToKey(suaid, schid string) (string, error) {
 		}
 		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", suaid, schid), nil
+	return joinIDs(suaid, schid), nil
 }
 
 func (*NoStore) ConfigStruct() interface{} {

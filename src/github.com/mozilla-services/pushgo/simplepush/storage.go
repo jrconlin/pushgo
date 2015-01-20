@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -138,4 +139,33 @@ type Store interface {
 
 	// DropPing removes all proprietary ping info for the given device.
 	DropPing(suaid string) error
+}
+
+// keySep is the primary key separator.
+var keySep = "."
+
+// joinIDs constructs a primary key from the device ID uaid and
+// channel ID chid.
+func joinIDs(uaid, chid string) string {
+	return uaid + keySep + chid
+}
+
+// splitIDs extracts the device ID uaid and channel ID chid from key.
+func splitIDs(key string) (uaid, chid string, err error) {
+	items := strings.SplitN(key, keySep, 2)
+	if len(items) == 0 {
+		return "", "", ErrNoID
+	}
+	uaid = items[0]
+	if len(uaid) == 0 {
+		return "", "", ErrNoID
+	}
+	if len(items) == 1 {
+		return "", "", ErrNoChannel
+	}
+	chid = items[1]
+	if len(chid) == 0 {
+		return "", "", ErrNoChannel
+	}
+	return
 }
