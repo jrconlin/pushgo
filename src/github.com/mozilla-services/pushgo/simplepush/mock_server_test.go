@@ -29,8 +29,8 @@ func (_m *MockServer) EXPECT() *_MockServerRecorder {
 	return _m.recorder
 }
 
-func (_m *MockServer) RequestFlush(w Worker, chid string, vers int64, data string) error {
-	ret := _m.ctrl.Call(_m, "RequestFlush", w, chid, vers, data)
+func (_m *MockServer) RequestFlush(worker Worker, chid string, vers int64, data string) error {
+	ret := _m.ctrl.Call(_m, "RequestFlush", worker, chid, vers, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -39,8 +39,8 @@ func (_mr *_MockServerRecorder) RequestFlush(arg0, arg1, arg2, arg3 interface{})
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "RequestFlush", arg0, arg1, arg2, arg3)
 }
 
-func (_m *MockServer) UpdateWorker(w Worker, chid string, vers int64, sentAt time.Time, data string) error {
-	ret := _m.ctrl.Call(_m, "UpdateWorker", w, chid, vers, sentAt, data)
+func (_m *MockServer) UpdateWorker(worker Worker, chid string, vers int64, sentAt time.Time, data string) error {
+	ret := _m.ctrl.Call(_m, "UpdateWorker", worker, chid, vers, sentAt, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -49,8 +49,8 @@ func (_mr *_MockServerRecorder) UpdateWorker(arg0, arg1, arg2, arg3, arg4 interf
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "UpdateWorker", arg0, arg1, arg2, arg3, arg4)
 }
 
-func (_m *MockServer) Hello(w Worker, connect []byte) error {
-	ret := _m.ctrl.Call(_m, "Hello", w, connect)
+func (_m *MockServer) Hello(worker Worker, connect []byte) error {
+	ret := _m.ctrl.Call(_m, "Hello", worker, connect)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -59,8 +59,8 @@ func (_mr *_MockServerRecorder) Hello(arg0, arg1 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Hello", arg0, arg1)
 }
 
-func (_m *MockServer) Regis(w Worker, chid string) (string, error) {
-	ret := _m.ctrl.Call(_m, "Regis", w, chid)
+func (_m *MockServer) Regis(worker Worker, chid string) (string, error) {
+	ret := _m.ctrl.Call(_m, "Regis", worker, chid)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
@@ -70,8 +70,8 @@ func (_mr *_MockServerRecorder) Regis(arg0, arg1 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Regis", arg0, arg1)
 }
 
-func (_m *MockServer) Bye(w Worker) error {
-	ret := _m.ctrl.Call(_m, "Bye", w)
+func (_m *MockServer) Bye(worker Worker) error {
+	ret := _m.ctrl.Call(_m, "Bye", worker)
 	ret0, _ := ret[0].(error)
 	return ret0
 }

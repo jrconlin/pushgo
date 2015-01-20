@@ -257,30 +257,30 @@ func (a *Application) WorkerExists(uaid string) (collision bool) {
 	return
 }
 
-func (a *Application) GetWorker(uaid string) (w Worker, ok bool) {
+func (a *Application) GetWorker(uaid string) (worker Worker, ok bool) {
 	a.workerMux.RLock()
-	w, ok = a.workers[uaid]
+	worker, ok = a.workers[uaid]
 	a.workerMux.RUnlock()
 	return
 }
 
-func (a *Application) AddWorker(uaid string, w Worker) {
+func (a *Application) AddWorker(uaid string, worker Worker) {
 	if a.closeOnce.IsDone() {
-		w.Close()
+		worker.Close()
 		return
 	}
 	a.workerMux.Lock()
-	a.workers[uaid] = w
+	a.workers[uaid] = worker
 	a.workerMux.Unlock()
 	atomic.AddInt32(&a.workerCount, 1)
 }
 
-func (a *Application) RemoveWorker(uaid string, w Worker) (removed bool) {
+func (a *Application) RemoveWorker(uaid string, worker Worker) (removed bool) {
 	if a.closeOnce.IsDone() {
 		return
 	}
 	a.workerMux.Lock()
-	if prev, ok := a.workers[uaid]; ok && prev == w {
+	if prevWorker, ok := a.workers[uaid]; ok && prevWorker == worker {
 		delete(a.workers, uaid)
 		removed = true
 	}
@@ -294,9 +294,9 @@ func (a *Application) RemoveWorker(uaid string, w Worker) (removed bool) {
 func (a *Application) closeWorkers() {
 	a.workerMux.Lock()
 	defer a.workerMux.Unlock()
-	for uaid, w := range a.workers {
+	for uaid, worker := range a.workers {
 		delete(a.workers, uaid)
-		w.Close()
+		worker.Close()
 	}
 }
 

@@ -50,9 +50,9 @@ func TestServerHello(t *testing.T) {
 			err := srv.Hello(mckWorker, pingData)
 			So(err, ShouldBeNil)
 
-			w, workerConnected := app.GetWorker(uaid)
+			worker, workerConnected := app.GetWorker(uaid)
 			So(workerConnected, ShouldBeTrue)
-			So(w, ShouldResemble, mckWorker)
+			So(worker, ShouldResemble, mckWorker)
 		})
 
 		Convey("Should not fail if pinger registration fails", func() {

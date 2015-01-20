@@ -33,46 +33,53 @@ func (err *ServiceError) Status() int {
 	return err.StatusCode
 }
 
-// Service errors.
+// 100-class errors indicate bad client input (e.g., invalid JSON, missing or
+// invalid command fields).
 var (
-	ErrUnknownCommand     = &ServiceError{101, http.StatusUnauthorized, "Unknown command"}
-	ErrInvalidCommand     = &ServiceError{102, http.StatusUnauthorized, "Invalid Command"}
-	ErrNoID               = &ServiceError{103, http.StatusUnauthorized, "Missing device ID"}
-	ErrInvalidID          = &ServiceError{104, http.StatusServiceUnavailable, "Invalid device ID"}
-	ErrExistingID         = &ServiceError{105, http.StatusServiceUnavailable, "Device ID already assigned"}
-	ErrNoChannel          = &ServiceError{106, http.StatusUnauthorized, "No Channel ID Specified"}
-	ErrInvalidChannel     = &ServiceError{107, http.StatusServiceUnavailable, "Invalid Channel ID Specified"}
-	ErrExistingChannel    = &ServiceError{108, http.StatusServiceUnavailable, "Channel Already Exists"}
-	ErrNonexistentChannel = &ServiceError{109, http.StatusServiceUnavailable, "Nonexistent channel ID"}
-	ErrNoKey              = &ServiceError{110, http.StatusUnauthorized, "No primary key value specified"}
-	ErrInvalidKey         = &ServiceError{111, http.StatusInternalServerError, "Invalid Primary Key Value"}
-	ErrNoParams           = &ServiceError{112, http.StatusUnauthorized, "Missing required fields for command"}
-	ErrInvalidParams      = &ServiceError{113, http.StatusUnauthorized, "An Invalid value was specified"}
-	ErrNoData             = &ServiceError{114, http.StatusServiceUnavailable, "No Data to Store"}
-	ErrNonexistentRecord  = &ServiceError{115, http.StatusServiceUnavailable, "No record found"}
-	ErrRecordUpdateFailed = &ServiceError{116, http.StatusServiceUnavailable, "Error updating channel record"}
-
-	ErrTooManyPings = &ServiceError{201, http.StatusUnauthorized, "Client sent too many pings"}
-
-	ErrBadVersion  = &ServiceError{301, http.StatusBadRequest, "Invalid update version"}
-	ErrDataTooLong = &ServiceError{302, http.StatusRequestEntityTooLarge, "Request payload too large"}
-
-	ErrServerError = &ServiceError{999, http.StatusInternalServerError, "Internal server error"}
+	ErrInvalidHeader   = &ServiceError{101, http.StatusUnauthorized, "Invalid command header"}
+	ErrUnsupportedType = &ServiceError{102, http.StatusUnauthorized, "Unsupported command type"}
+	ErrNoID            = &ServiceError{103, http.StatusUnauthorized, "Missing device ID"}
+	ErrInvalidID       = &ServiceError{104, http.StatusServiceUnavailable, "Invalid device ID"}
+	ErrNoChannel       = &ServiceError{105, http.StatusUnauthorized, "Missing channel ID"}
+	ErrInvalidChannel  = &ServiceError{106, http.StatusServiceUnavailable, "Invalid channel ID"}
+	ErrNoParams        = &ServiceError{107, http.StatusUnauthorized, "Missing one or more required command fields"}
+	ErrInvalidParams   = &ServiceError{108, http.StatusUnauthorized, "Command contains one or more invalid fields"}
 )
 
-// ErrToStatus converts an error into an HTTP status code and message. The
-// message should not expose implementation details.
+// 200-class errors indicate bad client behavior (e.g., sending a command
+// without completing the opening handshake, sending too many pings, etc).
+var (
+	ErrNoHandshake        = &ServiceError{201, http.StatusUnauthorized, "Command requires handshake"}
+	ErrExistingID         = &ServiceError{202, http.StatusServiceUnavailable, "Device ID already assigned to this client"}
+	ErrTooManyPings       = &ServiceError{203, http.StatusUnauthorized, "Client sent too many pings"}
+	ErrNonexistentChannel = &ServiceError{204, http.StatusServiceUnavailable, "The specified channel ID does not exist"}
+)
+
+// 300-class errors indicate bad app server input (e.g., invalid update
+// version, oversized payload).
+var (
+	ErrBadVersion  = &ServiceError{301, http.StatusBadRequest, "Invalid update version"}
+	ErrDataTooLong = &ServiceError{302, http.StatusRequestEntityTooLarge, "Request payload too large"}
+)
+
+// 400-class errors indicate problems with upstream services (e.g.,
+// memcached, etcd).
+var (
+	ErrInvalidKey         = &ServiceError{401, http.StatusInternalServerError, "Invalid channel primary key"}
+	ErrRecordUpdateFailed = &ServiceError{402, http.StatusServiceUnavailable, "Error updating channel record"}
+)
+
+// ErrServerError is a catch-all service error.
+var ErrServerError = &ServiceError{999, http.StatusInternalServerError, "Internal server error"}
+
+// ErrToStatus converts an error into an HTTP status code and message.
 func ErrToStatus(err error) (status int, message string) {
 	if err == nil {
 		return http.StatusOK, ""
 	}
-	if se, ok := err.(*ServiceError); ok {
-		switch status = se.Status(); status {
-		case http.StatusServiceUnavailable:
-			return status, "Service Unavailable"
-		case http.StatusUnauthorized:
-			return status, "Invalid Command"
-		}
+	serviceErr, ok := err.(*ServiceError)
+	if !ok {
+		serviceErr = ErrServerError
 	}
-	return http.StatusInternalServerError, "An unexpected error occurred"
+	return serviceErr.Status(), serviceErr.Error()
 }

@@ -268,7 +268,7 @@ func (self *WorkerWS) sniffer() {
 				self.logger.Warn("worker", "Error parsing request header",
 					LogFields{"rid": self.logID, "error": ErrStr(err)})
 			}
-			self.handleError(msg, ErrUnknownCommand)
+			self.handleError(msg, ErrInvalidHeader)
 			self.stop()
 			continue
 		}
@@ -290,7 +290,7 @@ func (self *WorkerWS) sniffer() {
 				self.logger.Warn("worker", "Bad command",
 					LogFields{"rid": self.logID, "cmd": header.Type})
 			}
-			err = ErrUnknownCommand
+			err = ErrUnsupportedType
 		}
 		if err != nil {
 			if self.logger.ShouldLog(DEBUG) {
@@ -468,7 +468,7 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		return "", false, ErrExistingID
 	}
 	var (
-		w               Worker
+		prevWorker      Worker
 		workerConnected bool
 	)
 	if len(request.DeviceID) == 0 {
@@ -497,13 +497,13 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		self.store.DropAll(request.DeviceID)
 		goto forceReset
 	}
-	w, workerConnected = self.app.GetWorker(request.DeviceID)
+	prevWorker, workerConnected = self.app.GetWorker(request.DeviceID)
 	if workerConnected {
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("worker", "UAID collision; disconnecting previous client",
 				LogFields{"rid": self.logID, "uaid": request.DeviceID})
 		}
-		self.app.Server().Bye(w)
+		self.app.Server().Bye(prevWorker)
 	}
 	if len(request.ChannelIDs) > 0 && !self.store.Exists(request.DeviceID) {
 		if logWarning {
@@ -538,7 +538,7 @@ func (self *WorkerWS) Ack(_ *RequestHeader, message []byte) (err error) {
 	}()
 	uaid := self.UAID()
 	if uaid == "" {
-		return ErrInvalidCommand
+		return ErrNoHandshake
 	}
 	request := new(ACKRequest)
 	if err = json.Unmarshal(message, request); err != nil {
@@ -588,7 +588,7 @@ func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error
 
 	uaid := self.UAID()
 	if uaid == "" {
-		return ErrInvalidCommand
+		return ErrNoHandshake
 	}
 	request := new(RegisterRequest)
 	if err = json.Unmarshal(message, request); err != nil || !id.Valid(request.ChannelID) {
@@ -647,7 +647,7 @@ func (self *WorkerWS) Unregister(header *RequestHeader, message []byte) (err err
 			self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
 				LogFields{"rid": self.logID})
 		}
-		return ErrInvalidCommand
+		return ErrNoHandshake
 	}
 	request := new(UnregisterRequest)
 	if err = json.Unmarshal(message, request); err != nil {
@@ -787,7 +787,7 @@ func (self *WorkerWS) Purge(header *RequestHeader, _ []byte) error {
 		// If needed...
 		uaid := self.UAID()
 		if uaid == "" {
-			return ErrInvalidCommand
+			return ErrNoHandshake
 		}
 		err := self.store.DropAll(uaid)
 		status, _ := ErrToStatus(err)

@@ -33,10 +33,10 @@ func (t errTest) Test() error {
 func TestErrToStatus(t *testing.T) {
 	tests := []errTest{
 		{"No error", nil, 200, ""},
-		{"401 status code", ErrNoID, 401, "Invalid Command"},
-		{"503 status code", ErrExistingID, 503, "Service Unavailable"},
-		{"413 status code", ErrDataTooLong, 500, "An unexpected error occurred"},
-		{"Custom error", errors.New("oops"), 500, "An unexpected error occurred"},
+		{"401 status code", ErrNoID, 401, ErrNoID.Error()},
+		{"503 status code", ErrExistingID, 503, ErrExistingID.Error()},
+		{"413 status code", ErrDataTooLong, 413, ErrDataTooLong.Error()},
+		{"Custom error", errors.New("oops"), 500, ErrServerError.Error()},
 	}
 	for _, test := range tests {
 		if err := test.Test(); err != nil {

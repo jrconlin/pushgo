@@ -72,9 +72,9 @@ func Benchmark_UpdateHandler(b *testing.B) {
 	if app == nil {
 		b.Fatal()
 	}
-	client := &NoWorker{Logger: app.Logger()}
-	client.SetUAID(uaid)
-	app.AddWorker(uaid, client)
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	key, _ := app.Store().IDsToKey(uaid, chid)
 	updateUrl := fmt.Sprintf("http://test/update/%s", key)
@@ -109,9 +109,9 @@ func Test_UpdateHandler(t *testing.T) {
 
 	app := newTestHandler(t)
 	defer app.Close()
-	client := &NoWorker{Logger: app.Logger()}
-	client.SetUAID(uaid)
-	app.AddWorker(uaid, client)
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	// don't bother with encryption right now.
 	key, _ := app.Store().IDsToKey(uaid, chid)
@@ -135,7 +135,7 @@ func Test_UpdateHandler(t *testing.T) {
 		t.Error("Unexpected response from server")
 	}
 	rep := FlushData{}
-	if err = json.Unmarshal(client.Outbuffer, &rep); err != nil {
+	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
 		t.Errorf("Could not read output buffer %s", err.Error())
 	}
 	if rep.Data != data {
@@ -153,7 +153,7 @@ func Test_UpdateHandler(t *testing.T) {
 		t.Error("Unexpected response from server")
 	}
 	rep = FlushData{}
-	if err = json.Unmarshal(client.Outbuffer, &rep); err != nil {
+	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
 		t.Errorf("Could not read output buffer %s", err.Error())
 	}
 	if rep.Data != data {

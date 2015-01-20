@@ -114,7 +114,7 @@ func (h *SocketHandler) Start(errChan chan<- error) {
 
 func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	requestID := ws.Request().Header.Get(HeaderID)
-	w := NewWorker(h.app, (*WebSocket)(ws), requestID)
+	worker := NewWorker(h.app, (*WebSocket)(ws), requestID)
 
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "websocket connection",
@@ -123,14 +123,14 @@ func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	defer func() {
 		now := time.Now()
 		// Clean-up the resources
-		h.app.Server().Bye(w)
-		h.metrics.Timer("client.socket.lifespan", now.Sub(w.Born()))
+		h.app.Server().Bye(worker)
+		h.metrics.Timer("client.socket.lifespan", now.Sub(worker.Born()))
 		h.metrics.Increment("client.socket.disconnect")
 	}()
 
 	h.metrics.Increment("client.socket.connect")
 
-	w.Run()
+	worker.Run()
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Server for client shut-down",
 			LogFields{"rid": requestID})

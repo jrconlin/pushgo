@@ -47,7 +47,7 @@ func TestWorkerRegister(t *testing.T) {
 			wws.SetUAID("")
 			err := wws.Register(nil,
 				[]byte(`{"channelID": "3fc2d1a2950411e49b203c15c2c622fe"}`))
-			So(err, ShouldEqual, ErrInvalidCommand)
+			So(err, ShouldEqual, ErrNoHandshake)
 		})
 
 		Convey("Should reject invalid channel IDs", func() {
@@ -228,7 +228,7 @@ func TestWorkerACK(t *testing.T) {
 		Convey("Should reject unidentified clients", func() {
 			wws.SetUAID("")
 			err := wws.Ack(nil, nil)
-			So(err, ShouldEqual, ErrInvalidCommand)
+			So(err, ShouldEqual, ErrNoHandshake)
 		})
 
 		Convey("Should reject invalid JSON", func() {
@@ -385,7 +385,7 @@ func TestWorkerUnregister(t *testing.T) {
 			wws.SetUAID("")
 
 			err := wws.Unregister(nil, nil)
-			So(err, ShouldEqual, ErrInvalidCommand)
+			So(err, ShouldEqual, ErrNoHandshake)
 		})
 
 		Convey("Should reject invalid JSON", func() {
@@ -847,7 +847,7 @@ func TestWorkerRun(t *testing.T) {
 
 		Convey("Should reject invalid packet headers", func() {
 			errReply := map[string]interface{}{"messageType": false}
-			errReply["status"], errReply["error"] = ErrToStatus(ErrUnknownCommand)
+			errReply["status"], errReply["error"] = ErrToStatus(ErrUnsupportedType)
 
 			gomock.InOrder(
 				mckSocket.EXPECT().SetReadDeadline(gomock.Any()),
@@ -860,7 +860,7 @@ func TestWorkerRun(t *testing.T) {
 
 		Convey("Should reject unknown commands", func() {
 			errReply := map[string]interface{}{"messageType": "salutation"}
-			errReply["status"], errReply["error"] = ErrToStatus(ErrUnknownCommand)
+			errReply["status"], errReply["error"] = ErrToStatus(ErrUnsupportedType)
 
 			gomock.InOrder(
 				mckSocket.EXPECT().SetReadDeadline(gomock.Any()),
@@ -1414,9 +1414,9 @@ func TestWorkerClientCollision(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			So(curWorker.UAID(), ShouldEqual, uaid)
-			w, workerConnected := app.GetWorker(uaid)
+			worker, workerConnected := app.GetWorker(uaid)
 			So(workerConnected, ShouldBeTrue)
-			So(w, ShouldEqual, curWorker)
+			So(worker, ShouldEqual, curWorker)
 		})
 	})
 }

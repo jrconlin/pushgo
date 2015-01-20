@@ -323,7 +323,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 	version int64, requestID string, data string) (ok bool) {
 
-	w, workerConnected := h.app.GetWorker(uaid)
+	worker, workerConnected := h.app.GetWorker(uaid)
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
 	if h.alwaysRoute || !workerConnected {
@@ -346,7 +346,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 		return
 	}
 	// Try local delivery if routing failed.
-	err := h.app.Server().RequestFlush(w, chid, version, data)
+	err := h.app.Server().RequestFlush(worker, chid, version, data)
 	if err != nil {
 		h.metrics.Increment("updates.appserver.rejected")
 		return false

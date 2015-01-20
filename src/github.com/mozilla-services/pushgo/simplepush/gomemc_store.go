@@ -608,9 +608,6 @@ func (s *GomemcStore) storeAppIDArray(uaid string, chids ChannelIDs) error {
 // Retrieves a channel record from memcached. Returns an empty record if the
 // channel does not exist.
 func (s *GomemcStore) fetchRec(pk string) (*ChannelRecord, error) {
-	if len(pk) == 0 {
-		return nil, ErrNoKey
-	}
 	result := new(ChannelRecord)
 	raw, err := s.client.Get(pk)
 	if err != nil {
@@ -643,12 +640,6 @@ func (s *GomemcStore) fetchRec(pk string) (*ChannelRecord, error) {
 
 // Stores an updated channel record in memcached.
 func (s *GomemcStore) storeRec(pk string, rec *ChannelRecord) error {
-	if len(pk) == 0 {
-		return ErrNoKey
-	}
-	if rec == nil {
-		return ErrNoData
-	}
 	var ttl time.Duration
 	switch rec.State {
 	case StateDeleted:
