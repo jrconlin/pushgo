@@ -409,16 +409,9 @@ registerDevice:
 	// alert the master of the new UAID.
 	// It's not a bad idea from a security POV to only send
 	// known args through to the server.
-	cmd := PushCommand{
-		Command: HELLO,
-		Arguments: JsMap{
-			"uaid":    uaid,
-			"connect": []byte(request.PingData),
-		},
-	}
 	// blocking call back to the boss.
-	status, _ := self.app.Server().HandleCommand(cmd, self)
-
+	status, _ := ErrToStatus(
+		self.app.Server().Hello(self, []byte(request.PingData)))
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response",
 			LogFields{"rid": self.logID, "cmd": "hello", "uaid": uaid})
@@ -475,8 +468,8 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		return "", false, ErrExistingID
 	}
 	var (
-		client          Worker
-		clientConnected bool
+		w               Worker
+		workerConnected bool
 	)
 	if len(request.DeviceID) == 0 {
 		if self.logger.ShouldLog(DEBUG) {
@@ -504,13 +497,13 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		self.store.DropAll(request.DeviceID)
 		goto forceReset
 	}
-	client, clientConnected = self.app.GetWorker(request.DeviceID)
-	if clientConnected {
+	w, workerConnected = self.app.GetWorker(request.DeviceID)
+	if workerConnected {
 		if self.logger.ShouldLog(INFO) {
 			self.logger.Info("worker", "UAID collision; disconnecting previous client",
 				LogFields{"rid": self.logID, "uaid": request.DeviceID})
 		}
-		self.app.Server().HandleCommand(PushCommand{DIE, nil}, client)
+		self.app.Server().Bye(w)
 	}
 	if len(request.ChannelIDs) > 0 && !self.store.Exists(request.DeviceID) {
 		if logWarning {
@@ -609,32 +602,27 @@ func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error
 		return err
 	}
 	// have the server generate the callback URL.
-	cmd := PushCommand{
-		Command:   REGIS,
-		Arguments: JsMap{"channelID": request.ChannelID},
-	}
-	status, args := self.app.Server().HandleCommand(cmd, self)
+	endpoint, err := self.app.Server().Regis(self, request.ChannelID)
+	status, _ := ErrToStatus(err)
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "Server returned", LogFields{
 			"rid":  self.logID,
 			"cmd":  "register",
 			"code": strconv.FormatInt(int64(status), 10),
-			"chid": IStr(args["channelID"]),
-			"uaid": IStr(args["uaid"])})
+			"chid": request.ChannelID,
+			"uaid": uaid})
 	}
-	endpoint, _ := args["push.endpoint"].(string)
 	// return the info back to the socket
-	statusCode := 200
 	if self.logger.ShouldLog(DEBUG) {
 		self.logger.Debug("worker", "sending response", LogFields{
 			"rid":          self.logID,
 			"cmd":          "register",
 			"uaid":         uaid,
-			"code":         strconv.FormatInt(int64(statusCode), 10),
+			"code":         strconv.FormatInt(int64(status), 10),
 			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	self.WriteJSON(RegisterReply{header.Type, uaid, statusCode, request.ChannelID, endpoint})
+	self.WriteJSON(RegisterReply{header.Type, uaid, status, request.ChannelID, endpoint})
 	self.metrics.Increment("updates.client.register")
 	return nil
 }
@@ -794,12 +782,17 @@ func (self *WorkerWS) Ping(header *RequestHeader, _ []byte) (err error) {
 }
 
 // TESTING func, purge associated records for this UAID
-func (self *WorkerWS) Purge(_ *RequestHeader, _ []byte) (err error) {
+func (self *WorkerWS) Purge(header *RequestHeader, _ []byte) error {
 	/*
-	   // If needed...
-	   sock.Scmd <- PushCommand{Command: PURGE,
-	       Arguments:JsMap{"uaid": sock.UAID()}}
-	   result := <-sock.Scmd
+		// If needed...
+		uaid := self.UAID()
+		if uaid == "" {
+			return ErrInvalidCommand
+		}
+		err := self.store.DropAll(uaid)
+		status, _ := ErrToStatus(err)
+		self.WriteJSON(PingReply{header.Type, status})
+		return nil
 	*/
 	self.WriteText("{}")
 	return nil

@@ -26,8 +26,7 @@ type ServerConfig struct {
 type Server interface {
 	// RequestFlush sends an update containing chid, vers, and data to w. If w is
 	// nil, RequestFlush is a no-op. If RequestFlush panics and a proprietary
-	// pinger is registered, the update will be delivered via the proprietary
-	// mechanism.
+	// pinger is set, the update will be delivered via the proprietary mechanism.
 	RequestFlush(w Worker, chid string, vers int64, data string) (err error)
 
 	// UpdateWorker updates the storage backend and flushes an update to w.
@@ -35,8 +34,19 @@ type Server interface {
 	UpdateWorker(w Worker, chid string, vers int64,
 		sentAt time.Time, data string) (err error)
 
-	// HandleCommand responds to cmd issued by w.
-	HandleCommand(cmd PushCommand, w Worker) (result int, args JsMap)
+	// Hello adds w to the worker map and registers the connecting client with
+	// the router. If connect is not empty and a proprietary pinger is set, the
+	// client will be registered with the pinger.
+	Hello(w Worker, connect []byte) error
+
+	// Regis constructs an endpoint URL for the given channel ID chid. The app
+	// server can use this URL to send updates to w.
+	Regis(w Worker, chid string) (endpoint string, err error)
+
+	// Bye removes w from the worker map, deregisters the client from the router,
+	// and closes the underlying socket. Invoking Bye multiple times for the same
+	// worker w is a no-op.
+	Bye(w Worker) error
 }
 
 func NewServer() *Serv {
@@ -82,17 +92,16 @@ func (self *Serv) Init(app *Application, config interface{}) (err error) {
 }
 
 // A client connects!
-func (self *Serv) Hello(cmd PushCommand, w Worker) (result int, arguments JsMap) {
+func (self *Serv) Hello(w Worker, connect []byte) error {
 
-	args := cmd.Arguments
-	uaid := args["uaid"].(string)
+	uaid := w.UAID()
 
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("server", "handling 'hello'",
 			LogFields{"uaid": uaid})
 	}
 
-	if connect, _ := args["connect"].([]byte); len(connect) > 0 && self.prop != nil {
+	if len(connect) > 0 && self.prop != nil {
 		if err := self.prop.Register(uaid, connect); err != nil {
 			if self.logger.ShouldLog(WARNING) {
 				self.logger.Warn("server", "Could not set proprietary info",
@@ -110,12 +119,10 @@ func (self *Serv) Hello(cmd PushCommand, w Worker) (result int, arguments JsMap)
 
 	// We don't register the list of known ChannelIDs since we echo
 	// back any ChannelIDs sent on behalf of this UAID.
-	arguments = args
-	result = 200
-	return result, arguments
+	return nil
 }
 
-func (self *Serv) Bye(w Worker) {
+func (self *Serv) Bye(w Worker) error {
 	// Remove the UAID as a registered listener.
 	// NOTE: in instances where proprietary wake-ups are issued, you may
 	// wish not to delete the record from Clients, since this is the only
@@ -139,21 +146,17 @@ func (self *Serv) Bye(w Worker) {
 	if removed := self.app.RemoveWorker(uaid, w); removed {
 		self.router.Unregister(uaid)
 	}
-	w.Close()
+	return w.Close()
 }
 
-func (self *Serv) Regis(cmd PushCommand, w Worker) (result int, arguments JsMap) {
+func (self *Serv) Regis(w Worker, chid string) (endpoint string, err error) {
 	// A semi-no-op, since we don't care about the appid, but we do want
 	// to create a valid endpoint.
-	var err error
-	args := cmd.Arguments
-	args["status"] = 200
 	// Generate the call back URL
 	uaid := w.UAID()
-	chid, _ := args["channelID"].(string)
 	token, err := self.store.IDsToKey(uaid, chid)
 	if err != nil {
-		return 500, nil
+		return "", err
 	}
 	if token, err = self.encodePK(token); err != nil {
 		if self.logger.ShouldLog(ERROR) {
@@ -161,16 +164,16 @@ func (self *Serv) Regis(cmd PushCommand, w Worker) (result int, arguments JsMap)
 				LogFields{"uaid": uaid,
 					"channelID": chid})
 		}
-		return 500, nil
+		return "", err
 	}
 
-	if args["push.endpoint"], err = self.genEndpoint(token); err != nil {
+	if endpoint, err = self.genEndpoint(token); err != nil {
 		if self.logger.ShouldLog(ERROR) {
 			self.logger.Error("server",
 				"Could not generate Push Endpoint",
 				LogFields{"error": err.Error()})
 		}
-		return 500, nil
+		return "", err
 	}
 	if self.logger.ShouldLog(INFO) {
 		self.logger.Info("server",
@@ -178,9 +181,9 @@ func (self *Serv) Regis(cmd PushCommand, w Worker) (result int, arguments JsMap)
 			LogFields{"uaid": uaid,
 				"channelID": chid,
 				"token":     token,
-				"endpoint":  args["push.endpoint"].(string)})
+				"endpoint":  endpoint})
 	}
-	return 200, args
+	return endpoint, nil
 }
 
 func (self *Serv) encodePK(key string) (token string, err error) {
@@ -281,38 +284,6 @@ updateError:
 				"chid": chid})
 	}
 	return err
-}
-
-// HandleCommand implements Server.HandleCommand.
-func (self *Serv) HandleCommand(cmd PushCommand, w Worker) (result int, args JsMap) {
-	var ret JsMap
-	if cmd.Arguments != nil {
-		args = cmd.Arguments
-	} else {
-		args = make(JsMap)
-	}
-
-	switch cmd.Command {
-	case HELLO:
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server", "Handling HELLO event", nil)
-		}
-		result, ret = self.Hello(cmd, w)
-	case REGIS:
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server", "Handling REGIS event", nil)
-		}
-		result, ret = self.Regis(cmd, w)
-	case DIE:
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("server", "Cleanup", nil)
-		}
-		self.Bye(w)
-		return 0, nil
-	}
-
-	args["uaid"] = ret["uaid"]
-	return result, args
 }
 
 // o4fs

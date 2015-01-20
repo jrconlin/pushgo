@@ -49,13 +49,33 @@ func (_mr *_MockServerRecorder) UpdateWorker(arg0, arg1, arg2, arg3, arg4 interf
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "UpdateWorker", arg0, arg1, arg2, arg3, arg4)
 }
 
-func (_m *MockServer) HandleCommand(cmd PushCommand, w Worker) (int, JsMap) {
-	ret := _m.ctrl.Call(_m, "HandleCommand", cmd, w)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(JsMap)
+func (_m *MockServer) Hello(w Worker, connect []byte) error {
+	ret := _m.ctrl.Call(_m, "Hello", w, connect)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockServerRecorder) Hello(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Hello", arg0, arg1)
+}
+
+func (_m *MockServer) Regis(w Worker, chid string) (string, error) {
+	ret := _m.ctrl.Call(_m, "Regis", w, chid)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-func (_mr *_MockServerRecorder) HandleCommand(arg0, arg1 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "HandleCommand", arg0, arg1)
+func (_mr *_MockServerRecorder) Regis(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Regis", arg0, arg1)
+}
+
+func (_m *MockServer) Bye(w Worker) error {
+	ret := _m.ctrl.Call(_m, "Bye", w)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockServerRecorder) Bye(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Bye", arg0)
 }

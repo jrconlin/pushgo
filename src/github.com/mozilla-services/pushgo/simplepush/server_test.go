@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"crypto/aes"
 	"errors"
 	"testing"
 	"time"
@@ -23,7 +24,6 @@ func TestServerHello(t *testing.T) {
 		gomock.Any()).AnyTimes()
 	mckPinger := NewMockPropPinger(mockCtrl)
 	mckRouter := NewMockRouter(mockCtrl)
-	mckSocket := NewMockSocket(mockCtrl)
 	mckWorker := NewMockWorker(mockCtrl)
 
 	pingData := []byte(`{"regid":123}`)
@@ -40,25 +40,15 @@ func TestServerHello(t *testing.T) {
 		}
 		app.SetServer(srv)
 
-		wws := NewWorker(app, mckSocket, "test")
-
 		Convey("Should register with the proprietary pinger", func() {
 			uaid := "c4fe17154cd74500ad1d51f2955fd79c"
-			wws.SetUAID(uaid)
-
 			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
 				mckPinger.EXPECT().Register(uaid, pingData),
 				mckRouter.EXPECT().Register(uaid),
 			)
-			inArgs := JsMap{
-				"uaid":    uaid,
-				"connect": pingData,
-			}
-			result, outArgs := srv.HandleCommand(PushCommand{
-				Command: HELLO, Arguments: inArgs}, mckWorker)
-
-			So(result, ShouldEqual, 200)
-			So(outArgs, ShouldEqual, inArgs)
+			err := srv.Hello(mckWorker, pingData)
+			So(err, ShouldBeNil)
 
 			w, workerConnected := app.GetWorker(uaid)
 			So(workerConnected, ShouldBeTrue)
@@ -67,19 +57,16 @@ func TestServerHello(t *testing.T) {
 
 		Convey("Should not fail if pinger registration fails", func() {
 			uaid := "3529f588b03e411295b8df6d38e63ce7"
+
 			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
 				mckPinger.EXPECT().Register(uaid, pingData).Return(errors.New(
 					"external system on fire")),
 				mckRouter.EXPECT().Register(uaid),
 			)
-			result, _ := srv.Hello(PushCommand{
-				Command: HELLO,
-				Arguments: JsMap{
-					"uaid":    uaid,
-					"connect": pingData,
-				},
-			}, mckWorker)
-			So(result, ShouldEqual, 200)
+
+			err := srv.Hello(mckWorker, pingData)
+			So(err, ShouldBeNil)
 			So(app.WorkerExists(uaid), ShouldBeTrue)
 		})
 	})
@@ -112,6 +99,7 @@ func TestServerBye(t *testing.T) {
 		app.SetServer(srv)
 
 		Convey("Should remove the client from the map", func() {
+			var err error
 			uaid := "0cd9b0990bb749eb808206924e40a323"
 			prevWorker := NewMockWorker(mockCtrl)
 			prevWorker.EXPECT().Born().AnyTimes()
@@ -123,10 +111,8 @@ func TestServerBye(t *testing.T) {
 				mckRouter.EXPECT().Unregister(uaid),
 				prevWorker.EXPECT().Close(),
 			)
-			cmd := PushCommand{Command: DIE}
-			status, args := srv.HandleCommand(cmd, prevWorker)
-			So(status, ShouldEqual, 0)
-			So(args, ShouldEqual, nil)
+			err = srv.Bye(prevWorker)
+			So(err, ShouldBeNil)
 			So(app.WorkerExists(uaid), ShouldBeFalse)
 
 			app.AddWorker(uaid, mckWorker)
@@ -135,7 +121,8 @@ func TestServerBye(t *testing.T) {
 				prevWorker.EXPECT().UAID().Return(uaid),
 				prevWorker.EXPECT().Close(),
 			)
-			srv.HandleCommand(cmd, prevWorker)
+			err = srv.Bye(prevWorker)
+			So(err, ShouldBeNil)
 			So(app.WorkerExists(uaid), ShouldBeTrue)
 		})
 	})
@@ -181,15 +168,8 @@ func TestServerRegister(t *testing.T) {
 				mckStore.EXPECT().IDsToKey(uaid, chid).Return("", ErrInvalidKey),
 			)
 
-			inArgs := JsMap{"channelID": chid}
-			result, outArgs := srv.HandleCommand(PushCommand{
-				Command:   REGIS,
-				Arguments: inArgs,
-			}, mckWorker)
-
-			So(result, ShouldEqual, 500)
-			So(outArgs, ShouldEqual, inArgs)
-			So(inArgs["status"], ShouldEqual, 200)
+			_, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldEqual, ErrInvalidKey)
 		})
 
 		Convey("Should not encrypt endpoints without a key", func() {
@@ -206,16 +186,9 @@ func TestServerRegister(t *testing.T) {
 				mckEndHandler.EXPECT().URL().Return("https://example.com"),
 			)
 
-			inArgs := JsMap{"channelID": chid}
-			result, outArgs := srv.HandleCommand(PushCommand{
-				Command:   REGIS,
-				Arguments: inArgs,
-			}, mckWorker)
-
-			So(result, ShouldEqual, 200)
-			So(outArgs, ShouldEqual, inArgs)
-			So(outArgs["status"], ShouldEqual, 200)
-			So(outArgs["push.endpoint"], ShouldEqual, "https://example.com/update/abc")
+			endpoint, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldBeNil)
+			So(endpoint, ShouldEqual, "https://example.com/update/abc")
 		})
 
 		Convey("Should encrypt endpoints with a key", func() {
@@ -231,21 +204,15 @@ func TestServerRegister(t *testing.T) {
 				mckStore.EXPECT().IDsToKey(uaid, chid).Return("456", nil),
 				mckEndHandler.EXPECT().URL().Return("https://example.org"),
 			)
-			inArgs := JsMap{"channelID": chid}
-			result, outArgs := srv.HandleCommand(PushCommand{
-				Command:   REGIS,
-				Arguments: inArgs,
-			}, mckWorker)
 
-			So(result, ShouldEqual, 200)
-			So(outArgs, ShouldEqual, inArgs)
-			So(outArgs["status"], ShouldEqual, 200)
-			So(outArgs["push.endpoint"], ShouldEqual,
+			endpoint, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldBeNil)
+			So(endpoint, ShouldEqual,
 				"https://example.org/update/AAECAwQFBgcICQoLDA0OD3afbw==")
 		})
 
 		Convey("Should reject invalid keys", func() {
-			app.SetTokenKey("lLyhlLk8qus1ky4ER8yjN5o=") // aes.KeySizeError(17)
+			app.SetTokenKey("lLyhlLk8qus1ky4ER8yjN5o=")
 			srv := NewServer()
 			if err := srv.Init(app, srv.ConfigStruct()); err != nil {
 				t.Fatalf("Error initializing server: %s", err)
@@ -257,15 +224,8 @@ func TestServerRegister(t *testing.T) {
 				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
 			)
 
-			inArgs := JsMap{"channelID": chid}
-			result, outArgs := srv.HandleCommand(PushCommand{
-				Command:   REGIS,
-				Arguments: inArgs,
-			}, mckWorker)
-
-			So(result, ShouldEqual, 500)
-			So(outArgs, ShouldEqual, inArgs)
-			So(inArgs["status"], ShouldEqual, 200)
+			_, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldEqual, aes.KeySizeError(17))
 		})
 	})
 }

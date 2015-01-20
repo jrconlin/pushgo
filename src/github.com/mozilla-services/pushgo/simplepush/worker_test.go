@@ -126,7 +126,6 @@ func TestWorkerFlush(t *testing.T) {
 		app.SetStore(mckStore)
 
 		wws := NewWorker(app, mckSocket, "test")
-		So(true, ShouldBeTrue)
 
 		Convey("Should reject unidentified clients", func() {
 			wws.SetUAID("")
@@ -228,7 +227,6 @@ func TestWorkerACK(t *testing.T) {
 
 		Convey("Should reject unidentified clients", func() {
 			wws.SetUAID("")
-
 			err := wws.Ack(nil, nil)
 			So(err, ShouldEqual, ErrInvalidCommand)
 		})
@@ -540,7 +538,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			gomock.InOrder(
-				mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, nil),
+				mckServ.EXPECT().Hello(wws, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -558,7 +556,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			gomock.InOrder(
-				mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, nil),
+				mckServ.EXPECT().Hello(wws, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -795,7 +793,7 @@ func TestWorkerRun(t *testing.T) {
 
 			gomock.InOrder(
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, nil),
+				mckServ.EXPECT().Hello(wws, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()),
@@ -884,13 +882,7 @@ func TestWorkerRun(t *testing.T) {
 					"connect": {"id": 123}
 				}`), nil),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().HandleCommand(PushCommand{
-					Command: HELLO,
-					Arguments: JsMap{
-						"uaid":    testID,
-						"connect": []byte(`{"id":123}`),
-					},
-				}, wws).Return(200, nil),
+				mckServ.EXPECT().Hello(wws, []byte(`{"id":123}`)).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -903,14 +895,8 @@ func TestWorkerRun(t *testing.T) {
 				}`), nil),
 				mckStore.EXPECT().Register(testID,
 					"89101cfa01dd4294a00e3a813cb3da97", int64(0)),
-				mckServ.EXPECT().HandleCommand(PushCommand{
-					Command:   REGIS,
-					Arguments: JsMap{"channelID": "89101cfa01dd4294a00e3a813cb3da97"},
-				}, wws).Return(200, JsMap{
-					"uaid":          testID,
-					"channelID":     "89101cfa01dd4294a00e3a813cb3da97",
-					"push.endpoint": "https://example.com/123",
-				}),
+				mckServ.EXPECT().Regis(wws, "89101cfa01dd4294a00e3a813cb3da97").Return(
+					"https://example.com/123", nil),
 				mckSocket.EXPECT().WriteJSON(RegisterReply{
 					Type:      "register",
 					DeviceID:  testID,
@@ -986,7 +972,7 @@ func TestRunCase(t *testing.T) {
 		mckSocket.EXPECT().SetReadDeadline(gomock.Any()),
 		mckSocket.EXPECT().ReadBinary().Return([]byte(
 			`{"messageType":"HELLO","uaid":"","channelIDs":[]}`), nil),
-		mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, nil),
+		mckServ.EXPECT().Hello(wws, nil).Return(nil),
 		mckSocket.EXPECT().WriteText(string(helloReply)),
 		mckStat.EXPECT().Increment("updates.client.hello"),
 		mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -999,10 +985,8 @@ func TestRunCase(t *testing.T) {
 		}`), nil),
 		mckStore.EXPECT().Register(testID,
 			"929c148c588746b29f4ea3dee52fdbd0", int64(0)),
-		mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, JsMap{
-			"channelID":     "929c148c588746b29f4ea3dee52fdbd0",
-			"uaid":          testID,
-			"push.endpoint": "https://example.com/1"}),
+		mckServ.EXPECT().Regis(wws, "929c148c588746b29f4ea3dee52fdbd0").Return(
+			"https://example.com/1", nil),
 		mckSocket.EXPECT().WriteJSON(RegisterReply{
 			Type:      "RegisteR",
 			DeviceID:  testID,
@@ -1072,7 +1056,7 @@ func TestWorkerHello(t *testing.T) {
 				mckRouter.EXPECT().Unregister(testID),
 				mckSocket.EXPECT().Close(),
 			)
-			app.Server().HandleCommand(PushCommand{Command: DIE}, wws)
+			app.Server().Bye(wws)
 			So(app.WorkerExists(testID), ShouldBeFalse)
 		})
 
@@ -1305,13 +1289,7 @@ func TestHandshakeFlush(t *testing.T) {
 				mckStore.EXPECT().CanStore(3).Return(true),
 				mckStore.EXPECT().Exists(uaid).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().HandleCommand(PushCommand{
-					Command: HELLO,
-					Arguments: JsMap{
-						"uaid":    uaid,
-						"connect": []byte(nil),
-					},
-				}, wws).Return(200, nil),
+				mckServ.EXPECT().Hello(wws, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
@@ -1347,8 +1325,7 @@ func TestHandshakeFlush(t *testing.T) {
 					`{"messageType":"hello","uaid":"","channelIDs":["1"]}`), nil),
 
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().HandleCommand(gomock.Any(), wws).Return(200, nil),
-
+				mckServ.EXPECT().Hello(wws, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(handshakeErr),
 				mckSocket.EXPECT().WriteJSON(errReply),
 			)
@@ -1395,17 +1372,10 @@ func TestWorkerClientCollision(t *testing.T) {
 
 			gomock.InOrder(
 				mckStore.EXPECT().CanStore(1).Return(true),
-				mckServ.EXPECT().HandleCommand(PushCommand{DIE, nil},
-					prevWorker).Return(200, nil),
+				mckServ.EXPECT().Bye(prevWorker).Return(nil),
 				mckStore.EXPECT().Exists(uaid).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().HandleCommand(PushCommand{
-					Command: HELLO,
-					Arguments: JsMap{
-						"uaid":    uaid,
-						"connect": []byte(nil),
-					},
-				}, curWorker).Return(200, nil),
+				mckServ.EXPECT().Hello(curWorker, nil).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -1444,9 +1414,9 @@ func TestWorkerClientCollision(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			So(curWorker.UAID(), ShouldEqual, uaid)
-			client, clientConnected := app.GetWorker(uaid)
-			So(clientConnected, ShouldBeTrue)
-			So(client, ShouldEqual, curWorker)
+			w, workerConnected := app.GetWorker(uaid)
+			So(workerConnected, ShouldBeTrue)
+			So(w, ShouldEqual, curWorker)
 		})
 	})
 }
