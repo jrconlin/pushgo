@@ -26,11 +26,11 @@ var (
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
-	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws"`
+	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws_host"`
 	ResolveHost        bool   `toml:"resolve_host" env:"resolve_host"`
-	ClientMinPing      string `toml:"client_min_ping_interval" env:"min_ping"`
-	ClientHelloTimeout string `toml:"client_hello_timeout" env:"hello_timeout"`
-	PushLongPongs      bool   `toml:"push_long_pongs" env:"long_pongs"`
+	ClientMinPing      string `toml:"client_min_ping_interval" env:"client_min_ping_interval"`
+	ClientHelloTimeout string `toml:"client_hello_timeout" env:"client_hello_timeout"`
+	PushLongPongs      bool   `toml:"push_long_pongs" env:"push_long_pongs"`
 	ClientPongInterval string `toml:"client_pong_interval" env:"client_pong_interval"`
 }
 

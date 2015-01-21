@@ -60,12 +60,12 @@ type = "static"
 
 var env = envconf.New([]string{
 	"PUSHGO_DEFAULT_CURRENT_HOST=push.services.mozilla.com",
-	"pushgo_default_use_aws=0",
+	"pushgo_default_use_aws_host=0",
 	"PushGo_WebSocket_Origins=https://push.services.mozilla.com",
 	"PUSHGO_WEBSOCKET_LISTENER_ADDR=",
-	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNS=25000",
+	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNECTIONS=25000",
 	"pushgo_endpoint_listener_addr=",
-	"pushgo_endpoint_listener_max_conns=6000",
+	"pushgo_endpoint_listener_max_connections=6000",
 	"PUSHGO_logging_TYPE=stdout",
 	"pushgo_LOGGING_FORMAT=text",
 	"pushgo_logging_FILTER=0",
@@ -73,7 +73,7 @@ var env = envconf.New([]string{
 	"PUSHGO_PROPPING_URL=http://push.services.mozilla.com/ping",
 	"PushGo_Router_Bucket_Size=15",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
-	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
+	"PUSHGO_ROUTER_LISTENER_MAX_CONNECTIONS=12000",
 	"PUSHGO_ENDPOINT_MAX_DATA_LEN=512",
 	"PUSHGO_BALANCER_TYPE=none",
 })

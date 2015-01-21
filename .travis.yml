@@ -15,7 +15,7 @@ install:
 script:
 - make test
 - make travis-cov
-- PUSHGO_TEST_STORAGE_MC_HOSTS=localhost:11211 make test-gomemcache
+- PUSHGO_TEST_STORAGE_MEMCACHE_SERVER=localhost:11211 make test-gomemcache
 before_deploy:
 - sudo apt-get -qq remove -y libmemcached-dev
 - sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu/ utopic main"

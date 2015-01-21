@@ -65,12 +65,12 @@ func NewEmcee() *EmceeStore {
 // EmceeDriverConf specifies memcached driver options.
 type EmceeDriverConf struct {
 	// Hosts is a list of memcached nodes.
-	Hosts []string `toml:"server"`
+	Hosts []string `toml:"server" env:"server"`
 
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
 	// to 400.
-	MaxConns int `toml:"max_connections" env:"max_conns"`
+	MaxConns int `toml:"max_connections" env:"max_connections"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
 	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
@@ -116,9 +116,9 @@ type EmceeStore struct {
 
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_discovery"`
+	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_config_endpoint"`
 	MaxChannels               int             `toml:"max_channels" env:"max_channels"`
-	Driver                    EmceeDriverConf `toml:"memcache" env:"mc"`
+	Driver                    EmceeDriverConf `toml:"memcache" env:"memcache"`
 	Db                        DbConf
 }
 

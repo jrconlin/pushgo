@@ -19,7 +19,7 @@ import (
 
 // Basic global server options
 type ServerConfig struct {
-	PushEndpoint string `toml:"push_endpoint_template" env:"push_url_template"`
+	PushEndpoint string `toml:"push_endpoint_template" env:"push_endpoint_template"`
 }
 
 // Server responds to client commands and delivers updates.
