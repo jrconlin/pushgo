@@ -273,6 +273,7 @@ func (self *WorkerWS) sniffer() {
 			continue
 		}
 		switch strings.ToLower(header.Type) {
+		case "purge": // No-op for backward compatibility.
 		case "ping":
 			err = self.Ping(header, msg)
 		case "hello":
@@ -283,8 +284,6 @@ func (self *WorkerWS) sniffer() {
 			err = self.Register(header, msg)
 		case "unregister":
 			err = self.Unregister(header, msg)
-		case "purge":
-			err = self.Purge(header, msg)
 		default:
 			if logWarning {
 				self.logger.Warn("worker", "Bad command",
@@ -778,23 +777,6 @@ func (self *WorkerWS) Ping(header *RequestHeader, _ []byte) (err error) {
 		self.WriteText("{}")
 	}
 	self.metrics.Increment("updates.client.ping")
-	return nil
-}
-
-// TESTING func, purge associated records for this UAID
-func (self *WorkerWS) Purge(header *RequestHeader, _ []byte) error {
-	/*
-		// If needed...
-		uaid := self.UAID()
-		if uaid == "" {
-			return ErrNoHandshake
-		}
-		err := self.store.DropAll(uaid)
-		status, _ := ErrToStatus(err)
-		self.WriteJSON(PingReply{header.Type, status})
-		return nil
-	*/
-	self.WriteText("{}")
 	return nil
 }
 
