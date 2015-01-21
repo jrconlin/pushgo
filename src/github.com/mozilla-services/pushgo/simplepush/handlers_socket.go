@@ -35,6 +35,7 @@ type SocketHandler struct {
 	logger    *SimpleLogger
 	metrics   Statistician
 	store     Store
+	locator   Locator
 	origins   []*url.URL
 	listener  net.Listener
 	server    Server
@@ -84,6 +85,7 @@ func (h *SocketHandler) setApp(app *Application) {
 	h.logger = app.Logger()
 	h.metrics = app.Metrics()
 	h.store = app.Store()
+	h.locator = app.Locator()
 }
 
 // listenWithConfig starts a listener for this WebSocket handler.
@@ -120,6 +122,11 @@ func (h *SocketHandler) URL() string            { return h.url }
 func (h *SocketHandler) ServeMux() ServeMux     { return (*RouteMux)(h.mux) }
 
 func (h *SocketHandler) Start(errChan chan<- error) {
+	rn, ok := h.app.Locator().(ReadyNotifier)
+	if ok {
+		// Wait until the locator is ready before accepting client connections.
+		<-rn.ReadyNotify()
+	}
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Starting WebSocket server",
 			LogFields{"url": h.url})

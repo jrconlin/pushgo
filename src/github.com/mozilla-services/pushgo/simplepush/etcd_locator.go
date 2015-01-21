@@ -77,12 +77,14 @@ type EtcdLocator struct {
 	contactsErr     error
 	lastFetch       time.Time
 	closeOnce       Once
+	readySignal     chan bool
 	closeSignal     chan bool
 	closeWait       sync.WaitGroup
 }
 
 func NewEtcdLocator() (l *EtcdLocator) {
 	l = &EtcdLocator{
+		readySignal: make(chan bool),
 		closeSignal: make(chan bool),
 	}
 	return l
@@ -192,22 +194,24 @@ func (l *EtcdLocator) Init(app *Application, config interface{}) (err error) {
 	}
 
 	l.closeWait.Add(2)
+	if l.startDelay > 0 {
+		l.closeWait.Add(1)
+		time.AfterFunc(l.startDelay, l.closeReady)
+	}
 	go l.registerHost()
 	go l.refreshHosts()
 
-	if !l.isReady() {
-		return ErrNoLocator
-	}
 	return nil
 }
 
-func (l *EtcdLocator) isReady() (ok bool) {
-	select {
-	case ok = <-l.closeSignal:
-	case <-time.After(l.startDelay):
-		ok = true
-	}
-	return
+func (l *EtcdLocator) closeReady() {
+	defer l.closeWait.Done()
+	close(l.readySignal)
+}
+
+// ReadyNotify implements ReadyNotifier.ReadyNotify.
+func (l *EtcdLocator) ReadyNotify() <-chan bool {
+	return l.readySignal
 }
 
 func (l *EtcdLocator) checkRetry(cluster *etcd.Cluster, attempt int,
