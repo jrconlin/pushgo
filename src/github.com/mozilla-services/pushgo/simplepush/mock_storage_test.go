@@ -49,11 +49,11 @@ func (_mr *_MockStoreRecorder) Close() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
 }
 
-func (_m *MockStore) KeyToIDs(key string) (string, string, bool) {
+func (_m *MockStore) KeyToIDs(key string) (string, string, error) {
 	ret := _m.ctrl.Call(_m, "KeyToIDs", key)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(string)
-	ret2, _ := ret[2].(bool)
+	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
 }
 
@@ -61,10 +61,10 @@ func (_mr *_MockStoreRecorder) KeyToIDs(arg0 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "KeyToIDs", arg0)
 }
 
-func (_m *MockStore) IDsToKey(suaid string, schid string) (string, bool) {
+func (_m *MockStore) IDsToKey(suaid string, schid string) (string, error) {
 	ret := _m.ctrl.Call(_m, "IDsToKey", suaid, schid)
 	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(bool)
+	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 

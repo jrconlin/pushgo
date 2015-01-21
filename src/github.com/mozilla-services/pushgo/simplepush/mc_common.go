@@ -4,8 +4,6 @@
 
 package simplepush
 
-import ()
-
 // ChannelState represents the state of a channel record.
 type ChannelState int8
 

@@ -92,8 +92,7 @@ func TestBroadcastRouter(t *testing.T) {
 
 	Convey("Should succeed self-routing to a valid uaid", t, func() {
 		mockWorker := NewMockWorker(mockCtrl)
-		client := &Client{mockWorker, &PushWS{}, uaid}
-		app.AddClient(uaid, client)
+		app.AddWorker(uaid, mockWorker)
 
 		thisNode := router.URL()
 		thisNodeList := []string{thisNode}
@@ -105,8 +104,8 @@ func TestBroadcastRouter(t *testing.T) {
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-			"").Return(nil)
+		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
+		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
@@ -166,8 +165,7 @@ func BenchmarkRouter(b *testing.B) {
 	cancelSignal := make(chan bool)
 
 	mockWorker := NewMockWorker(mockCtrl)
-	client := &Client{mockWorker, &PushWS{}, uaid}
-	app.AddClient(uaid, client)
+	app.AddWorker(uaid, mockWorker)
 
 	thisNode := router.URL()
 	thisNodeList := []string{thisNode}
@@ -183,13 +181,13 @@ func BenchmarkRouter(b *testing.B) {
 		mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
+		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
 		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
 			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-			"").Return(nil)
+		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
 
 		router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 	}

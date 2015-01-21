@@ -199,7 +199,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	client, found := r.app.GetClient(uaid)
+	worker, found := r.app.GetWorker(uaid)
 	if !found {
 		http.Error(resp, "UID Not Found", http.StatusNotFound)
 		r.metrics.Increment("updates.routed.unknown")
@@ -245,7 +245,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		}
 		data = data[:r.maxDataLen]
 	}
-	if err = r.app.Server().UpdateClient(client, chid, uaid, routable.Version(),
+	if err = r.app.Server().UpdateWorker(worker, chid, routable.Version(),
 		sentAt, data); err != nil {
 		if logWarning {
 			r.logger.Warn("router", "Could not update local user",

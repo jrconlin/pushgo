@@ -72,19 +72,9 @@ func Benchmark_UpdateHandler(b *testing.B) {
 	if app == nil {
 		b.Fatal()
 	}
-	noPush := &PushWS{
-		Socket: nil,
-		Born:   time.Now(),
-	}
-	noPush.SetUAID(uaid)
-	worker := &NoWorker{
-		Socket: noPush,
-		Logger: app.Logger(),
-	}
-	app.AddClient(uaid, &Client{
-		Worker(worker),
-		noPush,
-		uaid})
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	key, _ := app.Store().IDsToKey(uaid, chid)
 	updateUrl := fmt.Sprintf("http://test/update/%s", key)
@@ -119,20 +109,9 @@ func Test_UpdateHandler(t *testing.T) {
 
 	app := newTestHandler(t)
 	defer app.Close()
-	noPush := &PushWS{
-		Socket: nil,
-		Born:   time.Now(),
-	}
-	noPush.SetUAID(uaid)
-
-	worker := &NoWorker{Socket: noPush,
-		Logger: app.Logger(),
-	}
-
-	app.AddClient(uaid, &Client{
-		Worker(worker),
-		noPush,
-		uaid})
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	// don't bother with encryption right now.
 	key, _ := app.Store().IDsToKey(uaid, chid)

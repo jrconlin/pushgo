@@ -153,13 +153,7 @@ func (h *EndpointHandler) resolvePK(token string) (uaid, chid string, err error)
 		err = fmt.Errorf("Invalid primary key: %q", pk)
 		return "", "", err
 	}
-	uaid, chid, ok := h.store.KeyToIDs(pk)
-	if !ok {
-		err = fmt.Errorf("Could not resolve primary key: %q", pk)
-		return "", "", err
-	}
-	if len(chid) == 0 {
-		err = fmt.Errorf("Primary key missing channel ID: %q", pk)
+	if uaid, chid, err = h.store.KeyToIDs(pk); err != nil {
 		return "", "", err
 	}
 	return uaid, chid, nil
@@ -326,11 +320,13 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 }
 
 // deliver routes an incoming update to the appropriate server.
-func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, version int64, requestID string, data string) (ok bool) {
-	client, clientConnected := h.app.GetClient(uaid)
+func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
+	version int64, requestID string, data string) (ok bool) {
+
+	worker, workerConnected := h.app.GetWorker(uaid)
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
-	if h.alwaysRoute || !clientConnected {
+	if h.alwaysRoute || !workerConnected {
 		h.metrics.Increment("updates.routed.outgoing")
 		// Abort routing if the connection goes away.
 		var cancelSignal <-chan bool
@@ -346,11 +342,11 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string, vers
 	}
 	// If the device is not connected to this server, indicate whether routing
 	// was successful.
-	if !clientConnected {
+	if !workerConnected {
 		return
 	}
 	// Try local delivery if routing failed.
-	err := h.app.Server().RequestFlush(client, chid, version, data)
+	err := h.app.Server().RequestFlush(worker, chid, version, data)
 	if err != nil {
 		h.metrics.Increment("updates.appserver.rejected")
 		return false

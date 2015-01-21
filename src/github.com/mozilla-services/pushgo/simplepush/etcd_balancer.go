@@ -170,7 +170,7 @@ func (b *EtcdBalancer) Init(app *Application, config interface{}) (err error) {
 	b.log = app.Logger()
 	b.metrics = app.Metrics()
 
-	b.connCount = app.ClientCount
+	b.connCount = app.WorkerCount
 	b.maxConns = app.SocketHandler().MaxConns()
 
 	b.threshold = conf.Threshold
