@@ -6,7 +6,12 @@ package simplepush
 
 import (
 	"time"
+	"text/template"
 )
+
+// testEndpointTemplate is a prepared push endpoint template.
+var testEndpointTemplate = template.Must(template.New("Push").Parse(
+	"{{.CurrentHost}}/{{.Token}}"))
 
 // testID is a UUID string returned by idGenerate.
 var testID = "d1c7c768b1be4c7093a69b52910d4baa"

@@ -34,9 +34,6 @@ func newTestHandler(tb TBLoggingInterface) *Application {
 	app.store = store
 	app.propping = pping
 	app.SetLogger(tlogger)
-	server := &Serv{}
-	server.Init(app, server.ConfigStruct())
-	app.SetServer(server)
 	locator := &NoLocator{logger: tlogger}
 	router := NewBroadcastRouter()
 	router.Init(app, router.ConfigStruct())

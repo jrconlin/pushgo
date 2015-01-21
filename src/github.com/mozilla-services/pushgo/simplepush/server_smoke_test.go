@@ -159,14 +159,6 @@ func (t *TestServer) load() (*Application, error) {
 			}
 			return balancer, nil
 		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := NewServer()
-			servConf := serv.ConfigStruct().(*ServerConfig)
-			if err := serv.Init(app, servConf); err != nil {
-				return nil, fmt.Errorf("Error initializing server: %#v", err)
-			}
-			return serv, nil
-		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
 			sh := NewSocketHandler()
 			shConf := sh.ConfigStruct().(*SocketHandlerConfig)

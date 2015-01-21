@@ -208,11 +208,8 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 
 	// We know of this one.
 	var (
-		routable Routable
-		chid     string
-		timeNano int64
-		sentAt   time.Time
-		data     string
+		routable   Routable
+		chid, data string
 	)
 	segment, err := capn.ReadFromStream(req.Body, nil)
 	if err != nil {
@@ -231,10 +228,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		}
 		goto invalidBody
 	}
-	// routed data is already in storage.
 	r.metrics.Increment("updates.routed.incoming")
-	timeNano = routable.Time()
-	sentAt = time.Unix(timeNano/1e9, timeNano%1e9)
 	// Never trust external data
 	data = routable.Data()
 	if len(data) > r.maxDataLen {
@@ -245,8 +239,8 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		}
 		data = data[:r.maxDataLen]
 	}
-	if err = r.app.Server().UpdateWorker(worker, chid, routable.Version(),
-		sentAt, data); err != nil {
+	// routed data is already in storage.
+	if err = worker.Flush(0, chid, routable.Version(), data); err != nil {
 		if logWarning {
 			r.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
