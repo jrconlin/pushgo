@@ -16,10 +16,8 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func NewSocketHandler() (h *SocketHandler) {
-	h = new(SocketHandler)
-	h.Closable.CloserOnce = h
-	return h
+func NewSocketHandler() *SocketHandler {
+	return new(SocketHandler)
 }
 
 type SocketHandlerConfig struct {
@@ -28,17 +26,17 @@ type SocketHandlerConfig struct {
 }
 
 type SocketHandler struct {
-	Closable
-	app      *Application
-	logger   *SimpleLogger
-	metrics  Statistician
-	store    Store
-	origins  []*url.URL
-	listener net.Listener
-	server   *ServeCloser
-	mux      *mux.Router
-	url      string
-	maxConns int
+	app       *Application
+	logger    *SimpleLogger
+	metrics   Statistician
+	store     Store
+	origins   []*url.URL
+	listener  net.Listener
+	server    *ServeCloser
+	mux       *mux.Router
+	url       string
+	maxConns  int
+	closeOnce Once
 }
 
 func (h *SocketHandler) ConfigStruct() interface{} {
@@ -116,10 +114,7 @@ func (h *SocketHandler) Start(errChan chan<- error) {
 
 func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	requestID := ws.Request().Header.Get(HeaderID)
-	sock := PushWS{Socket: (*WebSocket)(ws),
-		Store:  h.store,
-		Logger: h.logger,
-		Born:   time.Now()}
+	worker := NewWorker(h.app, (*WebSocket)(ws), requestID)
 
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "websocket connection",
@@ -128,14 +123,14 @@ func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	defer func() {
 		now := time.Now()
 		// Clean-up the resources
-		h.app.Server().HandleCommand(PushCommand{DIE, nil}, &sock)
-		h.metrics.Timer("client.socket.lifespan", now.Sub(sock.Born))
+		h.app.Server().Bye(worker)
+		h.metrics.Timer("client.socket.lifespan", now.Sub(worker.Born()))
 		h.metrics.Increment("client.socket.disconnect")
 	}()
 
 	h.metrics.Increment("client.socket.connect")
 
-	NewWorker(h.app, requestID).Run(&sock)
+	worker.Run()
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Server for client shut-down",
 			LogFields{"rid": requestID})
@@ -169,7 +164,11 @@ func (h *SocketHandler) checkOrigin(conf *websocket.Config, req *http.Request) (
 	return ErrInvalidOrigin
 }
 
-func (h *SocketHandler) CloseOnce() error {
+func (h *SocketHandler) Close() error {
+	return h.closeOnce.Do(h.close)
+}
+
+func (h *SocketHandler) close() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
 			LogFields{"url": h.url})

@@ -36,15 +36,14 @@ type ApplicationConfig struct {
 
 func NewApplication() (a *Application) {
 	a = &Application{
-		clients:   make(map[string]*Client),
+		workers:   make(map[string]Worker),
 		closeChan: make(chan bool),
 	}
-	a.Closable.CloserOnce = a
 	return a
 }
 
 type Application struct {
-	Closable
+	info               InstanceInfo
 	hostname           string
 	host               string
 	port               int
@@ -55,9 +54,9 @@ type Application struct {
 	tokenKey           []byte
 	log                *SimpleLogger
 	metrics            Statistician
-	clients            map[string]*Client
-	clientMux          sync.RWMutex
-	clientCount        int32
+	workers            map[string]Worker
+	workerMux          sync.RWMutex
+	workerCount        int32
 	server             Server
 	store              Store
 	router             Router
@@ -67,6 +66,7 @@ type Application struct {
 	eh                 Handler
 	propping           PropPinger
 	closeChan          chan bool
+	closeOnce          Once
 }
 
 func (a *Application) ConfigStruct() interface{} {
@@ -89,17 +89,18 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 	conf := config.(*ApplicationConfig)
 
 	if conf.UseAwsHost {
-		if a.hostname, err = GetAWSPublicHostname(); err != nil {
-			return fmt.Errorf("Error querying AWS instance metadata service: %s", err)
-		}
+		a.info = new(EC2Info)
 	} else if conf.ResolveHost {
 		addr, err := net.ResolveIPAddr("ip", conf.Hostname)
 		if err != nil {
 			return fmt.Errorf("Error resolving hostname: %s", err)
 		}
-		a.hostname = addr.String()
+		a.info = LocalInfo{addr.String()}
 	} else {
-		a.hostname = conf.Hostname
+		a.info = LocalInfo{conf.Hostname}
+	}
+	if a.hostname, err = a.info.PublicHostname(); err != nil {
+		return fmt.Errorf("Error determining hostname: %s", err)
 	}
 
 	if err = a.SetTokenKey(conf.TokenKey); err != nil {
@@ -189,6 +190,10 @@ func (a *Application) Hostname() string {
 	return a.hostname
 }
 
+func (a *Application) InstanceInfo() InstanceInfo {
+	return a.info
+}
+
 func (a *Application) Logger() *SimpleLogger {
 	return a.log
 }
@@ -243,58 +248,63 @@ func (a *Application) SetTokenKey(key string) (err error) {
 	return
 }
 
-func (a *Application) ClientCount() (count int) {
-	return int(atomic.LoadInt32(&a.clientCount))
+func (a *Application) WorkerCount() (count int) {
+	return int(atomic.LoadInt32(&a.workerCount))
 }
 
-func (a *Application) ClientExists(uaid string) (collision bool) {
-	_, collision = a.GetClient(uaid)
+func (a *Application) WorkerExists(uaid string) (collision bool) {
+	_, collision = a.GetWorker(uaid)
 	return
 }
 
-func (a *Application) GetClient(uaid string) (client *Client, ok bool) {
-	a.clientMux.RLock()
-	client, ok = a.clients[uaid]
-	a.clientMux.RUnlock()
+func (a *Application) GetWorker(uaid string) (worker Worker, ok bool) {
+	a.workerMux.RLock()
+	worker, ok = a.workers[uaid]
+	a.workerMux.RUnlock()
 	return
 }
 
-func (a *Application) AddClient(uaid string, client *Client) {
-	if a.IsClosed() {
-		client.PushWS.Close()
+func (a *Application) AddWorker(uaid string, worker Worker) {
+	if a.closeOnce.IsDone() {
+		worker.Close()
 		return
 	}
-	a.clientMux.Lock()
-	a.clients[uaid] = client
-	a.clientMux.Unlock()
-	atomic.AddInt32(&a.clientCount, 1)
+	a.workerMux.Lock()
+	a.workers[uaid] = worker
+	a.workerMux.Unlock()
+	atomic.AddInt32(&a.workerCount, 1)
 }
 
-func (a *Application) RemoveClient(uaid string) {
-	if a.IsClosed() {
+func (a *Application) RemoveWorker(uaid string, worker Worker) (removed bool) {
+	if a.closeOnce.IsDone() {
 		return
 	}
-	var ok bool
-	a.clientMux.Lock()
-	if _, ok = a.clients[uaid]; ok {
-		delete(a.clients, uaid)
+	a.workerMux.Lock()
+	if prevWorker, ok := a.workers[uaid]; ok && prevWorker == worker {
+		delete(a.workers, uaid)
+		removed = true
 	}
-	a.clientMux.Unlock()
-	if ok {
-		atomic.AddInt32(&a.clientCount, -1)
+	a.workerMux.Unlock()
+	if removed {
+		atomic.AddInt32(&a.workerCount, -1)
+	}
+	return removed
+}
+
+func (a *Application) closeWorkers() {
+	a.workerMux.Lock()
+	defer a.workerMux.Unlock()
+	for uaid, worker := range a.workers {
+		delete(a.workers, uaid)
+		worker.Close()
 	}
 }
 
-func (a *Application) closeClients() {
-	a.clientMux.Lock()
-	defer a.clientMux.Unlock()
-	for uaid, client := range a.clients {
-		delete(a.clients, uaid)
-		client.PushWS.Close()
-	}
+func (a *Application) Close() error {
+	return a.closeOnce.Do(a.close)
 }
 
-func (a *Application) CloseOnce() error {
+func (a *Application) close() error {
 	var errors MultipleError
 	if eh := a.EndpointHandler(); eh != nil {
 		// Stop the update listener; close all connections.
@@ -315,7 +325,7 @@ func (a *Application) CloseOnce() error {
 		}
 	}
 	// Disconnect existing clients.
-	a.closeClients()
+	a.closeWorkers()
 	// Stop publishing client counts.
 	close(a.closeChan)
 	if l := a.Locator(); l != nil {
@@ -342,7 +352,7 @@ func (a *Application) sendClientCount() {
 		select {
 		case ok = <-a.closeChan:
 		case <-ticker.C:
-			a.Metrics().Gauge("update.client.connections", int64(a.ClientCount()))
+			a.Metrics().Gauge("update.client.connections", int64(a.WorkerCount()))
 		}
 	}
 	ticker.Stop()

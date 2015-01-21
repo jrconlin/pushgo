@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"bytes"
+	"crypto/aes"
 	"encoding/base64"
 	"fmt"
 	"testing"
@@ -58,6 +59,55 @@ func (t encodeTest) Test() error {
 			t.name, base64.URLEncoding.EncodeToString(dec), t.testString)
 	}
 	return nil
+}
+
+func Test_Decode(t *testing.T) {
+	var (
+		decrypted, expected []byte
+		err                 error
+	)
+	key := []byte{0xf8, 0x59, 0x4, 0x72, 0x1c, 0xa, 0xc, 0x85, 0x5b, 0x7a,
+		0x61, 0x26, 0xa5, 0x5a, 0xe2, 0x3b}
+	encrypted := "6MgxfnBKjWtSNm6Q9WunFbj2hcjmeDudKuWUAeU="
+
+	if decrypted, err = Decode(key, encrypted); err != nil {
+		t.Errorf("Error decoding value: %s", err)
+	}
+	expected = []byte("Hello, world!")
+	if !bytes.Equal(decrypted, expected) {
+		t.Errorf("Unexpected result decoding with key: want %#v; got %#v",
+			expected, decrypted)
+	}
+	if _, err = Decode(key[:14], "6MgxfnBKjWtSNm6Q9WunFbj2hcjmeDudKuWUAeU="); err != aes.KeySizeError(14) {
+		t.Errorf("Invalid key size: want aes.KeySizeError(14); got %s", err)
+	}
+	if _, err = Decode(key, "!@#$%^&*()-+[]{}"); err != base64.CorruptInputError(0) {
+		t.Errorf("Invalid Base64: want base64.CorruptInputError(0); got %s", err)
+	}
+	if _, err = Decode(key, encrypted[:8]); err != ValueSizeError(6) {
+		t.Errorf("Encrypted value too short: want ValueSizeError(6); got %s", err)
+	}
+	if decrypted, err = Decode(nil, encrypted); err != nil {
+		t.Errorf("Error decoding without key: %s", err)
+	}
+	expected = []byte(encrypted)
+	if !bytes.Equal(decrypted, expected) {
+		t.Errorf("Unexpected result decoding without key: want %#v; got %#v",
+			expected, decrypted)
+	}
+	if decrypted, err = Decode(key, ""); err != nil {
+		t.Errorf("Error decoding empty string: %s", err)
+	}
+	if len(decrypted) != 0 {
+		t.Errorf("Unexpected result decoding empty string: got %#v", decrypted)
+	}
+	// Empty payload with valid IV.
+	if decrypted, err = Decode(key, "dEmnrPZHgiOgttx5lhkx4w=="); err != nil {
+		t.Errorf("Error decoding empty payload: %s", err)
+	}
+	if len(decrypted) != 0 {
+		t.Errorf("Unexpected result decoding empty payload: got %#v", decrypted)
+	}
 }
 
 func Test_Encode(t *testing.T) {

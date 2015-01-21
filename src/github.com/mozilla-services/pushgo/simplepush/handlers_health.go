@@ -19,6 +19,7 @@ type StatusReport struct {
 	Plugins          []PluginReport `json:"plugins"`
 	Goroutines       int            `json:"goroutines"`
 	Version          string         `json:"version"`
+	InstanceID       string         `json:"instance,omitempty"`
 }
 
 // TODO: Remove; add a Typ() method to HasConfigStruct.
@@ -49,6 +50,7 @@ type HealthHandlers struct {
 	balancer Balancer
 	sh       Handler
 	eh       Handler
+	info     InstanceInfo
 }
 
 func (h *HealthHandlers) ConfigStruct() interface{} {
@@ -65,6 +67,7 @@ func (h *HealthHandlers) Init(app *Application, _ interface{}) error {
 	h.balancer = app.Balancer()
 	h.sh = app.SocketHandler()
 	h.eh = app.EndpointHandler()
+	h.info = app.InstanceInfo()
 
 	// Register health check handlers with muxes.
 	clientMux := h.sh.ServeMux()
@@ -102,7 +105,7 @@ func (h *HealthHandlers) MetricsHandler(resp http.ResponseWriter, req *http.Requ
 func (h *HealthHandlers) StatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 	reply := []byte(fmt.Sprintf(`{"status":"OK","clients":%d,"version":"%s"}`,
-		h.app.ClientCount(), VERSION))
+		h.app.WorkerCount(), VERSION))
 
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Write(reply)
@@ -111,10 +114,12 @@ func (h *HealthHandlers) StatusHandler(resp http.ResponseWriter,
 func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 	req *http.Request) {
 
+	id, _ := h.info.InstanceID()
 	status := StatusReport{
 		MaxClientConns:   h.sh.MaxConns(),
 		MaxEndpointConns: h.eh.MaxConns(),
 		Version:          VERSION,
+		InstanceID:       id,
 	}
 
 	healthy := true
@@ -137,7 +142,7 @@ func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 
 	status.Healthy = healthy
 
-	status.Clients = h.app.ClientCount()
+	status.Clients = h.app.WorkerCount()
 	status.Goroutines = runtime.NumGoroutine()
 
 	resp.Header().Set("Content-Type", "application/json")

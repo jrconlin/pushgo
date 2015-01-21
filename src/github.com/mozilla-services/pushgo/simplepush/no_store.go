@@ -5,8 +5,6 @@
 package simplepush
 
 import (
-	"fmt"
-	"strings"
 	"time"
 )
 
@@ -21,27 +19,34 @@ type NoStore struct {
 	maxChannels int
 }
 
-func (n *NoStore) KeyToIDs(key string) (suaid, schid string, ok bool) {
-	items := strings.SplitN(key, ".", 2)
-	if len(items) < 2 {
+func (n *NoStore) KeyToIDs(key string) (suaid, schid string, err error) {
+	if suaid, schid, err = splitIDs(key); err != nil {
 		if n.logger.ShouldLog(WARNING) {
-			n.logger.Warn("nostore", "Invalid Key, returning blank IDs",
-				LogFields{"key": key})
+			n.logger.Warn("nostore", "Invalid key",
+				LogFields{"error": err.Error(), "key": key})
 		}
-		return "", "", false
+		return "", "", ErrInvalidKey
 	}
-	return items[0], items[1], true
+	return
 }
 
-func (n *NoStore) IDsToKey(suaid, schid string) (string, bool) {
-	if len(suaid) == 0 || len(schid) == 0 {
-		if n.logger.ShouldLog(WARNING) {
-			n.logger.Warn("nostore", "Invalid IDs, returning blank Key",
+func (n *NoStore) IDsToKey(suaid, schid string) (string, error) {
+	logWarning := n.logger.ShouldLog(WARNING)
+	if len(suaid) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Missing device ID",
 				LogFields{"uaid": suaid, "chid": schid})
 		}
-		return "", false
+		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", suaid, schid), true
+	if len(schid) == 0 {
+		if logWarning {
+			n.logger.Warn("nostore", "Missing channel ID",
+				LogFields{"uaid": suaid, "chid": schid})
+		}
+		return "", ErrInvalidKey
+	}
+	return joinIDs(suaid, schid), nil
 }
 
 func (*NoStore) ConfigStruct() interface{} {
@@ -74,7 +79,7 @@ func (n *NoStore) Exists(uaid string) bool {
 }
 
 func (*NoStore) Register(string, string, int64) error                   { return nil }
-func (*NoStore) Update(string, int64) error                             { return nil }
+func (*NoStore) Update(string, string, int64) error                     { return nil }
 func (*NoStore) Unregister(string, string) error                        { return nil }
 func (*NoStore) Drop(string, string) error                              { return nil }
 func (*NoStore) FetchAll(string, time.Time) ([]Update, []string, error) { return nil, nil, nil }

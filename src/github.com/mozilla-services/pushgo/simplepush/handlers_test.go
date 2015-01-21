@@ -55,9 +55,8 @@ func newTestHandler(tb TBLoggingInterface) *Application {
 	return app
 }
 
-var rbuf = make([]byte, 64)
-
-func randomText() string {
+func randomText(size int) string {
+	rbuf := make([]byte, size)
 	rand.Read(rbuf)
 	for i := 0; i < len(rbuf); i++ {
 		rbuf[i] = uint8(rbuf[i])%94 + 32
@@ -69,28 +68,19 @@ func Benchmark_UpdateHandler(b *testing.B) {
 	uaid := "deadbeef000000000000000000000000"
 	chid := "decafbad000000000000000000000000"
 	app := newTestHandler(b)
-	defer app.CloseOnce()
+	defer app.Close()
 	if app == nil {
 		b.Fatal()
 	}
-	noPush := &PushWS{
-		Socket: nil,
-		Born:   time.Now(),
-	}
-	noPush.SetUAID(uaid)
-	worker := &NoWorker{
-		Socket: noPush,
-		Logger: app.Logger(),
-	}
-	app.AddClient(uaid, &Client{
-		Worker(worker),
-		noPush,
-		uaid})
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	key, _ := app.Store().IDsToKey(uaid, chid)
 	updateUrl := fmt.Sprintf("http://test/update/%s", key)
 	tmux := app.EndpointHandler().ServeMux()
 	vals := make(url.Values)
+	data := randomText(64)
 	// Begin benchmark:
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -101,7 +91,7 @@ func Benchmark_UpdateHandler(b *testing.B) {
 		}
 		req.Form = vals
 		req.Form.Set("version", strconv.FormatInt(int64(i), 10))
-		req.Form.Set("data", randomText())
+		req.Form.Set("data", data)
 		tmux.ServeHTTP(resp, req)
 		if resp.Body.String() != "{}" {
 			b.Errorf(`Unexpected response from server: "%s"`, resp.Body.String())
@@ -118,21 +108,10 @@ func Test_UpdateHandler(t *testing.T) {
 	data := "This is a test of the emergency broadcasting system."
 
 	app := newTestHandler(t)
-	defer app.CloseOnce()
-	noPush := &PushWS{
-		Socket: nil,
-		Born:   time.Now(),
-	}
-	noPush.SetUAID(uaid)
-
-	worker := &NoWorker{Socket: noPush,
-		Logger: app.Logger(),
-	}
-
-	app.AddClient(uaid, &Client{
-		Worker(worker),
-		noPush,
-		uaid})
+	defer app.Close()
+	worker := &NoWorker{Logger: app.Logger()}
+	worker.SetUAID(uaid)
+	app.AddWorker(uaid, worker)
 	resp := httptest.NewRecorder()
 	// don't bother with encryption right now.
 	key, _ := app.Store().IDsToKey(uaid, chid)

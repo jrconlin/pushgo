@@ -19,7 +19,8 @@ Features
     idle_conns
 - Always route option, allows the router to always attempt to route a message
   before checking local clients. This can be useful to increase message
-  delivery reliability at the expense of some additional routing. PR #116.
+  delivery reliability at the expense of some additional routing.
+  PR #116, #192.
     always_route
 - Weighted Load balancing via redirect using etcd. pushgo can now store client
   counts in etcd and utilize counts to do a weighted redirect during a client's
@@ -76,6 +77,8 @@ Metrics
     'balancer.fetch.success', 'balancer.publish.retry'
     'balancer.publish.error', 'balancer.publish.success'
     'balancer.etcd.error', 'balancer.etcd.retry'
+- A counter that tracks failed local delivery attempts:
+    'updates.appserver.rejected'
 
 Incompatibilities
 -----------------
@@ -119,6 +122,8 @@ Internal
 - The router now uses a goroutine per notification instead of a goroutine pool.
   This ensures slow requests don't delay other requests. PR #167.
 - The Heka client dependency has been removed. PR #161, Issue #125.
+- The router now indicates whether a routed message was accepted by a peer, to
+  support the 'always_route' option. PR #192.
 
 1.4.2
 =====

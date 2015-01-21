@@ -47,10 +47,11 @@ func (_mr *_MockRouterRecorder) Close() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
 }
 
-func (_m *MockRouter) Route(cancelSignal <-chan bool, uaid string, chid string, version int64, sentAt time.Time, logID string, data string) error {
+func (_m *MockRouter) Route(cancelSignal <-chan bool, uaid string, chid string, version int64, sentAt time.Time, logID string, data string) (bool, error) {
 	ret := _m.ctrl.Call(_m, "Route", cancelSignal, uaid, chid, version, sentAt, logID, data)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 func (_mr *_MockRouterRecorder) Route(arg0, arg1, arg2, arg3, arg4, arg5, arg6 interface{}) *gomock.Call {
