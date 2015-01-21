@@ -651,7 +651,7 @@ func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error
 		}
 		return err
 	}
-	endpoint, err := self.app.RegisterEndpoint(key)
+	endpoint, err := self.app.CreateEndpoint(key)
 	if err != nil {
 		if self.logger.ShouldLog(WARNING) {
 			self.logger.Warn("worker", "Error registering endpoint", LogFields{

@@ -5,8 +5,8 @@
 package simplepush
 
 import (
-	"time"
 	"text/template"
+	"time"
 )
 
 // testEndpointTemplate is a prepared push endpoint template.
@@ -21,8 +21,8 @@ var testID = "d1c7c768b1be4c7093a69b52910d4baa"
 // predictable IDs. useMockFuncs is only exposed to tests.
 func useMockFuncs() {
 	cryptoRandRead = func(b []byte) (int, error) {
-		for i := 0; i < len(b); i++ {
-			b[i] = byte(i % 256)
+		for i := range b {
+			b[i] = 0
 		}
 		return len(b), nil
 	}

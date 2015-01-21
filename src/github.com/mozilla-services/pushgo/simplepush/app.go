@@ -315,19 +315,13 @@ func (a *Application) closeWorkers() {
 	}
 }
 
-// RegisterEndpoint allocates an update endpoint with the given primary key.
-func (a *Application) RegisterEndpoint(key string) (
-	endpoint string, err error) {
-
+// CreateEndpoint allocates an update endpoint with the given primary key.
+func (a *Application) CreateEndpoint(key string) (string, error) {
 	token, err := a.encodePK(key)
 	if err != nil {
-		return "", fmt.Errorf("Error encoding token %q: %s", key, err)
+		return "", err
 	}
-	if endpoint, err = a.genEndpoint(token); err != nil {
-		return "", fmt.Errorf("Error generating push endpoint for %q: %s",
-			token, err)
-	}
-	return endpoint, nil
+	return a.genEndpoint(token)
 }
 
 // encodePK encodes a primary key if a token key is specified.
@@ -342,9 +336,9 @@ func (a *Application) encodePK(key string) (token string, err error) {
 
 // genEndpoint generates an update endpoint.
 func (a *Application) genEndpoint(token string) (string, error) {
-	eh := a.EndpointHandler()
-	if eh == nil {
-		return "", fmt.Errorf("No endpoint handler")
+	var currentHost string
+	if eh := a.EndpointHandler(); eh != nil {
+		currentHost = eh.URL()
 	}
 	// cheezy variable replacement.
 	endpoint := new(bytes.Buffer)
@@ -353,7 +347,7 @@ func (a *Application) genEndpoint(token string) (string, error) {
 		CurrentHost string
 	}{
 		token,
-		eh.URL(),
+		currentHost,
 	}); err != nil {
 		return "", err
 	}
