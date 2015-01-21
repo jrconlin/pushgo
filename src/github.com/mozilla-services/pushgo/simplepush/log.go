@@ -15,7 +15,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/mozilla-services/pushgo/id"
@@ -59,7 +58,6 @@ const (
 type LogFields map[string]string
 
 type Logger interface {
-	HasConfigStruct
 	Log(level LogLevel, messageType, payload string, fields LogFields) error
 	SetFilter(level LogLevel)
 	ShouldLog(level LogLevel) bool
@@ -527,9 +525,13 @@ func (h *LogHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 // TestLogger is used by the go test functions.
 
+type TBLoggingInterface interface {
+	Logf(string, ...interface{})
+}
+
 type TestLogger struct {
 	filter LogLevel
-	t      *testing.T
+	t      TBLoggingInterface
 }
 
 func (r *TestLogger) Init(app *Application, config interface{}) (err error) {

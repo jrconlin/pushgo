@@ -11,44 +11,46 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 )
 
 func NewEndpointHandler() (h *EndpointHandler) {
-	h = new(EndpointHandler)
-	h.Closable.CloserOnce = h
+	h = &EndpointHandler{mux: mux.NewRouter()}
+	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
 	return h
 }
 
 type EndpointHandlerConfig struct {
-	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
-	Listener   ListenerConfig
+	MaxDataLen  int  `toml:"max_data_len" env:"max_data_len"`
+	AlwaysRoute bool `toml:"always_route" env:"always_route"`
+	Listener    ListenerConfig
 }
 
 type EndpointHandler struct {
-	Closable
-	app        *Application
-	logger     *SimpleLogger
-	metrics    Statistician
-	store      Store
-	router     Router
-	pinger     PropPinger
-	balancer   Balancer
-	hostname   string
-	tokenKey   []byte
-	listener   net.Listener
-	server     *ServeCloser
-	mux        *mux.Router
-	url        string
-	maxConns   int
-	maxDataLen int
+	app         *Application
+	logger      *SimpleLogger
+	metrics     Statistician
+	store       Store
+	router      Router
+	pinger      PropPinger
+	balancer    Balancer
+	hostname    string
+	tokenKey    []byte
+	listener    net.Listener
+	server      *ServeCloser
+	mux         *mux.Router
+	url         string
+	maxConns    int
+	maxDataLen  int
+	alwaysRoute bool
+	closeOnce   Once
 }
 
 func (h *EndpointHandler) ConfigStruct() interface{} {
 	return &EndpointHandlerConfig{
-		MaxDataLen: 4096,
+		MaxDataLen:  4096,
+		AlwaysRoute: false,
 		Listener: ListenerConfig{
 			Addr:            ":8081",
 			MaxConns:        1000,
@@ -59,16 +61,7 @@ func (h *EndpointHandler) ConfigStruct() interface{} {
 
 func (h *EndpointHandler) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*EndpointHandlerConfig)
-
-	h.app = app
-	h.logger = app.Logger()
-	h.metrics = app.Metrics()
-	h.store = app.Store()
-	h.router = app.Router()
-	h.pinger = app.PropPinger()
-	h.balancer = app.Balancer()
-
-	h.tokenKey = app.TokenKey()
+	h.setApp(app)
 
 	if h.listener, err = conf.Listener.Listen(); err != nil {
 		h.logger.Panic("handlers_endpoint", "Could not attach update listener",
@@ -86,11 +79,26 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 	h.url = CanonicalURL(scheme, host, port)
 
 	h.maxConns = conf.Listener.MaxConns
-	h.maxDataLen = conf.MaxDataLen
+	h.setMaxDataLen(conf.MaxDataLen)
+	h.alwaysRoute = conf.AlwaysRoute
 
-	h.mux = mux.NewRouter()
-	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
+	return nil
+}
 
+func (h *EndpointHandler) Listener() net.Listener { return h.listener }
+func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
+func (h *EndpointHandler) URL() string            { return h.url }
+func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
+
+// setApp sets the parent application for this endpoint handler.
+func (h *EndpointHandler) setApp(app *Application) {
+	h.app = app
+	h.logger = app.Logger()
+	h.metrics = app.Metrics()
+	h.store = app.Store()
+	h.router = app.Router()
+	h.pinger = app.PropPinger()
+	h.tokenKey = app.TokenKey()
 	h.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
@@ -101,19 +109,17 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 		},
 		Handler: &LogHandler{h.mux, h.logger},
 		ErrorLog: log.New(&LogWriter{
-			Logger: h.logger.Logger,
+			Logger: h.logger,
 			Name:   "handlers_endpoint",
 			Level:  ERROR,
 		}, "", 0),
 	})
-
-	return nil
 }
 
-func (h *EndpointHandler) Listener() net.Listener { return h.listener }
-func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
-func (h *EndpointHandler) URL() string            { return h.url }
-func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
+// setMaxDataLen sets the maximum data length to v
+func (h *EndpointHandler) setMaxDataLen(v int) {
+	h.maxDataLen = v
+}
 
 func (h *EndpointHandler) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
@@ -123,21 +129,88 @@ func (h *EndpointHandler) Start(errChan chan<- error) {
 	errChan <- h.server.Serve(h.listener)
 }
 
+func (h *EndpointHandler) decodePK(token string) (key string, err error) {
+	if len(token) == 0 {
+		return "", fmt.Errorf("Missing primary key")
+	}
+	if len(h.tokenKey) == 0 {
+		return token, nil
+	}
+	bpk, err := Decode(h.tokenKey, token)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes.TrimSpace(bpk)), nil
+}
+
+func (h *EndpointHandler) resolvePK(token string) (uaid, chid string, err error) {
+	pk, err := h.decodePK(token)
+	if err != nil {
+		err = fmt.Errorf("Error decoding primary key: %s", err)
+		return "", "", err
+	}
+	if !validPK(pk) {
+		err = fmt.Errorf("Invalid primary key: %q", pk)
+		return "", "", err
+	}
+	if uaid, chid, err = h.store.KeyToIDs(pk); err != nil {
+		return "", "", err
+	}
+	return uaid, chid, nil
+}
+
+func (h *EndpointHandler) doPropPing(uaid string, version int64, data string) (ok bool, err error) {
+	if h.pinger == nil {
+		return false, nil
+	}
+	if ok, err = h.pinger.Send(uaid, version, data); err != nil {
+		return false, fmt.Errorf("Could not send proprietary ping: %s", err)
+	}
+	if !ok {
+		return false, nil
+	}
+	/* if this is a GCM connected host, boot vers immediately to GCM
+	 */
+	return h.pinger.CanBypassWebsocket(), nil
+}
+
+// getUpdateParams extracts the update version and data from req.
+func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, data string, err error) {
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type",
+			"application/x-www-form-urlencoded")
+	}
+	svers := req.FormValue("version")
+	if svers != "" {
+		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
+			return 0, "", ErrBadVersion
+		}
+	} else {
+		version = timeNow().UTC().Unix()
+	}
+
+	data = req.FormValue("data")
+	if len(data) > h.maxDataLen {
+		return 0, "", ErrDataTooLong
+	}
+	return
+}
+
 // -- REST
 func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
-	timer := time.Now()
+	timer := timeNow()
 	requestID := req.Header.Get(HeaderID)
 	logWarning := h.logger.ShouldLog(WARNING)
 	var (
 		err        error
+		updateSent bool
 		version    int64
 		uaid, chid string
 	)
 
-	defer func(err *error) {
-		now := time.Now()
-		ok := *err == nil
+	defer func() {
+		now := timeNow()
 		if h.logger.ShouldLog(DEBUG) {
 			h.logger.Debug("handlers_endpoint", "+++++++++++++ DONE +++",
 				LogFields{"rid": requestID})
@@ -147,12 +220,12 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 				"rid":        requestID,
 				"uaid":       uaid,
 				"chid":       chid,
-				"successful": strconv.FormatBool(ok)})
+				"successful": strconv.FormatBool(updateSent)})
 		}
-		if ok {
+		if updateSent {
 			h.metrics.Timer("updates.handled", now.Sub(timer))
 		}
-	}(&err)
+	}()
 
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Handling Update",
@@ -160,104 +233,39 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	}
 
 	if req.Method != "PUT" {
-		http.Error(resp, "", http.StatusMethodNotAllowed)
+		writeJSON(resp, http.StatusMethodNotAllowed, []byte(`"Method Not Allowed"`))
 		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type",
-			"application/x-www-form-urlencoded")
-	}
-	svers := req.FormValue("version")
-	if svers != "" {
-		if version, err = strconv.ParseInt(svers, 10, 64); err != nil || version < 0 {
-			resp.Header().Set("Content-Type", "application/json")
-			resp.WriteHeader(http.StatusBadRequest)
-			resp.Write([]byte(`"Invalid Version"`))
-			h.metrics.Increment("updates.appserver.invalid")
+	version, data, err := h.getUpdateParams(req)
+	if err != nil {
+		if err == ErrDataTooLong {
+			if logWarning {
+				h.logger.Warn("handlers_endpoint", "Data too large, rejecting request",
+					LogFields{"rid": requestID})
+			}
+			writeJSON(resp, http.StatusRequestEntityTooLarge, []byte(fmt.Sprintf(
+				`"Data exceeds max length of %d bytes"`, h.maxDataLen)))
+			h.metrics.Increment("updates.appserver.toolong")
 			return
 		}
-	} else {
-		version = time.Now().UTC().Unix()
-	}
-
-	data := req.FormValue("data")
-	if len(data) > h.maxDataLen {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Data too large, rejecting request",
-				LogFields{"rid": requestID})
-		}
-		http.Error(resp, fmt.Sprintf("Data exceeds max length of %d bytes",
-			h.maxDataLen), http.StatusRequestEntityTooLarge)
-		h.metrics.Increment("updates.appserver.toolong")
+		writeJSON(resp, http.StatusBadRequest, []byte(`"Invalid Version"`))
+		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
 
-	var pk string
-	pk, ok := mux.Vars(req)["key"]
 	// TODO:
 	// is there a magic flag for proxyable endpoints?
 	// e.g. update/p/gcm/LSoC or something?
 	// (Note, this would allow us to use smarter FE proxies.)
-	if !ok || len(pk) == 0 {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "No token, rejecting request",
-				LogFields{"rid": requestID})
-		}
-		http.Error(resp, "Token not found", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	if tokenKey := h.tokenKey; len(tokenKey) > 0 {
-		// Note: dumping the []uint8 keys can produce terminal glitches
-		if h.logger.ShouldLog(DEBUG) {
-			h.logger.Debug("handlers_endpoint", "Decoding...",
-				LogFields{"rid": requestID})
-		}
-		var err error
-		bpk, err := Decode(tokenKey, pk)
-		if err != nil {
-			if logWarning {
-				h.logger.Warn("handlers_endpoint", "Could not decode primary key",
-					LogFields{"rid": requestID, "pk": pk, "error": err.Error()})
-			}
-			http.Error(resp, "", http.StatusNotFound)
-			h.metrics.Increment("updates.appserver.invalid")
-			return
-		}
-
-		pk = string(bytes.TrimSpace(bpk))
-	}
-
-	if !validPK(pk) {
+	token := mux.Vars(req)["key"]
+	if uaid, chid, err = h.resolvePK(token); err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Invalid primary key for update",
-				LogFields{"rid": requestID, "pk": pk})
+				LogFields{"error": err.Error(), "rid": requestID, "token": token})
 		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	uaid, chid, ok = h.store.KeyToIDs(pk)
-	if !ok {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Could not resolve primary key",
-				LogFields{"rid": requestID, "pk": pk})
-		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
-		h.metrics.Increment("updates.appserver.invalid")
-		return
-	}
-
-	if chid == "" {
-		if logWarning {
-			h.logger.Warn("handlers_endpoint", "Primary key missing channel ID",
-				LogFields{"rid": requestID, "uaid": uaid})
-		}
-		http.Error(resp, "Invalid Token", http.StatusNotFound)
+		writeJSON(resp, http.StatusNotFound, []byte(`"Invalid Token"`))
 		h.metrics.Increment("updates.appserver.invalid")
 		return
 	}
@@ -266,34 +274,26 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	h.metrics.Increment("updates.appserver.incoming")
 
 	// is there a Proprietary Ping for this?
-	if h.pinger == nil {
-		goto sendUpdate
-	}
-	if ok, err = h.pinger.Send(uaid, version, data); err != nil {
+	updateSent, err = h.doPropPing(uaid, version, data)
+	if err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not send proprietary ping",
 				LogFields{"rid": requestID, "uaid": uaid, "error": err.Error()})
 		}
-		goto sendUpdate
-	}
-	/* if this is a GCM connected host, boot vers immediately to GCM
-	 */
-	if ok && h.pinger.CanBypassWebsocket() {
+	} else if updateSent {
 		// Neat! Might as well return.
 		h.metrics.Increment("updates.appserver.received")
-		resp.Header().Set("Content-Type", "application/json")
-		resp.Write([]byte("{}"))
+		writeSuccess(resp)
 		return
 	}
 
-sendUpdate:
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "setting version for ChannelID",
 			LogFields{"rid": requestID, "uaid": uaid, "chid": chid,
 				"version": strconv.FormatInt(version, 10)})
 	}
 
-	if err = h.store.Update(pk, version); err != nil {
+	if err = h.store.Update(uaid, chid, version); err != nil {
 		if logWarning {
 			h.logger.Warn("handlers_endpoint", "Could not update channel", LogFields{
 				"rid":     requestID,
@@ -304,38 +304,62 @@ sendUpdate:
 		}
 		status, _ := ErrToStatus(err)
 		h.metrics.Increment("updates.appserver.error")
-		http.Error(resp, "Could not update channel version", status)
+		writeJSON(resp, status, []byte(`"Could not update channel version"`))
 		return
 	}
 
-	// Ping the appropriate server
-	// Is this ours or should we punt to a different server?
-	client, clientConnected := h.app.GetClient(uaid)
-	if !clientConnected {
-		// TODO: Move PropPinger here? otherwise it's connected?
-		h.metrics.Increment("updates.routed.outgoing")
-		var cancelSignal <-chan bool
-		if cn, ok := resp.(http.CloseNotifier); ok {
-			cancelSignal = cn.CloseNotify()
-		}
-		if err = h.router.Route(cancelSignal, uaid, chid, version, time.Now().UTC(), requestID, data); err != nil {
-			resp.WriteHeader(http.StatusNotFound)
-			resp.Write([]byte("false"))
-			return
-		}
+	cn, _ := resp.(http.CloseNotifier)
+	if !h.deliver(cn, uaid, chid, version, requestID, data) {
+		writeJSON(resp, http.StatusNotFound, []byte("false"))
+		return
 	}
 
-	if clientConnected {
-		h.app.Server().RequestFlush(client, chid, int64(version), data)
-		h.metrics.Increment("updates.appserver.received")
-	}
-
-	resp.Header().Set("Content-Type", "application/json")
-	resp.Write([]byte("{}"))
+	writeSuccess(resp)
+	updateSent = true
 	return
 }
 
-func (h *EndpointHandler) CloseOnce() error {
+// deliver routes an incoming update to the appropriate server.
+func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
+	version int64, requestID string, data string) (ok bool) {
+
+	worker, workerConnected := h.app.GetWorker(uaid)
+	// Always route to other servers first, in case we're holding open a stale
+	// connection and the client has already reconnected to a different server.
+	if h.alwaysRoute || !workerConnected {
+		h.metrics.Increment("updates.routed.outgoing")
+		// Abort routing if the connection goes away.
+		var cancelSignal <-chan bool
+		if cn != nil {
+			cancelSignal = cn.CloseNotify()
+		}
+		// Route the update.
+		ok, _ = h.router.Route(cancelSignal, uaid, chid, version,
+			timeNow().UTC(), requestID, data)
+		if ok {
+			return true
+		}
+	}
+	// If the device is not connected to this server, indicate whether routing
+	// was successful.
+	if !workerConnected {
+		return
+	}
+	// Try local delivery if routing failed.
+	err := h.app.Server().RequestFlush(worker, chid, version, data)
+	if err != nil {
+		h.metrics.Increment("updates.appserver.rejected")
+		return false
+	}
+	h.metrics.Increment("updates.appserver.received")
+	return true
+}
+
+func (h *EndpointHandler) Close() error {
+	return h.closeOnce.Do(h.close)
+}
+
+func (h *EndpointHandler) close() error {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})
@@ -373,6 +397,16 @@ func validPK(pk string) bool {
 		}
 	}
 	return true
+}
+
+func writeJSON(resp http.ResponseWriter, status int, data []byte) {
+	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(status)
+	resp.Write(data)
+}
+
+func writeSuccess(resp http.ResponseWriter) {
+	writeJSON(resp, http.StatusOK, []byte("{}"))
 }
 
 // o4fs

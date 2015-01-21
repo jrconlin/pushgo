@@ -61,7 +61,6 @@ type BroadcastRouterConfig struct {
 // Router proxies incoming updates to the Simple Push server ("contact") that
 // currently maintains a WebSocket connection to the target device.
 type BroadcastRouter struct {
-	Closable
 	app         *Application
 	hostname    string
 	locator     Locator
@@ -78,13 +77,13 @@ type BroadcastRouter struct {
 	closeSignal chan bool
 	maxDataLen  int
 	routerMux   *mux.Router
+	closeOnce   Once
 }
 
 func NewBroadcastRouter() (r *BroadcastRouter) {
 	r = &BroadcastRouter{
 		closeSignal: make(chan bool),
 	}
-	r.Closable.CloserOnce = r
 	return r
 }
 
@@ -200,7 +199,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	client, found := r.app.GetClient(uaid)
+	worker, found := r.app.GetWorker(uaid)
 	if !found {
 		http.Error(resp, "UID Not Found", http.StatusNotFound)
 		r.metrics.Increment("updates.routed.unknown")
@@ -246,7 +245,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		}
 		data = data[:r.maxDataLen]
 	}
-	if err = r.app.Server().UpdateClient(client, chid, uaid, routable.Version(),
+	if err = r.app.Server().UpdateWorker(worker, chid, routable.Version(),
 		sentAt, data); err != nil {
 		if logWarning {
 			r.logger.Warn("router", "Could not update local user",
@@ -299,7 +298,11 @@ func (r *BroadcastRouter) Status() (bool, error) {
 	return true, nil
 }
 
-func (r *BroadcastRouter) CloseOnce() error {
+func (r *BroadcastRouter) Close() error {
+	return r.closeOnce.Do(r.close)
+}
+
+func (r *BroadcastRouter) close() error {
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Closing router",
 			LogFields{"url": r.url})
@@ -337,7 +340,10 @@ func (r *BroadcastRouter) CloseOnce() error {
 }
 
 // Route routes an update packet to the correct server.
-func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, version int64, sentAt time.Time, logID string, data string) (err error) {
+func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
+	version int64, sentAt time.Time, logID string, data string) (
+	ok bool, err error) {
+
 	startTime := time.Now()
 	locator := r.app.Locator()
 	if locator == nil {
@@ -346,7 +352,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, ver
 				LogFields{"rid": logID, "uaid": uaid, "chid": chid})
 		}
 		r.metrics.Increment("router.broadcast.error")
-		return ErrNoLocator
+		return false, ErrNoLocator
 	}
 	segment := capn.NewBuffer(nil)
 	routable := NewRootRoutable(segment)
@@ -361,7 +367,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, ver
 				LogFields{"rid": logID, "error": err.Error()})
 		}
 		r.metrics.Increment("router.broadcast.error")
-		return err
+		return false, err
 	}
 	if r.logger.ShouldLog(DEBUG) {
 		r.logger.Debug("router", "Fetched contact list from discovery service",
@@ -376,7 +382,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, ver
 			"data":    data,
 			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
 	}
-	ok, err := r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
+	ok, err = r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
 	endTime := time.Now()
 	if err != nil {
 		if r.logger.ShouldLog(WARNING) {
@@ -384,7 +390,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, ver
 				LogFields{"rid": logID, "error": err.Error()})
 		}
 		r.metrics.Increment("router.broadcast.error")
-		return err
+		return false, err
 	}
 	var counterName, timerName string
 	if ok {
@@ -397,7 +403,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string, ver
 	r.metrics.Increment(counterName)
 	r.metrics.Timer(timerName, endTime.Sub(sentAt))
 	r.metrics.Timer("router.handled", endTime.Sub(startTime))
-	return nil
+	return ok, nil
 }
 
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an

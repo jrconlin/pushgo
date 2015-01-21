@@ -9,24 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gogo/protobuf/proto"
-
-	"github.com/mozilla-services/pushgo/id"
 )
 
 const TextLogTime = "2006-01-02 15:04:05 -0700"
-
-var (
-	idGenerateBytes = id.GenerateBytes
-	osGetPid        = os.Getpid
-	timeNow         = time.Now
-)
 
 // TryClose closes w if w implements io.Closer.
 func TryClose(w io.Writer) (err error) {

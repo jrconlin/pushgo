@@ -6,11 +6,9 @@ package simplepush
 
 import (
 	"errors"
-	"net/url"
 	"testing"
 	"time"
 
-	"github.com/mozilla-services/pushgo/client"
 	"github.com/rafrombrc/gomock/gomock"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -73,8 +71,9 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.miss").Times(1)
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
-		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldBeNil)
+		So(ok, ShouldBeFalse)
 	})
 
 	Convey("Should fail to route if contacts errors", t, func() {
@@ -86,27 +85,27 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.error").Times(1)
-		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldEqual, myErr)
+		So(ok, ShouldBeFalse)
 	})
 
 	Convey("Should succeed self-routing to a valid uaid", t, func() {
 		mockWorker := NewMockWorker(mockCtrl)
-		client := &Client{mockWorker, &PushWS{}, uaid}
-		app.AddClient(uaid, client)
+		app.AddWorker(uaid, mockWorker)
 
 		thisNode := router.URL()
 		thisNodeList := []string{thisNode}
 
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
 		mckStat.EXPECT().Increment("updates.routed.incoming")
-		mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
+			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-			"").Return(nil)
+		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
+		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
@@ -115,8 +114,9 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
 		mckStat.EXPECT().Timer("router.handled", gomock.Any())
 
-		err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 		So(err, ShouldBeNil)
+		So(ok, ShouldBeTrue)
 	})
 
 	mckLocator.EXPECT().Close()
@@ -165,8 +165,7 @@ func BenchmarkRouter(b *testing.B) {
 	cancelSignal := make(chan bool)
 
 	mockWorker := NewMockWorker(mockCtrl)
-	client := &Client{mockWorker, &PushWS{}, uaid}
-	app.AddClient(uaid, client)
+	app.AddWorker(uaid, mockWorker)
 
 	thisNode := router.URL()
 	thisNodeList := []string{thisNode}
@@ -182,121 +181,17 @@ func BenchmarkRouter(b *testing.B) {
 		mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
-		mckStore.EXPECT().IDsToKey(gomock.Any(), gomock.Any()).Return("", true)
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
+		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
+			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), gomock.Any(), chid, version,
-			"").Return(nil)
+		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
 
 		router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 	}
 
 	mckLocator.EXPECT().Close()
 	router.Close()
-}
-
-func TestBroadcastStaticLocator(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping router test in short mode")
-	}
-
-	cServer := &TestServer{Name: "c", LogLevel: 0}
-	cApp, cConn, err := cServer.Dial()
-	if err != nil {
-		t.Fatalf("Error starting test application %q: %s", cServer.Name, err)
-	}
-	defer cServer.Stop()
-	defer cConn.Close()
-	defer cConn.Purge()
-
-	bServer := &TestServer{
-		Name:     "b",
-		LogLevel: 0,
-		Contacts: []string{cApp.Router().URL()},
-	}
-	bApp, bConn, err := bServer.Dial()
-	if err != nil {
-		t.Fatalf("Error starting test application %q: %s", bServer.Name, err)
-	}
-	defer bServer.Stop()
-	defer bConn.Close()
-	defer bConn.Purge()
-
-	aServer := &TestServer{
-		Name:     "a",
-		LogLevel: 0,
-		Contacts: []string{
-			cApp.Router().URL(),
-			bApp.Router().URL(),
-		},
-	}
-	aApp, aConn, err := aServer.Dial()
-	if err != nil {
-		t.Fatalf("Error starting test application %q: %s", aServer.Name, err)
-	}
-	defer aServer.Stop()
-	defer aConn.Close()
-	defer aConn.Purge()
-
-	// Subscribe to a channel on c.
-	cChan, cEndpoint, err := cConn.Subscribe()
-	if err != nil {
-		t.Fatalf("Error subscribing to channel: %s", err)
-	}
-
-	stopChan := make(chan bool)
-	defer close(stopChan)
-	errChan := make(chan error)
-	notifyApp := func(app *Application, channelId, endpoint string, count int) {
-		uri, err := url.Parse(endpoint)
-		if err != nil {
-			select {
-			case <-stopChan:
-			case errChan <- err:
-			}
-			return
-		}
-		uri.Host = app.EndpointHandler().Listener().Addr().String()
-		for i := 1; i <= count; i++ {
-			if err = client.Notify(uri.String(), int64(i)); err != nil {
-				break
-			}
-		}
-		select {
-		case <-stopChan:
-		case errChan <- err:
-		}
-	}
-
-	// Wait for updates on c.
-	go func() {
-		var err error
-		for i := 0; i < 10; i++ {
-			var updates []client.Update
-			if updates, err = cConn.ReadBatch(); err != nil {
-				break
-			}
-			if err = cConn.AcceptBatch(updates); err != nil {
-				break
-			}
-		}
-		select {
-		case <-stopChan:
-		case errChan <- err:
-		}
-	}()
-
-	// Send an update via a.
-	go notifyApp(aApp, cChan, cEndpoint, 5)
-
-	// Send an update via b.
-	go notifyApp(bApp, cChan, cEndpoint, 5)
-
-	for i := 0; i < 3; i++ {
-		if err := <-errChan; err != nil {
-			t.Fatal(err)
-		}
-	}
 }

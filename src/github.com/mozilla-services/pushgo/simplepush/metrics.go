@@ -18,8 +18,6 @@ type trec struct {
 	Avg   float64
 }
 
-type JsMap map[string]interface{}
-
 type timer map[string]trec
 
 type MetricsConfig struct {

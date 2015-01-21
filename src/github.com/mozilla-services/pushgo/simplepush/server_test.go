@@ -5,232 +5,374 @@
 package simplepush
 
 import (
-	"fmt"
-	"sync"
+	"crypto/aes"
+	"errors"
+	"testing"
+	"time"
 
-	"github.com/mozilla-services/pushgo/client"
+	"github.com/rafrombrc/gomock/gomock"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-const (
-	// maxChannels is the maximum number of channels allowed in the opening
-	// handshake. Clients that specify more channels will receive a new device
-	// ID.
-	maxChannels = 500
-)
+func TestServerHello(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
 
-func init() {
-	testExistsHooks = make(map[string]bool)
-}
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckPinger := NewMockPropPinger(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
 
-type ConfigStore interface {
-	HasConfigStruct
-	Store
-}
+	pingData := []byte(`{"regid":123}`)
 
-type TestServer struct {
-	sync.Mutex
-	Name         string
-	ClientAddr   string
-	EndpointAddr string
-	RouterAddr   string
-	LogLevel     int32
-	Contacts     []string
-	Redirects    []string
-	Threshold    float64
-	NewStore     func() (store ConfigStore, configStruct interface{}, err error)
-	app          *Application
-	lastErr      error
-	isStopping   bool
-}
+	Convey("Should handle connecting clients", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetPropPinger(mckPinger)
+		app.SetRouter(mckRouter)
 
-func (t *TestServer) Stop() {
-	defer t.Unlock()
-	t.Lock()
-	if t.isStopping {
-		return
-	}
-	t.isStopping = true
-	if t.app != nil {
-		t.app.Close()
-	}
-}
+		srv := NewServer()
+		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+			t.Fatalf("Error initializing server: %s", err)
+		}
+		app.SetServer(srv)
 
-func (t *TestServer) fatal(err error) {
-	defer t.Unlock()
-	t.Lock()
-	if !t.isStopping {
-		t.app.Close()
-		t.isStopping = true
-	}
-	if t.lastErr == nil {
-		t.lastErr = err
-	}
-}
-
-func (t *TestServer) run() {
-	err := <-t.app.Run()
-	if err != nil {
-		t.fatal(err)
-	}
-}
-
-func (t *TestServer) load() (*Application, error) {
-	loaders := PluginLoaders{
-		PluginApp: func(app *Application) (HasConfigStruct, error) {
-			appConf := app.ConfigStruct().(*ApplicationConfig)
-			appConf.TokenKey = "" // Disable endpoint encryption.
-			if err := app.Init(app, appConf); err != nil {
-				return nil, fmt.Errorf("Error initializing application: %#v", err)
-			}
-			return app, nil
-		},
-		PluginLogger: func(app *Application) (HasConfigStruct, error) {
-			logger := new(StdOutLogger)
-			loggerConf := logger.ConfigStruct().(*StdOutLoggerConfig)
-			loggerConf.Format = "text"
-			loggerConf.Filter = int32(t.LogLevel)
-			if err := logger.Init(app, loggerConf); err != nil {
-				return nil, fmt.Errorf("Error initializing logger: %#v", err)
-			}
-			return logger, nil
-		},
-		PluginPinger: func(app *Application) (HasConfigStruct, error) {
-			pinger := new(NoopPing)
-			pingerConf := pinger.ConfigStruct().(*NoopPingConfig)
-			if err := pinger.Init(app, pingerConf); err != nil {
-				return nil, fmt.Errorf("Error initializing proprietary pinger: %#v", err)
-			}
-			return pinger, nil
-		},
-		PluginMetrics: func(app *Application) (HasConfigStruct, error) {
-			metrics := new(Metrics)
-			metricsConf := metrics.ConfigStruct().(*MetricsConfig)
-			if err := metrics.Init(app, metricsConf); err != nil {
-				return nil, fmt.Errorf("Error initializing metrics: %#v", err)
-			}
-			return metrics, nil
-		},
-		PluginStore: func(app *Application) (plugin HasConfigStruct, err error) {
-			var (
-				store        ConfigStore
-				configStruct interface{}
+		Convey("Should register with the proprietary pinger", func() {
+			uaid := "c4fe17154cd74500ad1d51f2955fd79c"
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckPinger.EXPECT().Register(uaid, pingData),
+				mckRouter.EXPECT().Register(uaid),
 			)
-			if t.NewStore != nil {
-				store, configStruct, err = t.NewStore()
-			} else {
-				store = new(NoStore)
-				configStruct = store.ConfigStruct()
-			}
-			if err != nil {
-				return nil, fmt.Errorf("Error creating store: %#v", err)
-			}
-			if err = store.Init(app, configStruct); err != nil {
-				return nil, fmt.Errorf("Error initializing store: %#v", err)
-			}
-			return store, nil
-		},
-		PluginRouter: func(app *Application) (HasConfigStruct, error) {
-			router := NewBroadcastRouter()
-			routerConf := router.ConfigStruct().(*BroadcastRouterConfig)
-			routerConf.Listener.Addr = t.RouterAddr
-			if err := router.Init(app, routerConf); err != nil {
-				return nil, fmt.Errorf("Error initializing router: %#v", err)
-			}
-			return router, nil
-		},
-		PluginLocator: func(app *Application) (HasConfigStruct, error) {
-			locator := new(StaticLocator)
-			locatorConf := locator.ConfigStruct().(*StaticLocatorConf)
-			locatorConf.Contacts = t.Contacts
-			if err := locator.Init(app, locatorConf); err != nil {
-				return nil, fmt.Errorf("Error initializing locator: %#v", err)
-			}
-			return locator, nil
-		},
-		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
-			balancer := new(StaticBalancer)
-			balancerConf := balancer.ConfigStruct().(*StaticBalancerConf)
-			balancerConf.Redirects = t.Redirects
-			balancerConf.Threshold = t.Threshold
-			if err := balancer.Init(app, balancerConf); err != nil {
-				return nil, fmt.Errorf("Error initializing balancer: %#v", err)
-			}
-			return balancer, nil
-		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := NewServer()
-			servConf := serv.ConfigStruct().(*ServerConfig)
-			if err := serv.Init(app, servConf); err != nil {
-				return nil, fmt.Errorf("Error initializing server: %#v", err)
-			}
-			return serv, nil
-		},
-		PluginSocket: func(app *Application) (HasConfigStruct, error) {
-			sh := NewSocketHandler()
-			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
-			shConf.Listener.Addr = t.ClientAddr
-			if err := sh.Init(app, shConf); err != nil {
-				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
-			}
-			return sh, nil
-		},
-		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
-			eh := NewEndpointHandler()
-			ehConf := eh.ConfigStruct().(*EndpointHandlerConfig)
-			ehConf.Listener.Addr = t.EndpointAddr
-			if err := eh.Init(app, ehConf); err != nil {
-				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
-			}
-			return eh, nil
-		},
-		PluginHealth: func(app *Application) (HasConfigStruct, error) {
-			h := NewHealthHandlers()
-			if err := h.Init(app, h.ConfigStruct()); err != nil {
-				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
-			}
-			return h, nil
-		},
-	}
-	return loaders.Load(int(t.LogLevel))
+			err := srv.Hello(mckWorker, pingData)
+			So(err, ShouldBeNil)
+
+			worker, workerConnected := app.GetWorker(uaid)
+			So(workerConnected, ShouldBeTrue)
+			So(worker, ShouldResemble, mckWorker)
+		})
+
+		Convey("Should not fail if pinger registration fails", func() {
+			uaid := "3529f588b03e411295b8df6d38e63ce7"
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckPinger.EXPECT().Register(uaid, pingData).Return(errors.New(
+					"external system on fire")),
+				mckRouter.EXPECT().Register(uaid),
+			)
+
+			err := srv.Hello(mckWorker, pingData)
+			So(err, ShouldBeNil)
+			So(app.WorkerExists(uaid), ShouldBeTrue)
+		})
+	})
 }
 
-func (t *TestServer) Listen() (app *Application, err error) {
-	defer t.Unlock()
-	t.Lock()
-	if t.isStopping {
-		err = t.lastErr
-		return
-	}
-	if t.app != nil {
-		return t.app, nil
-	}
-	if t.app, err = t.load(); err != nil {
-		return nil, err
-	}
-	go t.run()
-	return t.app, nil
+func TestServerBye(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStore := NewMockStore(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
+
+	Convey("Should clean up after disconnected clients", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetStore(mckStore)
+		app.SetPropPinger(mckPinger)
+		app.SetRouter(mckRouter)
+
+		srv := NewServer()
+		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+			t.Fatalf("Error initializing server: %s", err)
+		}
+		app.SetServer(srv)
+
+		Convey("Should remove the client from the map", func() {
+			var err error
+			uaid := "0cd9b0990bb749eb808206924e40a323"
+			prevWorker := NewMockWorker(mockCtrl)
+			prevWorker.EXPECT().Born().AnyTimes()
+			app.AddWorker(uaid, prevWorker)
+			So(app.WorkerExists(uaid), ShouldBeTrue)
+
+			gomock.InOrder(
+				prevWorker.EXPECT().UAID().Return(uaid),
+				mckRouter.EXPECT().Unregister(uaid),
+				prevWorker.EXPECT().Close(),
+			)
+			err = srv.Bye(prevWorker)
+			So(err, ShouldBeNil)
+			So(app.WorkerExists(uaid), ShouldBeFalse)
+
+			app.AddWorker(uaid, mckWorker)
+
+			gomock.InOrder(
+				prevWorker.EXPECT().UAID().Return(uaid),
+				prevWorker.EXPECT().Close(),
+			)
+			err = srv.Bye(prevWorker)
+			So(err, ShouldBeNil)
+			So(app.WorkerExists(uaid), ShouldBeTrue)
+		})
+	})
 }
 
-func (t *TestServer) Origin() (string, error) {
-	app, err := t.Listen()
-	if err != nil {
-		return "", err
-	}
-	return app.SocketHandler().URL(), nil
+func TestServerRegister(t *testing.T) {
+	useMockFuncs()
+	defer useStdFuncs()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStore := NewMockStore(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckEndHandler := NewMockHandler(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
+
+	uaid := "480ce74851d04104bfe11204c020ee81"
+	chid := "5b0ae7e9de7f42529a361e3bfe318142"
+
+	Convey("Should set up channels", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetStore(mckStore)
+		app.SetPropPinger(mckPinger)
+		app.SetRouter(mckRouter)
+		app.SetEndpointHandler(mckEndHandler)
+
+		Convey("Should reject invalid IDs", func() {
+			srv := NewServer()
+			if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+				t.Fatalf("Error initializing server: %s", err)
+			}
+			app.SetServer(srv)
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("", ErrInvalidKey),
+			)
+
+			_, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldEqual, ErrInvalidKey)
+		})
+
+		Convey("Should not encrypt endpoints without a key", func() {
+			app.SetTokenKey("")
+			srv := NewServer()
+			if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+				t.Fatalf("Error initializing server: %s", err)
+			}
+			app.SetServer(srv)
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("abc", nil),
+				mckEndHandler.EXPECT().URL().Return("https://example.com"),
+			)
+
+			endpoint, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldBeNil)
+			So(endpoint, ShouldEqual, "https://example.com/update/abc")
+		})
+
+		Convey("Should encrypt endpoints with a key", func() {
+			app.SetTokenKey("HVozKz_n-DPopP5W877DpRKQOW_dylVf")
+			srv := NewServer()
+			if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+				t.Fatalf("Error initializing server: %s", err)
+			}
+			app.SetServer(srv)
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("456", nil),
+				mckEndHandler.EXPECT().URL().Return("https://example.org"),
+			)
+
+			endpoint, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldBeNil)
+			So(endpoint, ShouldEqual,
+				"https://example.org/update/AAECAwQFBgcICQoLDA0OD3afbw==")
+		})
+
+		Convey("Should reject invalid keys", func() {
+			app.SetTokenKey("lLyhlLk8qus1ky4ER8yjN5o=")
+			srv := NewServer()
+			if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+				t.Fatalf("Error initializing server: %s", err)
+			}
+			app.SetServer(srv)
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
+			)
+
+			_, err := srv.Regis(mckWorker, chid)
+			So(err, ShouldEqual, aes.KeySizeError(17))
+		})
+	})
 }
 
-func (t *TestServer) Dial(channelIds ...string) (
-	app *Application, conn *client.Conn, err error) {
+func TestRequestFlush(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
 
-	if app, err = t.Listen(); err != nil {
-		return
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckPinger := NewMockPropPinger(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
+
+	uaid := "41085ed1e5474ec9aa6ddef595b1bb6f"
+
+	Convey("Should flush updates to the client", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetPropPinger(mckPinger)
+
+		srv := NewServer()
+		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+			t.Fatalf("Error initializing server: %s", err)
+		}
+		app.SetServer(srv)
+
+		Convey("Should allow nil clients", func() {
+			err := srv.RequestFlush(nil, "", 0, "")
+			So(err, ShouldBeNil)
+		})
+
+		Convey("Should flush to the underlying worker", func() {
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckWorker.EXPECT().Flush(int64(0), "", int64(0), "").Return(nil),
+			)
+			err := srv.RequestFlush(mckWorker, "", 0, "")
+			So(err, ShouldBeNil)
+		})
+
+		Convey("Should send a proprietary ping if flush panics", func() {
+			flushErr := errors.New("universe has imploded")
+			flushPanic := func(int64, string, int64, string) error {
+				panic(flushErr)
+				return nil
+			}
+			chid := "41d1a3a6517b47d5a4aaabd82ae5f3ba"
+			version := int64(3)
+			data := "Unfortunately, as you probably already know, people"
+
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckWorker.EXPECT().Flush(int64(0), chid, version, data).Do(flushPanic),
+				mckPinger.EXPECT().Send(uaid, version, data),
+			)
+
+			err := srv.RequestFlush(mckWorker, chid, version, data)
+			So(err, ShouldEqual, flushErr)
+		})
+	})
+}
+
+func TestUpdateClient(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStore := NewMockStore(mockCtrl)
+	mckWorker := NewMockWorker(mockCtrl)
+
+	uaid := "e3cbb350304b4327a069d5c07fc434b8"
+	chid := "d468168f24cc4ca8bae3b07530559be6"
+	version := int64(3)
+	data := "This is a test of the emergency broadcasting system."
+
+	Convey("Should update storage and flush updates", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetStore(mckStore)
+
+		srv := NewServer()
+		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+			t.Fatalf("Error initializing server: %s", err)
+		}
+		app.SetServer(srv)
+
+		Convey("Should flush updates to the worker", func() {
+			mckWorker.EXPECT().UAID().Return(uaid).Times(2)
+			gomock.InOrder(
+				mckStore.EXPECT().Update(uaid, chid, version).Return(nil),
+				mckWorker.EXPECT().Flush(int64(0), chid, version, data),
+			)
+			err := srv.UpdateWorker(mckWorker, chid, version, time.Time{}, data)
+			So(err, ShouldBeNil)
+		})
+
+		Convey("Should fail if storage is unavailable", func() {
+			updateErr := errors.New("omg, everything is exploding")
+			gomock.InOrder(
+				mckWorker.EXPECT().UAID().Return(uaid),
+				mckStore.EXPECT().Update(uaid, chid, version).Return(updateErr),
+			)
+			err := srv.UpdateWorker(mckWorker, chid, version, time.Time{}, data)
+			So(err, ShouldEqual, updateErr)
+		})
+
+		Convey("Should fail if the worker returns an error", func() {
+			flushErr := errors.New("cannot brew coffee with a teapot")
+			mckWorker.EXPECT().UAID().Return(uaid).Times(2)
+			gomock.InOrder(
+				mckStore.EXPECT().Update(uaid, chid, version).Return(nil),
+				mckWorker.EXPECT().Flush(int64(0), chid, version, data).Return(flushErr),
+			)
+			err := srv.UpdateWorker(mckWorker, chid, version, time.Time{}, data)
+			So(err, ShouldEqual, flushErr)
+		})
+	})
+}
+
+func BenchmarkEndpoint(b *testing.B) {
+	mockCtrl := gomock.NewController(b)
+	defer mockCtrl.Finish()
+
+	app := NewApplication()
+	srv := NewServer()
+	if err := srv.Init(app, srv.ConfigStruct()); err != nil {
+		b.Fatalf("Error initializing server: %s", err)
 	}
-	origin, err := t.Origin()
-	if err != nil {
-		return
+	app.SetServer(srv)
+	mckEndHandler := NewMockHandler(mockCtrl)
+	mckEndHandler.EXPECT().URL().Return("https://example.com").Times(b.N)
+	app.SetEndpointHandler(mckEndHandler)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		endpoint, err := srv.genEndpoint("123")
+		if err != nil {
+			b.Fatalf("Error generating push endpoint: %s", err)
+		}
+		expected := "https://example.com/update/123"
+		if endpoint != expected {
+			b.Fatalf("Wrong endpoint: got %q; want %q", endpoint, expected)
+		}
 	}
-	if conn, _, err = client.Dial(origin, channelIds...); err != nil {
-		return
-	}
-	return
 }

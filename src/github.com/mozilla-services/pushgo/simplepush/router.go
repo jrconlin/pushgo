@@ -25,8 +25,6 @@ var (
 )
 
 type Router interface {
-	HasConfigStruct
-
 	// Start the router
 	Start(chan<- error)
 
@@ -35,7 +33,7 @@ type Router interface {
 
 	// Route a notification
 	Route(cancelSignal <-chan bool, uaid, chid string, version int64,
-		sentAt time.Time, logID string, data string) error
+		sentAt time.Time, logID string, data string) (bool, error)
 
 	// Register handling for a uaid, this func may be called concurrently
 	Register(uaid string) error

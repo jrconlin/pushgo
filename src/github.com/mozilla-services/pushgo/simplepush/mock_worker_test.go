@@ -5,6 +5,7 @@ package simplepush
 
 import (
 	gomock "github.com/rafrombrc/gomock/gomock"
+	time "time"
 )
 
 // Mock of Worker interface
@@ -28,20 +29,58 @@ func (_m *MockWorker) EXPECT() *_MockWorkerRecorder {
 	return _m.recorder
 }
 
-func (_m *MockWorker) Run(_param0 *PushWS) {
-	_m.ctrl.Call(_m, "Run", _param0)
+func (_m *MockWorker) Born() time.Time {
+	ret := _m.ctrl.Call(_m, "Born")
+	ret0, _ := ret[0].(time.Time)
+	return ret0
 }
 
-func (_mr *_MockWorkerRecorder) Run(arg0 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Run", arg0)
+func (_mr *_MockWorkerRecorder) Born() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Born")
 }
 
-func (_m *MockWorker) Flush(_param0 *PushWS, _param1 int64, _param2 string, _param3 int64, _param4 string) error {
-	ret := _m.ctrl.Call(_m, "Flush", _param0, _param1, _param2, _param3, _param4)
+func (_m *MockWorker) UAID() string {
+	ret := _m.ctrl.Call(_m, "UAID")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+func (_mr *_MockWorkerRecorder) UAID() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "UAID")
+}
+
+func (_m *MockWorker) SetUAID(uaid string) {
+	_m.ctrl.Call(_m, "SetUAID", uaid)
+}
+
+func (_mr *_MockWorkerRecorder) SetUAID(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SetUAID", arg0)
+}
+
+func (_m *MockWorker) Run() {
+	_m.ctrl.Call(_m, "Run")
+}
+
+func (_mr *_MockWorkerRecorder) Run() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Run")
+}
+
+func (_m *MockWorker) Flush(lastAccessed int64, chid string, version int64, data string) error {
+	ret := _m.ctrl.Call(_m, "Flush", lastAccessed, chid, version, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockWorkerRecorder) Flush(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Flush", arg0, arg1, arg2, arg3, arg4)
+func (_mr *_MockWorkerRecorder) Flush(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Flush", arg0, arg1, arg2, arg3)
+}
+
+func (_m *MockWorker) Close() error {
+	ret := _m.ctrl.Call(_m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockWorkerRecorder) Close() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
 }

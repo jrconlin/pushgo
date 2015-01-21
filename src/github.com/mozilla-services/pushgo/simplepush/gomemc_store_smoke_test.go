@@ -1,3 +1,4 @@
+// +build smoke
 // +build memcached_server_test
 // +build !cgo !libmemcached
 
@@ -13,9 +14,9 @@ import (
 	"github.com/kitcambridge/envconf"
 )
 
-// Server is a memcached-backed test Simple Push server, using the
+// testServer is a memcached-backed test Simple Push server, using the
 // gomemcache driver.
-var Server = &TestServer{
+var testServer = &TestServer{
 	LogLevel: 0,
 	NewStore: func() (store ConfigStore, configStruct interface{}, err error) {
 		store = NewGomemc()

@@ -94,9 +94,15 @@ func TestConfigFile(t *testing.T) {
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
-	if !reflect.DeepEqual(origins, app.sh.origins) {
-		t.Errorf("Mismatched origins: got %#v; want %#v",
-			app.sh.origins, origins)
+	socketHandler := app.SocketHandler()
+	if sh, ok := socketHandler.(*SocketHandler); ok {
+		if !reflect.DeepEqual(origins, sh.origins) {
+			t.Errorf("Mismatched origins: got %#v; want %#v",
+				sh.origins, origins)
+		}
+	} else {
+		t.Errorf("WebSocket handler type assertion failed: %#v",
+			app.SocketHandler())
 	}
 	logger := app.Logger()
 	if stdOutLogger, ok := logger.Logger.(*StdOutLogger); ok {
@@ -134,9 +140,14 @@ func TestConfigFile(t *testing.T) {
 	} else {
 		t.Errorf("Pinger type assertion failed: %#v", pinger)
 	}
-	handlers := app.EndpointHandler()
-	if handlers.maxDataLen != 512 {
-		t.Errorf("Wrong maximum data size: got %d; want 512", handlers.maxDataLen)
+	endpointHandler := app.EndpointHandler()
+	if eh, ok := endpointHandler.(*EndpointHandler); ok {
+		if eh.maxDataLen != 512 {
+			t.Errorf("Wrong maximum data size: got %d; want 512", eh.maxDataLen)
+		}
+	} else {
+		t.Errorf("Update handler type assertion failed: %#v",
+			endpointHandler)
 	}
 	balancer := app.Balancer()
 	if _, ok := balancer.(*NoBalancer); !ok {
