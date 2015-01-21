@@ -167,63 +167,63 @@ func harmlessConnectionError(err error) (harmless bool) {
 	return
 }
 
-func (self *WorkerWS) Born() time.Time     { return self.born }
-func (self *WorkerWS) SetUAID(uaid string) { self.uaid = uaid }
-func (self *WorkerWS) UAID() string        { return self.uaid }
+func (w *WorkerWS) Born() time.Time     { return w.born }
+func (w *WorkerWS) SetUAID(uaid string) { w.uaid = uaid }
+func (w *WorkerWS) UAID() string        { return w.uaid }
 
 // ReadDeadline determines the deadline t for the next read. If the handshake
 // timeout and pong interval are not set, t is the zero value.
-func (self *WorkerWS) ReadDeadline() (t time.Time) {
-	switch self.state {
+func (w *WorkerWS) ReadDeadline() (t time.Time) {
+	switch w.state {
 	// For unidentified clients, the deadline is the handshake timeout relative
 	// to the socket creation time. This prevents clients from extending the
 	// timeout by sending pings.
 	case WorkerInactive:
-		if self.helloTimeout > 0 {
-			t = self.Born().Add(self.helloTimeout)
+		if w.helloTimeout > 0 {
+			t = w.Born().Add(w.helloTimeout)
 		}
 
 	// For clients that have completed the handshake, the deadline is the end of
 	// the next pong interval.
 	case WorkerActive:
-		if self.pongInterval > 0 {
-			t = timeNow().Add(self.pongInterval)
+		if w.pongInterval > 0 {
+			t = timeNow().Add(w.pongInterval)
 		}
 	}
 	return
 }
 
-func (self *WorkerWS) sniffer() {
+func (w *WorkerWS) sniffer() {
 	// Sniff the websocket for incoming data.
 	// Reading from the websocket is a blocking operation, and we also
 	// need to write out when an even occurs. This isolates the incoming
 	// reads to a separate go process.
-	logWarning := self.logger.ShouldLog(WARNING)
+	logWarning := w.logger.ShouldLog(WARNING)
 	buf := new(bytes.Buffer)
 
-	for !self.stopped() {
+	for !w.stopped() {
 		buf.Reset()
-		self.SetReadDeadline(self.ReadDeadline())
-		raw, err := self.ReadBinary()
+		w.SetReadDeadline(w.ReadDeadline())
+		raw, err := w.ReadBinary()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if self.state == WorkerInactive {
-					if self.logger.ShouldLog(DEBUG) {
-						self.logger.Debug("worker", "Worker Idle connection. Closing socket",
-							LogFields{"rid": self.logID})
+				if w.state == WorkerInactive {
+					if w.logger.ShouldLog(DEBUG) {
+						w.logger.Debug("worker", "Worker Idle connection. Closing socket",
+							LogFields{"rid": w.logID})
 					}
-					self.stop()
+					w.stop()
 					continue
 				}
-				if err = self.WriteText("{}"); err == nil {
+				if err = w.WriteText("{}"); err == nil {
 					continue
 				}
 			}
-			self.stop()
+			w.stop()
 			if err != io.EOF {
-				if self.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {
-					self.logger.Error("worker", "Websocket Error",
-						LogFields{"rid": self.logID, "error": ErrStr(err)})
+				if w.logger.ShouldLog(ERROR) && !harmlessConnectionError(err) {
+					w.logger.Error("worker", "Websocket Error",
+						LogFields{"rid": w.logID, "error": ErrStr(err)})
 				}
 			}
 			continue
@@ -240,96 +240,96 @@ func (self *WorkerWS) sniffer() {
 			// incoming slice.
 			if logWarning {
 				if syntaxErr, ok := err.(*json.SyntaxError); ok {
-					self.logger.Warn("worker", "Malformed request payload", LogFields{
-						"rid":      self.logID,
+					w.logger.Warn("worker", "Malformed request payload", LogFields{
+						"rid":      w.logID,
 						"expected": string(msg[:syntaxErr.Offset]),
 						"error":    syntaxErr.Error()})
 				} else {
-					self.logger.Warn("worker", "Error validating request payload",
-						LogFields{"rid": self.logID, "error": ErrStr(err)})
+					w.logger.Warn("worker", "Error validating request payload",
+						LogFields{"rid": w.logID, "error": ErrStr(err)})
 				}
 			}
-			self.stop()
+			w.stop()
 			continue
 		} else {
 			msg = buf.Bytes()
 		}
 
 		//ignore {} pings for logging purposes.
-		if len(msg) > 5 && self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Socket receive",
-				LogFields{"rid": self.logID, "raw": string(msg)})
+		if len(msg) > 5 && w.logger.ShouldLog(DEBUG) {
+			w.logger.Debug("worker", "Socket receive",
+				LogFields{"rid": w.logID, "raw": string(msg)})
 		}
 		header := new(RequestHeader)
 		if isPingBody(msg) {
 			header.Type = "ping"
 		} else if err = json.Unmarshal(msg, header); err != nil {
 			if logWarning {
-				self.logger.Warn("worker", "Error parsing request header",
-					LogFields{"rid": self.logID, "error": ErrStr(err)})
+				w.logger.Warn("worker", "Error parsing request header",
+					LogFields{"rid": w.logID, "error": ErrStr(err)})
 			}
-			self.handleError(msg, ErrInvalidHeader)
-			self.stop()
+			w.handleError(msg, ErrInvalidHeader)
+			w.stop()
 			continue
 		}
 		switch strings.ToLower(header.Type) {
 		case "purge": // No-op for backward compatibility.
 		case "ping":
-			err = self.Ping(header, msg)
+			err = w.Ping(header, msg)
 		case "hello":
-			err = self.Hello(header, msg)
+			err = w.Hello(header, msg)
 		case "ack":
-			err = self.Ack(header, msg)
+			err = w.Ack(header, msg)
 		case "register":
-			err = self.Register(header, msg)
+			err = w.Register(header, msg)
 		case "unregister":
-			err = self.Unregister(header, msg)
+			err = w.Unregister(header, msg)
 		default:
 			if logWarning {
-				self.logger.Warn("worker", "Bad command",
-					LogFields{"rid": self.logID, "cmd": header.Type})
+				w.logger.Warn("worker", "Bad command",
+					LogFields{"rid": w.logID, "cmd": header.Type})
 			}
 			err = ErrUnsupportedType
 		}
 		if err != nil {
-			if self.logger.ShouldLog(DEBUG) {
-				self.logger.Debug("worker", "Run returned error",
-					LogFields{"rid": self.logID, "cmd": header.Type, "error": ErrStr(err)})
+			if w.logger.ShouldLog(DEBUG) {
+				w.logger.Debug("worker", "Run returned error",
+					LogFields{"rid": w.logID, "cmd": header.Type, "error": ErrStr(err)})
 			}
-			self.handleError(msg, err)
-			self.stop()
+			w.handleError(msg, err)
+			w.stop()
 			continue
 		}
 	}
 }
 
-func (self *WorkerWS) stopped() bool {
-	return self.state == WorkerStopped
+func (w *WorkerWS) stopped() bool {
+	return w.state == WorkerStopped
 }
 
-func (self *WorkerWS) stop() {
-	self.state = WorkerStopped
+func (w *WorkerWS) stop() {
+	w.state = WorkerStopped
 }
 
 // standardize the error reporting back to the client.
-func (self *WorkerWS) handleError(message []byte, err error) (ret error) {
+func (w *WorkerWS) handleError(message []byte, err error) (ret error) {
 	reply := make(map[string]interface{})
 	if ret = json.Unmarshal(message, &reply); ret != nil {
 		return
 	}
 	reply["status"], reply["error"] = ErrToStatus(err)
-	return self.WriteJSON(reply)
+	return w.WriteJSON(reply)
 }
 
 // General workhorse loop for the websocket handler.
-func (self *WorkerWS) Run() {
+func (w *WorkerWS) Run() {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if err, _ := r.(error); err != nil && w.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
-				self.logger.Error("worker", "Unhandled connection error", LogFields{
-					"rid":   self.logID,
+				w.logger.Error("worker", "Unhandled connection error", LogFields{
+					"rid":   w.logID,
 					"error": ErrStr(err),
 					"stack": string(stack[:n])})
 			}
@@ -337,25 +337,25 @@ func (self *WorkerWS) Run() {
 		return
 	}()
 
-	self.sniffer()
+	w.sniffer()
 
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("worker", "Run has completed a shut-down",
-			LogFields{"rid": self.logID})
+	if w.logger.ShouldLog(INFO) {
+		w.logger.Info("worker", "Run has completed a shut-down",
+			LogFields{"rid": w.logID})
 	}
 }
 
 // Associate the UAID for this socket connection (and flush any data that
 // may be pending for the connection)
-func (self *WorkerWS) Hello(header *RequestHeader, message []byte) (err error) {
-	logWarning := self.logger.ShouldLog(WARNING)
+func (w *WorkerWS) Hello(header *RequestHeader, message []byte) (err error) {
+	logWarning := w.logger.ShouldLog(WARNING)
 	// register the UAID
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if err, _ := r.(error); err != nil && w.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
-				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.logID,
+				w.logger.Error("worker", "Unhandled error", LogFields{"rid": w.logID,
 					"cmd": "hello", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
@@ -366,76 +366,76 @@ func (self *WorkerWS) Hello(header *RequestHeader, message []byte) (err error) {
 	if err = json.Unmarshal(message, request); err != nil {
 		return ErrInvalidParams
 	}
-	wroteReply, err := self.registerDevice(header, request)
+	wroteReply, err := w.registerDevice(header, request)
 	if err != nil {
 		return err
 	}
 	if wroteReply {
-		self.stop()
+		w.stop()
 		return nil
 	}
-	uaid := self.UAID()
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "sending response",
-			LogFields{"rid": self.logID, "cmd": "hello", "uaid": uaid})
+	uaid := w.UAID()
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "sending response",
+			LogFields{"rid": w.logID, "cmd": "hello", "uaid": uaid})
 	}
 	reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":200}`,
 		header.Type, uaid)
-	if err = self.WriteText(reply); err != nil {
+	if err = w.WriteText(reply); err != nil {
 		if logWarning {
-			self.logger.Warn("worker", "Error writing client handshake", LogFields{
-				"rid": self.logID, "error": err.Error()})
+			w.logger.Warn("worker", "Error writing client handshake", LogFields{
+				"rid": w.logID, "error": err.Error()})
 		}
 		return err
 	}
-	self.metrics.Increment("updates.client.hello")
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("worker", "Client successfully connected",
-			LogFields{"rid": self.logID})
+	w.metrics.Increment("updates.client.hello")
+	if w.logger.ShouldLog(INFO) {
+		w.logger.Info("worker", "Client successfully connected",
+			LogFields{"rid": w.logID})
 	}
-	self.state = WorkerActive
+	w.state = WorkerActive
 	// Get the lastAccessed time from wherever
-	return self.Flush(0, "", 0, "")
+	return w.Flush(0, "", 0, "")
 }
 
 // registerDevice adds the worker to the worker map and registers the
 // connecting client with the router.
-func (self *WorkerWS) registerDevice(header *RequestHeader,
+func (w *WorkerWS) registerDevice(header *RequestHeader,
 	request *HelloRequest) (wroteReply bool, err error) {
 
-	uaid, allowRedirect, err := self.handshake(request)
+	uaid, allowRedirect, err := w.handshake(request)
 	if err != nil {
 		return false, err
 	}
-	self.SetUAID(uaid)
+	w.SetUAID(uaid)
 	if allowRedirect {
-		if wroteReply = self.checkRedirect(header); wroteReply {
+		if wroteReply = w.checkRedirect(header); wroteReply {
 			return
 		}
 	}
 	// register any proprietary connection requirements
-	self.registerPropPing([]byte(request.PingData))
+	w.registerPropPing([]byte(request.PingData))
 	// Add the worker to the map and register with the router.
-	if added := self.app.AddWorker(uaid, self); added {
+	if added := w.app.AddWorker(uaid, w); added {
 		// Avoid re-registration for duplicate handshakes.
-		self.app.Router().Register(uaid)
+		w.app.Router().Register(uaid)
 	}
-	self.logger.Info("worker", "Client registered", nil)
+	w.logger.Info("worker", "Client registered", nil)
 	return false, nil
 }
 
 // handshake performs the opening handshake.
-func (self *WorkerWS) handshake(request *HelloRequest) (
+func (w *WorkerWS) handshake(request *HelloRequest) (
 	deviceID string, allowRedirect bool, err error) {
 
-	logWarning := self.logger.ShouldLog(WARNING)
-	currentID := self.UAID()
+	logWarning := w.logger.ShouldLog(WARNING)
+	currentID := w.UAID()
 
 	if request.ChannelIDs == nil {
 		// Must include "channelIDs" (even if empty)
 		if logWarning {
-			self.logger.Warn("worker", "Missing ChannelIDs",
-				LogFields{"rid": self.logID})
+			w.logger.Warn("worker", "Missing ChannelIDs",
+				LogFields{"rid": w.logID})
 		}
 		return "", false, ErrNoParams
 	}
@@ -444,16 +444,16 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		if len(request.DeviceID) == 0 || currentID == request.DeviceID {
 			// Duplicate handshake with omitted or identical device ID. Allow the
 			// caller to flush pending notifications, but avoid querying the balancer.
-			if self.logger.ShouldLog(DEBUG) {
-				self.logger.Debug("worker", "Duplicate client handshake",
-					LogFields{"rid": self.logID})
+			if w.logger.ShouldLog(DEBUG) {
+				w.logger.Debug("worker", "Duplicate client handshake",
+					LogFields{"rid": w.logID})
 			}
 			return currentID, false, nil
 		}
 		// if there's already a Uaid for this device, don't accept a new one
 		if logWarning {
-			self.logger.Warn("worker", "Conflicting UAIDs",
-				LogFields{"rid": self.logID})
+			w.logger.Warn("worker", "Conflicting UAIDs",
+				LogFields{"rid": w.logID})
 		}
 		return "", false, ErrExistingID
 	}
@@ -462,44 +462,44 @@ func (self *WorkerWS) handshake(request *HelloRequest) (
 		workerConnected bool
 	)
 	if len(request.DeviceID) == 0 {
-		if self.logger.ShouldLog(DEBUG) {
-			self.logger.Debug("worker", "Generating new UAID for device",
-				LogFields{"rid": self.logID})
+		if w.logger.ShouldLog(DEBUG) {
+			w.logger.Debug("worker", "Generating new UAID for device",
+				LogFields{"rid": w.logID})
 		}
 		goto forceReset
 	}
 	if !id.Valid(request.DeviceID) {
 		if logWarning {
-			self.logger.Warn("worker", "Invalid character in UAID",
-				LogFields{"rid": self.logID})
+			w.logger.Warn("worker", "Invalid character in UAID",
+				LogFields{"rid": w.logID})
 		}
 		return "", false, ErrInvalidID
 	}
-	if !self.store.CanStore(len(request.ChannelIDs)) {
+	if !w.store.CanStore(len(request.ChannelIDs)) {
 		// are there a suspicious number of channels?
 		if logWarning {
-			self.logger.Warn("worker",
+			w.logger.Warn("worker",
 				"Too many channel IDs in handshake; resetting UAID", LogFields{
-					"rid":      self.logID,
+					"rid":      w.logID,
 					"uaid":     request.DeviceID,
 					"channels": strconv.Itoa(len(request.ChannelIDs))})
 		}
-		self.store.DropAll(request.DeviceID)
+		w.store.DropAll(request.DeviceID)
 		goto forceReset
 	}
-	prevWorker, workerConnected = self.app.GetWorker(request.DeviceID)
+	prevWorker, workerConnected = w.app.GetWorker(request.DeviceID)
 	if workerConnected {
-		if self.logger.ShouldLog(INFO) {
-			self.logger.Info("worker", "UAID collision; disconnecting previous client",
-				LogFields{"rid": self.logID, "uaid": request.DeviceID})
+		if w.logger.ShouldLog(INFO) {
+			w.logger.Info("worker", "UAID collision; disconnecting previous client",
+				LogFields{"rid": w.logID, "uaid": request.DeviceID})
 		}
 		prevWorker.Close()
 	}
-	if len(request.ChannelIDs) > 0 && !self.store.Exists(request.DeviceID) {
+	if len(request.ChannelIDs) > 0 && !w.store.Exists(request.DeviceID) {
 		if logWarning {
-			self.logger.Warn("worker",
+			w.logger.Warn("worker",
 				"Channel IDs specified in handshake for nonexistent UAID",
-				LogFields{"rid": self.logID, "uaid": request.DeviceID})
+				LogFields{"rid": w.logID, "uaid": request.DeviceID})
 		}
 		goto forceReset
 	}
@@ -515,47 +515,47 @@ forceReset:
 // checkRedirect determines if a connecting client should be redirected to a
 // different host. wroteReply indicates whether checkRedirect responded to the
 // client; if so, the caller should close the connection.
-func (self *WorkerWS) checkRedirect(header *RequestHeader) (wroteReply bool) {
-	b := self.app.Balancer()
+func (w *WorkerWS) checkRedirect(header *RequestHeader) (wroteReply bool) {
+	b := w.app.Balancer()
 	if b == nil {
 		return false
 	}
-	uaid := self.UAID()
+	uaid := w.UAID()
 	origin, shouldRedirect, err := b.RedirectURL()
 	if err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Failed to redirect client", LogFields{
-				"error": err.Error(), "rid": self.logID, "cmd": header.Type})
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Failed to redirect client", LogFields{
+				"error": err.Error(), "rid": w.logID, "cmd": header.Type})
 		}
 		reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":429}`,
 			header.Type, uaid)
-		self.WriteText(reply)
+		w.WriteText(reply)
 		return true
 	}
 	if !shouldRedirect {
 		return false
 	}
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "Redirecting client", LogFields{
-			"rid": self.logID, "cmd": header.Type, "origin": origin})
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "Redirecting client", LogFields{
+			"rid": w.logID, "cmd": header.Type, "origin": origin})
 	}
 	reply := fmt.Sprintf(`{"messageType":%q,"uaid":%q,"status":307,"redirect":%q}`,
 		header.Type, uaid, origin)
-	self.WriteText(reply)
+	w.WriteText(reply)
 	return true
 }
 
 // registerPropPing registers the client with the proprietary pinger if one is
 // set and connect is not empty.
-func (self *WorkerWS) registerPropPing(connect []byte) (err error) {
-	pinger := self.app.PropPinger()
+func (w *WorkerWS) registerPropPing(connect []byte) (err error) {
+	pinger := w.app.PropPinger()
 	if pinger == nil || len(connect) == 0 {
 		return nil
 	}
-	uaid := self.UAID()
+	uaid := w.UAID()
 	if err = pinger.Register(uaid, connect); err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Could not set proprietary info",
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Could not set proprietary info",
 				LogFields{"error": err.Error(),
 					"connect": string(connect)})
 		}
@@ -566,19 +566,19 @@ func (self *WorkerWS) registerPropPing(connect []byte) (err error) {
 
 // Clear the data that the client stated it received, then re-flush any
 // records (including new data)
-func (self *WorkerWS) Ack(_ *RequestHeader, message []byte) (err error) {
+func (w *WorkerWS) Ack(_ *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if err, _ := r.(error); err != nil && w.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
-				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.logID,
+				w.logger.Error("worker", "Unhandled error", LogFields{"rid": w.logID,
 					"cmd": "ack", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
 		}
 	}()
-	uaid := self.UAID()
+	uaid := w.UAID()
 	if uaid == "" {
 		return ErrNoHandshake
 	}
@@ -589,46 +589,46 @@ func (self *WorkerWS) Ack(_ *RequestHeader, message []byte) (err error) {
 	if len(request.Updates) == 0 && len(request.Expired) == 0 {
 		return ErrNoParams
 	}
-	self.metrics.Increment("updates.client.ack")
+	w.metrics.Increment("updates.client.ack")
 	for _, update := range request.Updates {
-		if err = self.store.Drop(uaid, update.ChannelID); err != nil {
+		if err = w.store.Drop(uaid, update.ChannelID); err != nil {
 			goto logError
 		}
 	}
 	for _, channelID := range request.Expired {
-		if err = self.store.Drop(uaid, channelID); err != nil {
+		if err = w.store.Drop(uaid, channelID); err != nil {
 			goto logError
 		}
 	}
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "sending response",
-			LogFields{"rid": self.logID, "cmd": "ack"})
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "sending response",
+			LogFields{"rid": w.logID, "cmd": "ack"})
 	}
 	// Get the lastAccessed time from wherever.
-	return self.Flush(0, "", 0, "")
+	return w.Flush(0, "", 0, "")
 logError:
-	if self.logger.ShouldLog(WARNING) {
-		self.logger.Warn("worker", "sending response",
-			LogFields{"rid": self.logID, "cmd": "ack", "error": ErrStr(err)})
+	if w.logger.ShouldLog(WARNING) {
+		w.logger.Warn("worker", "sending response",
+			LogFields{"rid": w.logID, "cmd": "ack", "error": ErrStr(err)})
 	}
 	return err
 }
 
 // Register a new ChannelID. Optionally, encrypt the endpoint.
-func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error) {
+func (w *WorkerWS) Register(header *RequestHeader, message []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if err, _ := r.(error); err != nil && w.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
-				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.logID,
+				w.logger.Error("worker", "Unhandled error", LogFields{"rid": w.logID,
 					"cmd": "register", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
 		}
 	}()
 
-	uaid := self.UAID()
+	uaid := w.UAID()
 	if uaid == "" {
 		return ErrNoHandshake
 	}
@@ -636,26 +636,26 @@ func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error
 	if err = json.Unmarshal(message, request); err != nil || !id.Valid(request.ChannelID) {
 		return ErrInvalidParams
 	}
-	if err = self.store.Register(uaid, request.ChannelID, 0); err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Register failed, error updating backing store",
-				LogFields{"rid": self.logID, "cmd": "register", "error": ErrStr(err)})
+	if err = w.store.Register(uaid, request.ChannelID, 0); err != nil {
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Register failed, error updating backing store",
+				LogFields{"rid": w.logID, "cmd": "register", "error": ErrStr(err)})
 		}
 		return err
 	}
-	key, err := self.store.IDsToKey(uaid, request.ChannelID)
+	key, err := w.store.IDsToKey(uaid, request.ChannelID)
 	if err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Error generating primary key",
-				LogFields{"rid": self.logID, "cmd": "register", "error": ErrStr(err)})
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Error generating primary key",
+				LogFields{"rid": w.logID, "cmd": "register", "error": ErrStr(err)})
 		}
 		return err
 	}
-	endpoint, err := self.app.CreateEndpoint(key)
+	endpoint, err := w.app.CreateEndpoint(key)
 	if err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Error registering endpoint", LogFields{
-				"rid":   self.logID,
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Error registering endpoint", LogFields{
+				"rid":   w.logID,
 				"uaid":  uaid,
 				"chid":  request.ChannelID,
 				"error": ErrStr(err)})
@@ -663,48 +663,48 @@ func (self *WorkerWS) Register(header *RequestHeader, message []byte) (err error
 		return err
 	}
 	status, _ := ErrToStatus(err)
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "Server returned", LogFields{
-			"rid":  self.logID,
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "Server returned", LogFields{
+			"rid":  w.logID,
 			"cmd":  "register",
 			"code": strconv.FormatInt(int64(status), 10),
 			"chid": request.ChannelID,
 			"uaid": uaid})
 	}
 	// return the info back to the socket
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "sending response", LogFields{
-			"rid":          self.logID,
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "sending response", LogFields{
+			"rid":          w.logID,
 			"cmd":          "register",
 			"uaid":         uaid,
 			"code":         strconv.FormatInt(int64(status), 10),
 			"channelID":    request.ChannelID,
 			"pushEndpoint": endpoint})
 	}
-	self.WriteJSON(RegisterReply{header.Type, uaid, status, request.ChannelID, endpoint})
-	self.metrics.Increment("updates.client.register")
+	w.WriteJSON(RegisterReply{header.Type, uaid, status, request.ChannelID, endpoint})
+	w.metrics.Increment("updates.client.register")
 	return nil
 }
 
 // Unregister a ChannelID.
-func (self *WorkerWS) Unregister(header *RequestHeader, message []byte) (err error) {
-	logWarning := self.logger.ShouldLog(WARNING)
+func (w *WorkerWS) Unregister(header *RequestHeader, message []byte) (err error) {
+	logWarning := w.logger.ShouldLog(WARNING)
 	defer func() {
 		if r := recover(); r != nil {
-			if err, _ := r.(error); err != nil && self.logger.ShouldLog(ERROR) {
+			if err, _ := r.(error); err != nil && w.logger.ShouldLog(ERROR) {
 				stack := make([]byte, 1<<16)
 				n := runtime.Stack(stack, false)
-				self.logger.Error("worker", "Unhandled error", LogFields{"rid": self.logID,
+				w.logger.Error("worker", "Unhandled error", LogFields{"rid": w.logID,
 					"cmd": "register", "error": ErrStr(err), "stack": string(stack[:n])})
 			}
 			err = ErrInvalidParams
 		}
 	}()
-	uaid := self.UAID()
+	uaid := w.UAID()
 	if uaid == "" {
 		if logWarning {
-			self.logger.Warn("worker", "Unregister failed, missing sock.uaid",
-				LogFields{"rid": self.logID})
+			w.logger.Warn("worker", "Unregister failed, missing sock.uaid",
+				LogFields{"rid": w.logID})
 		}
 		return ErrNoHandshake
 	}
@@ -714,90 +714,90 @@ func (self *WorkerWS) Unregister(header *RequestHeader, message []byte) (err err
 	}
 	if len(request.ChannelID) == 0 {
 		if logWarning {
-			self.logger.Warn("worker", "Unregister failed, missing channelID",
-				LogFields{"rid": self.logID})
+			w.logger.Warn("worker", "Unregister failed, missing channelID",
+				LogFields{"rid": w.logID})
 		}
 		return ErrNoParams
 	}
 	// Always return success for an UNREG.
-	if err = self.store.Unregister(uaid, request.ChannelID); err != nil {
+	if err = w.store.Unregister(uaid, request.ChannelID); err != nil {
 		if logWarning {
-			self.logger.Warn("worker", "Unregister failed, error updating backing store",
-				LogFields{"rid": self.logID, "error": ErrStr(err)})
+			w.logger.Warn("worker", "Unregister failed, error updating backing store",
+				LogFields{"rid": w.logID, "error": ErrStr(err)})
 		}
-	} else if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "sending response",
-			LogFields{"rid": self.logID, "cmd": "unregister"})
+	} else if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "sending response",
+			LogFields{"rid": w.logID, "cmd": "unregister"})
 	}
-	self.WriteJSON(UnregisterReply{header.Type, 200, request.ChannelID})
-	self.metrics.Increment("updates.client.unregister")
+	w.WriteJSON(UnregisterReply{header.Type, 200, request.ChannelID})
+	w.metrics.Increment("updates.client.unregister")
 	return nil
 }
 
 // Dump any records associated with the UAID.
-func (self *WorkerWS) Flush(lastAccessed int64, channel string,
+func (w *WorkerWS) Flush(lastAccessed int64, channel string,
 	version int64, data string) (err error) {
 
 	// flush pending data back to Client
 	timer := timeNow()
-	uaid := self.UAID()
+	uaid := w.UAID()
 	defer func() {
 		now := timeNow()
-		if self.logger.ShouldLog(INFO) {
-			self.logger.Info("worker",
+		if w.logger.ShouldLog(INFO) {
+			w.logger.Info("worker",
 				"Client flush completed",
 				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
 					"uaid": uaid})
 		}
-		if err != nil || self.stopped() {
+		if err != nil || w.stopped() {
 			return
 		}
-		self.metrics.Timer("client.flush", now.Sub(timer))
+		w.metrics.Timer("client.flush", now.Sub(timer))
 	}()
 	if uaid == "" {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
-				LogFields{"rid": self.logID})
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
+				LogFields{"rid": w.logID})
 		}
 		// Have the server clean up records associated with this UAID.
 		// (Probably "none", but still good for housekeeping)
-		self.stop()
+		w.stop()
 		return nil
 	}
 	if len(channel) > 0 {
 		// if we have a channel, don't flush. we can get them later in the ACK
-		return self.flushUpdate(channel, version, data)
+		return w.flushUpdate(channel, version, data)
 	}
-	return self.flushPending(lastAccessed)
+	return w.flushPending(lastAccessed)
 }
 
 // flushUpdate writes an update containing chid, version, and data.
-func (self *WorkerWS) flushUpdate(chid string, version int64, data string) (
+func (w *WorkerWS) flushUpdate(chid string, version int64, data string) (
 	err error) {
 
-	uaid := self.UAID()
+	uaid := w.UAID()
 	defer func() {
 		r := recover()
 		if r == nil {
 			return
 		}
-		pinger := self.app.PropPinger()
+		pinger := w.app.PropPinger()
 		if pinger != nil {
 			pinger.Send(uaid, version, data)
 		}
 		err = fmt.Errorf("Error requesting flush: %#v", r)
-		if self.logger.ShouldLog(ERROR) {
+		if w.logger.ShouldLog(ERROR) {
 			stack := make([]byte, 1<<16)
 			n := runtime.Stack(stack, false)
-			self.logger.Error("worker", "Panic flushing update",
+			w.logger.Error("worker", "Panic flushing update",
 				LogFields{"error": ErrStr(err),
 					"uaid":  uaid,
 					"stack": string(stack[:n])})
 		}
 	}()
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "Flushing update to client", LogFields{
-			"rid":     self.logID,
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "Flushing update to client", LogFields{
+			"rid":     w.logID,
 			"uaid":    uaid,
 			"chid":    chid,
 			"version": strconv.FormatInt(version, 10),
@@ -806,81 +806,81 @@ func (self *WorkerWS) flushUpdate(chid string, version int64, data string) (
 	// hand craft a notification update to the client.
 	// TODO: allow bulk updates.
 	updates := []Update{{chid, uint64(version), data}}
-	self.WriteJSON(FlushReply{"notification", updates, nil})
-	self.metrics.Increment("updates.sent")
+	w.WriteJSON(FlushReply{"notification", updates, nil})
+	w.metrics.Increment("updates.sent")
 	return nil
 }
 
 // flushPending writes all pending updates since the lastAccessed time,
 // expressed in seconds since Epoch.
-func (self *WorkerWS) flushPending(lastAccessed int64) (err error) {
-	uaid := self.UAID()
-	updates, expired, err := self.store.FetchAll(uaid, time.Unix(lastAccessed, 0))
+func (w *WorkerWS) flushPending(lastAccessed int64) (err error) {
+	uaid := w.UAID()
+	updates, expired, err := w.store.FetchAll(uaid, time.Unix(lastAccessed, 0))
 	if err != nil {
-		if self.logger.ShouldLog(WARNING) {
-			self.logger.Warn("worker", "Failed to flush pending updates to client",
-				LogFields{"rid": self.logID, "uaid": uaid, "error": ErrStr(err)})
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker", "Failed to flush pending updates to client",
+				LogFields{"rid": w.logID, "uaid": uaid, "error": ErrStr(err)})
 		}
 		return err
 	}
 	if len(updates) == 0 && len(expired) == 0 {
 		return nil
 	}
-	if self.logger.ShouldLog(DEBUG) {
+	if w.logger.ShouldLog(DEBUG) {
 		logStrings := make([]string, len(updates))
 		for i, update := range updates {
 			logStrings[i] = fmt.Sprintf(">> %s.%s = %d", uaid,
 				update.ChannelID, update.Version)
 		}
-		self.logger.Debug("worker", "Flushing pending updates to client", LogFields{
-			"rid":     self.logID,
+		w.logger.Debug("worker", "Flushing pending updates to client", LogFields{
+			"rid":     w.logID,
 			"updates": fmt.Sprintf("[%s]", strings.Join(logStrings, ", "))})
 	}
-	self.WriteJSON(FlushReply{"notification", updates, expired})
-	self.metrics.IncrementBy("updates.sent", int64(len(updates)))
+	w.WriteJSON(FlushReply{"notification", updates, expired})
+	w.metrics.IncrementBy("updates.sent", int64(len(updates)))
 	return nil
 }
 
-func (self *WorkerWS) Ping(header *RequestHeader, _ []byte) (err error) {
+func (w *WorkerWS) Ping(header *RequestHeader, _ []byte) (err error) {
 	now := timeNow()
-	if self.pingInt > 0 && !self.lastPing.IsZero() && now.Sub(self.lastPing) < self.pingInt {
-		if self.logger.ShouldLog(WARNING) {
-			source := self.Origin()
+	if w.pingInt > 0 && !w.lastPing.IsZero() && now.Sub(w.lastPing) < w.pingInt {
+		if w.logger.ShouldLog(WARNING) {
+			source := w.Origin()
 			if len(source) == 0 {
 				source = "No Socket Origin"
 			}
-			self.logger.Warn("worker", "Client sending too many pings",
-				LogFields{"rid": self.logID, "source": source})
+			w.logger.Warn("worker", "Client sending too many pings",
+				LogFields{"rid": w.logID, "source": source})
 		}
-		self.stop()
-		self.metrics.Increment("updates.client.too_many_pings")
+		w.stop()
+		w.metrics.Increment("updates.client.too_many_pings")
 		return ErrTooManyPings
 	}
-	self.lastPing = now
-	if self.app.pushLongPongs {
-		self.WriteJSON(PingReply{header.Type, 200})
+	w.lastPing = now
+	if w.app.pushLongPongs {
+		w.WriteJSON(PingReply{header.Type, 200})
 	} else {
-		self.WriteText("{}")
+		w.WriteText("{}")
 	}
-	self.metrics.Increment("updates.client.ping")
+	w.metrics.Increment("updates.client.ping")
 	return nil
 }
 
 // Close removes worker from the worker map, deregisters the client from the
 // router, and closes the underlying socket. Invoking Close multiple times for
 // the same worker is a no-op.
-func (self *WorkerWS) Close() error {
+func (w *WorkerWS) Close() error {
 	now := timeNow()
-	uaid := self.UAID()
-	if self.logger.ShouldLog(DEBUG) {
-		self.logger.Debug("worker", "Cleaning up socket",
+	uaid := w.UAID()
+	if w.logger.ShouldLog(DEBUG) {
+		w.logger.Debug("worker", "Cleaning up socket",
 			LogFields{"uaid": uaid})
 	}
-	if self.logger.ShouldLog(INFO) {
-		self.logger.Info("worker", "Socket connection terminated",
+	if w.logger.ShouldLog(INFO) {
+		w.logger.Info("worker", "Socket connection terminated",
 			LogFields{
 				"uaid":     uaid,
-				"duration": strconv.FormatInt(int64(now.Sub(self.Born())), 10)})
+				"duration": strconv.FormatInt(int64(now.Sub(w.Born())), 10)})
 	}
 	// NOTE: in instances where proprietary wake-ups are issued, you may
 	// wish not to delete the worker from the map, since this is the only
@@ -889,10 +889,10 @@ func (self *WorkerWS) Close() error {
 	// For that matter, you may wish to store the Proprietary wake data to
 	// something commonly shared (like memcache) so that the device can be
 	// woken when not connected.
-	if removed := self.app.RemoveWorker(uaid, self); removed {
-		self.app.Router().Unregister(uaid)
+	if removed := w.app.RemoveWorker(uaid, w); removed {
+		w.app.Router().Unregister(uaid)
 	}
-	return self.Socket.Close()
+	return w.Socket.Close()
 }
 
 func isPingBody(raw []byte) bool {

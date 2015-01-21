@@ -279,10 +279,12 @@ func (a *Application) AddWorker(uaid string, worker Worker) (added bool) {
 		return
 	}
 	a.workerMux.Lock()
-	if prevWorker, ok := a.workers[uaid]; !ok || prevWorker != worker {
-		a.workers[uaid] = worker
-		added = !ok
-	}
+	_, exists := a.workers[uaid]
+	// Avoid incrementing the worker count for duplicate handshakes. Callers
+	// can use this to short-circuit other operations (e.g., re-registering
+	// with the router).
+	added = !exists
+	a.workers[uaid] = worker
 	a.workerMux.Unlock()
 	if added {
 		atomic.AddInt32(&a.workerCount, 1)

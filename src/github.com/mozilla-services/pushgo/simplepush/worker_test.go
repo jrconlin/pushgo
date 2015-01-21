@@ -790,6 +790,78 @@ func BenchmarkWorkerRun(b *testing.B) {
 	}
 }
 
+func TestWorkerPinger(t *testing.T) {
+	useMockFuncs()
+	defer useStdFuncs()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStore := NewMockStore(mockCtrl)
+	mckBalancer := NewMockBalancer(mockCtrl)
+	mckSocket := NewMockSocket(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+
+	Convey("Should support proprietary pingers", t, func() {
+		app := NewApplication()
+		app.endpointTemplate = testEndpointTemplate
+		app.SetLogger(mckLogger)
+		app.SetMetrics(mckStat)
+		app.SetStore(mckStore)
+		app.SetBalancer(mckBalancer)
+		app.SetRouter(mckRouter)
+		app.SetPropPinger(mckPinger)
+
+		wws := NewWorker(app, mckSocket, "test")
+
+		Convey("Should register with the proprietary pinger", func() {
+			gomock.InOrder(
+				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckPinger.EXPECT().Register(testID, []byte(`{"regid":123}`)).Return(nil),
+				mckRouter.EXPECT().Register(testID),
+				mckSocket.EXPECT().WriteText(gomock.Any()),
+				mckStat.EXPECT().Increment("updates.client.hello"),
+				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(
+				`{"uaid":"","channelIDs":[],"connect":{"regid":123}}`))
+			So(err, ShouldBeNil)
+			So(wws.state, ShouldEqual, WorkerActive)
+		})
+
+		Convey("Should not fail if pinger registration fails", func() {
+			uaid := "3529f588b03e411295b8df6d38e63ce7"
+
+			gomock.InOrder(
+				mckStore.EXPECT().CanStore(0).Return(true),
+				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckPinger.EXPECT().Register(uaid, []byte(`[123]`)).Return(errors.New(
+					"external system on fire")),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
+				mckSocket.EXPECT().WriteText(gomock.Any()),
+				mckStat.EXPECT().Increment("updates.client.hello"),
+				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+
+			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(`{
+				"uaid": "3529f588b03e411295b8df6d38e63ce7",
+				"channelIDs": [],
+				"connect": [123]
+			}`))
+			So(err, ShouldBeNil)
+			So(wws.state, ShouldEqual, WorkerActive)
+		})
+	})
+}
+
 type netErr struct {
 	timeout   bool
 	temporary bool
@@ -837,30 +909,6 @@ func TestWorkerRun(t *testing.T) {
 		app.SetEndpointHandler(mckEndHandler)
 
 		wws := NewWorker(app, mckSocket, "test")
-
-		Convey("Should not fail if pinger registration fails", func() {
-			uaid := "3529f588b03e411295b8df6d38e63ce7"
-
-			gomock.InOrder(
-				mckStore.EXPECT().CanStore(0).Return(true),
-				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckPinger.EXPECT().Register(uaid, []byte(`[123]`)).Return(errors.New(
-					"external system on fire")),
-				mckRouter.EXPECT().Register(uaid),
-				mckSocket.EXPECT().WriteText(gomock.Any()),
-				mckStat.EXPECT().Increment("updates.client.hello"),
-				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
-				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
-			)
-
-			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(`{
-				"uaid": "3529f588b03e411295b8df6d38e63ce7",
-				"channelIDs": [],
-				"connect": [123]
-			}`))
-			So(err, ShouldBeNil)
-			So(wws.state, ShouldEqual, WorkerActive)
-		})
 
 		Convey("Should close unidentified connections", func() {
 			gomock.InOrder(
