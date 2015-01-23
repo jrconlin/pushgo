@@ -169,11 +169,16 @@ func NewGCMPing() (r *GCMPing) {
 	return r
 }
 
+type GCMClient interface {
+	// for testing, based off minimial requirements from http.Client
+	Do(*http.Request) (*http.Response, error)
+}
+
 type GCMPing struct {
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
-	client      *http.Client
+	client      GCMClient
 	url         string
 	collapseKey string
 	dryRun      bool
@@ -419,10 +424,6 @@ func (r *GCMPing) CloseNotify() <-chan bool {
 }
 
 func (r *GCMPing) Close() error {
-	return r.closeOnce.Do(r.close)
-}
-
-func (r *GCMPing) close() error {
 	close(r.closeSignal)
 	return nil
 }
