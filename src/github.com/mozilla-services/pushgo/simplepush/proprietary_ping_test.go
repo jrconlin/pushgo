@@ -12,11 +12,9 @@ package simplepush
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/rafrombrc/gomock/gomock"
 	. "github.com/smartystreets/goconvey/convey"
@@ -132,8 +130,6 @@ func Test_GCMSend(t *testing.T) {
 		// not being registered, so falling back to older testMetrics
 		// object.
 		ok, err := testGcm.Send(uaid, vers, data)
-		t.Logf("Request: %+v\n", mckGCMClient)
-		t.Logf("mckStat: %+v\n", mckStat)
 		So(err, ShouldBeNil)
 		So(ok, ShouldEqual, true)
 		So(mckStat.Counters["ping.gcm.retry"], ShouldEqual, 1)
