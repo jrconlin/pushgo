@@ -41,6 +41,6 @@ EXPOSE 8081
 # Internal routing port; should not be published.
 EXPOSE 3000
 
-ENV PUSHGO_METRICS_STATSD_HOST :8125
+ENV PUSHGO_METRICS_STATSD_SERVER :8125
 
 ENTRYPOINT ["./simplepush", "-config=config.docker.toml"]
