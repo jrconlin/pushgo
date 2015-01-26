@@ -2,6 +2,13 @@
 Changelog
 =========
 
+1.6
+===
+
+Features
+--------
+- Added support for Google Cloud Messaging as a proprietary ping mechanism with testing.
+
 1.5
 ===
 
