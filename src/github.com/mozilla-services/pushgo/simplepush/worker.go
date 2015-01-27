@@ -417,7 +417,7 @@ func (w *WorkerWS) registerDevice(header *RequestHeader,
 	// register any proprietary connection requirements
 	w.registerPropPing([]byte(request.PingData))
 	// Add the worker to the map and register with the router.
-	if added := w.app.AddWorker(uaid, w); added {
+	if replaced := w.app.AddWorker(uaid, w); !replaced {
 		// Avoid re-registration for duplicate handshakes.
 		w.app.Router().Register(uaid)
 	}

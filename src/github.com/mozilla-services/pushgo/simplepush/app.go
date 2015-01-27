@@ -273,20 +273,19 @@ func (a *Application) GetWorker(uaid string) (worker Worker, ok bool) {
 	return
 }
 
-func (a *Application) AddWorker(uaid string, worker Worker) (added bool) {
+func (a *Application) AddWorker(uaid string, worker Worker) (replaced bool) {
 	if a.closeOnce.IsDone() {
 		worker.Close()
 		return
 	}
 	a.workerMux.Lock()
-	_, exists := a.workers[uaid]
 	// Avoid incrementing the worker count for duplicate handshakes. Callers
 	// can use this to short-circuit other operations (e.g., re-registering
 	// with the router).
-	added = !exists
+	_, replaced = a.workers[uaid]
 	a.workers[uaid] = worker
 	a.workerMux.Unlock()
-	if added {
+	if !replaced {
 		atomic.AddInt32(&a.workerCount, 1)
 	}
 	return
