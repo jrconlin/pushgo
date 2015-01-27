@@ -88,7 +88,7 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 func (h *EndpointHandler) Listener() net.Listener { return h.listener }
 func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
 func (h *EndpointHandler) URL() string            { return h.url }
-func (h *EndpointHandler) ServeMux() *mux.Router  { return h.mux }
+func (h *EndpointHandler) ServeMux() ServeMux     { return (*RouteMux)(h.mux) }
 
 // setApp sets the parent application for this endpoint handler.
 func (h *EndpointHandler) setApp(app *Application) {
@@ -310,6 +310,9 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 
 	cn, _ := resp.(http.CloseNotifier)
 	if !h.deliver(cn, uaid, chid, version, requestID, data) {
+		// We've accepted the valid endpoint, stored the data for
+		// eventual pickup by the client, but failed to deliver to
+		// the client via routing.
 		writeJSON(resp, http.StatusAccepted, []byte("{}"))
 		return
 	}

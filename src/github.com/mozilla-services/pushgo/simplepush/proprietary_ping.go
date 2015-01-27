@@ -110,7 +110,7 @@ type UDPPing struct {
 }
 
 type UDPPingConfig struct {
-	URL string `toml:"url" env:"url"` //carrier UDP Proxy URL
+	URL string //carrier UDP Proxy URL
 	// Additional Carrier required elements here.
 }
 

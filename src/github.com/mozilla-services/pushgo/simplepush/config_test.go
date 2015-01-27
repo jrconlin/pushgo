@@ -60,12 +60,12 @@ type = "static"
 
 var env = envconf.New([]string{
 	"PUSHGO_DEFAULT_CURRENT_HOST=push.services.mozilla.com",
-	"pushgo_default_use_aws=0",
+	"pushgo_default_use_aws_host=0",
 	"PushGo_WebSocket_Origins=https://push.services.mozilla.com",
 	"PUSHGO_WEBSOCKET_LISTENER_ADDR=",
-	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNS=25000",
+	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNECTIONS=25000",
 	"pushgo_endpoint_listener_addr=",
-	"pushgo_endpoint_listener_max_conns=6000",
+	"pushgo_endpoint_listener_max_connections=6000",
 	"PUSHGO_logging_TYPE=stdout",
 	"pushgo_LOGGING_FORMAT=text",
 	"pushgo_logging_FILTER=0",
@@ -73,7 +73,7 @@ var env = envconf.New([]string{
 	"PUSHGO_PROPPING_URL=http://push.services.mozilla.com/ping",
 	"PushGo_Router_Bucket_Size=15",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
-	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
+	"PUSHGO_ROUTER_LISTENER_MAX_CONNECTIONS=12000",
 	"PUSHGO_ENDPOINT_MAX_DATA_LEN=512",
 	"PUSHGO_BALANCER_TYPE=none",
 })
@@ -159,7 +159,7 @@ func TestLoad(t *testing.T) {
 	var (
 		appInst                                                    *Application
 		mockApp, mockMetrics, mockRouter, mockServ                 *mockPlugin
-		mockSocket, mockEndpoint, mockHealth                       *mockPlugin
+		mockSocket, mockEndpoint, mockHealth, mockProfile          *mockPlugin
 		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
 	loader := PluginLoaders{
@@ -263,7 +263,7 @@ func TestLoad(t *testing.T) {
 			h := NewSocketHandler()
 			mockSocket = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
-				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
+				return nil, fmt.Errorf("Error initializing WebSocket handler: %s", err)
 			}
 			return h, nil
 		},
@@ -276,7 +276,7 @@ func TestLoad(t *testing.T) {
 			h := NewEndpointHandler()
 			mockEndpoint = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "endpoint", app, mockEndpoint); err != nil {
-				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
+				return nil, fmt.Errorf("Error initializing update handler: %s", err)
 			}
 			return h, nil
 		},
@@ -288,6 +288,17 @@ func TestLoad(t *testing.T) {
 			mockHealth = newMockPlugin(PluginHealth, h)
 			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger); err != nil {
+				return nil, err
+			}
+			h := new(ProfileHandlers)
+			mockProfile = newMockPlugin(PluginProfile, h)
+			if err := mockProfile.Init(app, mockProfile.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing profiling handlers: %s", err)
 			}
 			return h, nil
 		},

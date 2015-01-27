@@ -12,14 +12,15 @@ import (
 )
 
 type StatusReport struct {
-	Healthy          bool           `json:"ok"`
-	Clients          int            `json:"clientCount"`
-	MaxClientConns   int            `json:"maxClients"`
-	MaxEndpointConns int            `json:"maxEndpointConns"`
-	Plugins          []PluginReport `json:"plugins"`
-	Goroutines       int            `json:"goroutines"`
-	Version          string         `json:"version"`
-	InstanceID       string         `json:"instance,omitempty"`
+	Healthy          bool             `json:"ok"`
+	Clients          int              `json:"clientCount"`
+	MaxClientConns   int              `json:"maxClients"`
+	MaxEndpointConns int              `json:"maxEndpointConns"`
+	Plugins          []PluginReport   `json:"plugins"`
+	Goroutines       int              `json:"goroutines"`
+	Version          string           `json:"version"`
+	MemStats         runtime.MemStats `json:"memory"`
+	InstanceID       string           `json:"instance,omitempty"`
 }
 
 // TODO: Remove; add a Typ() method to HasConfigStruct.
@@ -121,6 +122,7 @@ func (h *HealthHandlers) RealStatusHandler(resp http.ResponseWriter,
 		Version:          VERSION,
 		InstanceID:       id,
 	}
+	runtime.ReadMemStats(&status.MemStats)
 
 	healthy := true
 	reports := []PluginStatus{
