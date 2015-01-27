@@ -77,12 +77,26 @@ func PushThrough(conn *Conn, channels, updates int) error {
 	return t.Do()
 }
 
+func isTemporaryNetErr(err error) bool {
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Temporary()
+}
+
 func IsTemporaryErr(err error) bool {
+	if isTemporaryNetErr(err) {
+		return true
+	}
 	urlErr, ok := err.(*url.Error)
 	if !ok {
 		return false
 	}
+	if isTemporaryNetErr(urlErr.Err) {
+		return true
+	}
 	opErr, ok := urlErr.Err.(*net.OpError)
+	if isTemporaryNetErr(opErr.Err) {
+		return true
+	}
 	return ok && (opErr.Err == syscall.EPIPE || opErr.Err == syscall.ECONNRESET)
 }
 

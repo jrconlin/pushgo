@@ -118,7 +118,7 @@ Copy/Paste the following into your ssh session to the instance, these instructio
     STATSD_IP=$(docker inspect $STATSD_CID | grep IPAddress | cut -d '"' -f 4)
 
     docker run -d --volume=/var/log:/var/log:rw \
-        -e PUSHGO_METRICS_STATSD_HOST=$STATSD_IP:8125 \
+        -e PUSHGO_METRICS_STATSD_SERVER=$STATSD_IP:8125 \
         -e PUSHGO_DEFAULT_RESOLVE_HOST=false \
         -e PUSHGO_DEFAULT_CURRENT_HOST=$PUBLIC_IP \
         -e PUSHGO_ROUTER_DEFAULT_HOST=$PUBLIC_IP \

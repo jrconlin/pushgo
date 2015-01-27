@@ -102,7 +102,7 @@ func (h *SocketHandler) Init(app *Application, config interface{}) (err error) {
 func (h *SocketHandler) Listener() net.Listener { return h.listener }
 func (h *SocketHandler) MaxConns() int          { return h.maxConns }
 func (h *SocketHandler) URL() string            { return h.url }
-func (h *SocketHandler) ServeMux() *mux.Router  { return h.mux }
+func (h *SocketHandler) ServeMux() ServeMux     { return (*RouteMux)(h.mux) }
 
 func (h *SocketHandler) Start(errChan chan<- error) {
 	if h.logger.ShouldLog(INFO) {
@@ -176,14 +176,14 @@ func (h *SocketHandler) close() error {
 	var errors MultipleError
 	if err := h.listener.Close(); err != nil {
 		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers", "Error closing WebSocket listener",
+			h.logger.Error("handlers_socket", "Error closing WebSocket listener",
 				LogFields{"error": err.Error(), "url": h.url})
 		}
 		errors = append(errors, err)
 	}
 	if err := h.server.Close(); err != nil {
 		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers", "Error closing WebSocket server",
+			h.logger.Error("handlers_socket", "Error closing WebSocket server",
 				LogFields{"error": err.Error(), "url": h.url})
 		}
 		errors = append(errors, err)
