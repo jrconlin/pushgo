@@ -4,6 +4,7 @@
 package simplepush
 
 import (
+	http "net/http"
 	gomock "github.com/rafrombrc/gomock/gomock"
 )
 
@@ -78,4 +79,36 @@ func (_m *MockPropPinger) Close() error {
 
 func (_mr *_MockPropPingerRecorder) Close() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
+}
+
+// Mock of GCMClient interface
+type MockGCMClient struct {
+	ctrl     *gomock.Controller
+	recorder *_MockGCMClientRecorder
+}
+
+// Recorder for MockGCMClient (not exported)
+type _MockGCMClientRecorder struct {
+	mock *MockGCMClient
+}
+
+func NewMockGCMClient(ctrl *gomock.Controller) *MockGCMClient {
+	mock := &MockGCMClient{ctrl: ctrl}
+	mock.recorder = &_MockGCMClientRecorder{mock}
+	return mock
+}
+
+func (_m *MockGCMClient) EXPECT() *_MockGCMClientRecorder {
+	return _m.recorder
+}
+
+func (_m *MockGCMClient) Do(_param0 *http.Request) (*http.Response, error) {
+	ret := _m.ctrl.Call(_m, "Do", _param0)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (_mr *_MockGCMClientRecorder) Do(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Do", arg0)
 }

@@ -38,6 +38,9 @@ Features
     close_delay
 - Added client "pong" function. This generates a server side protocol ping to
   attempt to hold the socket open to the device.
+- Added support for Google Cloud Messaging as a proprietary ping mechanism with
+  testing.
+
 
 Bug Fixes
 ---------
