@@ -1,4 +1,4 @@
-Simple Push Server in Go v1.6.0
+Simple Push Server in Go v1.5.0
 ===
 
 This server was created to support the [Mozilla Simple Push
