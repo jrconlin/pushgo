@@ -131,7 +131,7 @@ func Test_UpdateHandler(t *testing.T) {
 	if resp.Body.String() != "{}" {
 		t.Error("Unexpected response from server")
 	}
-	rep := FlushData{}
+	rep := SendData{}
 	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
 		t.Errorf("Could not read output buffer %s", err.Error())
 	}
@@ -149,7 +149,7 @@ func Test_UpdateHandler(t *testing.T) {
 	if resp.Body.String() != "{}" {
 		t.Error("Unexpected response from server")
 	}
-	rep = FlushData{}
+	rep = SendData{}
 	if err = json.Unmarshal(worker.Outbuffer, &rep); err != nil {
 		t.Errorf("Could not read output buffer %s", err.Error())
 	}

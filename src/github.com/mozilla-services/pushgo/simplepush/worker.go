@@ -43,10 +43,12 @@ type Worker interface {
 	// is closed by either party.
 	Run()
 
-	// Flush sends an update containing chid, version, and data to the client.
-	// If chid is an empty string, all pending updates since the lastAccessed
-	// time (expressed in seconds since Epoch) will be flushed to the client.
-	Flush(lastAccessed int64, chid string, version int64, data string) error
+	// Send delivers an update containing chid, version, and data.
+	Send(chid string, version int64, data string) error
+
+	// Flush delivers all pending updates since the lastAccessed time,
+	// expressed in seconds since Epoch.
+	Flush(lastAccessed int64) error
 
 	// Close unblocks the run loop and closes the underlying socket.
 	Close() error
@@ -131,11 +133,10 @@ type PingReply struct {
 	Status int    `json:"status"`
 }
 
-type FlushData struct {
-	LastAccessed int64  `json:"lastaccessed"`
-	Channel      string `json:"channel"`
-	Version      int64  `json:"version"`
-	Data         string `json:"data"`
+type SendData struct {
+	Channel string `json:"channel"`
+	Version int64  `json:"version"`
+	Data    string `json:"data"`
 }
 
 func NewWorker(app *Application, socket Socket, logID string) *WorkerWS {
@@ -395,7 +396,7 @@ func (w *WorkerWS) Hello(header *RequestHeader, message []byte) (err error) {
 	}
 	w.state = WorkerActive
 	// Get the lastAccessed time from wherever
-	return w.Flush(0, "", 0, "")
+	return w.Flush(0)
 }
 
 // registerDevice adds the worker to the worker map and registers the
@@ -605,7 +606,7 @@ func (w *WorkerWS) Ack(_ *RequestHeader, message []byte) (err error) {
 			LogFields{"rid": w.logID, "cmd": "ack"})
 	}
 	// Get the lastAccessed time from wherever.
-	return w.Flush(0, "", 0, "")
+	return w.Flush(0)
 logError:
 	if w.logger.ShouldLog(WARNING) {
 		w.logger.Warn("worker", "sending response",
@@ -734,29 +735,14 @@ func (w *WorkerWS) Unregister(header *RequestHeader, message []byte) (err error)
 	return nil
 }
 
-// Dump any records associated with the UAID.
-func (w *WorkerWS) Flush(lastAccessed int64, channel string,
-	version int64, data string) (err error) {
-
-	// flush pending data back to Client
-	timer := timeNow()
+// Send implements Worker.Send. If Send panics and a proprietary pinger is
+// set, the update will be delivered via the proprietary mechanism.
+func (w *WorkerWS) Send(chid string, version int64, data string) (err error) {
+	startTime := timeNow()
 	uaid := w.UAID()
-	defer func() {
-		now := timeNow()
-		if w.logger.ShouldLog(INFO) {
-			w.logger.Info("worker",
-				"Client flush completed",
-				LogFields{"duration": strconv.FormatInt(int64(now.Sub(timer)), 10),
-					"uaid": uaid})
-		}
-		if err != nil || w.stopped() {
-			return
-		}
-		w.metrics.Timer("client.flush", now.Sub(timer))
-	}()
 	if uaid == "" {
 		if w.logger.ShouldLog(WARNING) {
-			w.logger.Warn("worker", "Undefined UAID for socket. Aborting.",
+			w.logger.Warn("worker", "Failed to send update to unidentified client",
 				LogFields{"rid": w.logID})
 		}
 		// Have the server clean up records associated with this UAID.
@@ -764,39 +750,37 @@ func (w *WorkerWS) Flush(lastAccessed int64, channel string,
 		w.stop()
 		return nil
 	}
-	if len(channel) > 0 {
-		// if we have a channel, don't flush. we can get them later in the ACK
-		return w.flushUpdate(channel, version, data)
-	}
-	return w.flushPending(lastAccessed)
-}
-
-// flushUpdate writes an update containing chid, version, and data.
-func (w *WorkerWS) flushUpdate(chid string, version int64, data string) (
-	err error) {
-
-	uaid := w.UAID()
 	defer func() {
+		endTime := timeNow()
+		if w.logger.ShouldLog(INFO) {
+			w.logger.Info("worker", "Update sent to client", LogFields{
+				"duration": strconv.FormatInt(int64(endTime.Sub(startTime)), 10),
+				"uaid":     uaid})
+		}
 		r := recover()
 		if r == nil {
+			if err != nil {
+				return
+			}
+			w.metrics.Timer("client.flush", endTime.Sub(startTime))
 			return
 		}
 		pinger := w.app.PropPinger()
 		if pinger != nil {
 			pinger.Send(uaid, version, data)
 		}
-		err = fmt.Errorf("Error requesting flush: %#v", r)
+		err = fmt.Errorf("Error sending update: %#v", r)
 		if w.logger.ShouldLog(ERROR) {
 			stack := make([]byte, 1<<16)
 			n := runtime.Stack(stack, false)
-			w.logger.Error("worker", "Panic flushing update",
+			w.logger.Error("worker", "Panic sending update",
 				LogFields{"error": ErrStr(err),
 					"uaid":  uaid,
 					"stack": string(stack[:n])})
 		}
 	}()
 	if w.logger.ShouldLog(DEBUG) {
-		w.logger.Debug("worker", "Flushing update to client", LogFields{
+		w.logger.Debug("worker", "Sending update to client", LogFields{
 			"rid":     w.logID,
 			"uaid":    uaid,
 			"chid":    chid,
@@ -811,10 +795,31 @@ func (w *WorkerWS) flushUpdate(chid string, version int64, data string) (
 	return nil
 }
 
-// flushPending writes all pending updates since the lastAccessed time,
-// expressed in seconds since Epoch.
-func (w *WorkerWS) flushPending(lastAccessed int64) (err error) {
+// Flush implements Worker.Flush.
+func (w *WorkerWS) Flush(lastAccessed int64) (err error) {
+	startTime := timeNow()
 	uaid := w.UAID()
+	if uaid == "" {
+		if w.logger.ShouldLog(WARNING) {
+			w.logger.Warn("worker",
+				"Failed to flush pending updates to unidentified client",
+				LogFields{"rid": w.logID})
+		}
+		w.stop()
+		return nil
+	}
+	defer func() {
+		endTime := timeNow()
+		if w.logger.ShouldLog(INFO) {
+			w.logger.Info("worker", "Pending updates flushed to client", LogFields{
+				"duration": strconv.FormatInt(int64(endTime.Sub(startTime)), 10),
+				"uaid":     uaid})
+		}
+		if err != nil {
+			return
+		}
+		w.metrics.Timer("client.flush", endTime.Sub(startTime))
+	}()
 	updates, expired, err := w.store.FetchAll(uaid, time.Unix(lastAccessed, 0))
 	if err != nil {
 		if w.logger.ShouldLog(WARNING) {
@@ -917,15 +922,17 @@ func (r *NoWorker) Run() {
 	r.Logger.Debug("noworker", "Run", nil)
 }
 
-func (r *NoWorker) Flush(lastAccessed int64, channel string, version int64, data string) error {
-	r.Logger.Debug("noworker", "Got Flush", LogFields{
+func (r *NoWorker) Send(channel string, version int64, data string) error {
+	r.Logger.Debug("noworker", "Got Send", LogFields{
 		"channel": channel,
 		"data":    data,
 	})
-	r.Outbuffer, _ = json.Marshal(&FlushData{lastAccessed,
+	r.Outbuffer, _ = json.Marshal(&SendData{
 		channel, version, data})
 	return nil
 }
+
+func (r *NoWorker) Flush(lastAccessed int64) error { return nil }
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

@@ -240,7 +240,7 @@ func (r *BroadcastRouter) RouteHandler(resp http.ResponseWriter, req *http.Reque
 		data = data[:r.maxDataLen]
 	}
 	// routed data is already in storage.
-	if err = worker.Flush(0, chid, routable.Version(), data); err != nil {
+	if err = worker.Send(chid, routable.Version(), data); err != nil {
 		if logWarning {
 			r.logger.Warn("router", "Could not update local user",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})

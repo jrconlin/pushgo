@@ -152,13 +152,91 @@ func TestWorkerFlush(t *testing.T) {
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
+
+	Convey("Should flush pending updates", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetMetrics(mckStat)
+		app.SetStore(mckStore)
+
+		wws := NewWorker(app, mckSocket, "test")
+
+		Convey("Should reject unidentified clients", func() {
+			wws.SetUAID("")
+
+			err := wws.Send("", int64(0), "")
+			So(err, ShouldBeNil)
+			So(wws.stopped(), ShouldBeTrue)
+		})
+
+		Convey("Should fail if storage is unavailable", func() {
+			uaid := "6fcb17770fa54b95af7bd338c0f28737"
+			wws.SetUAID(uaid)
+
+			fetchErr := errors.New("synergies not aligned")
+			mckStore.EXPECT().FetchAll(uaid,
+				gomock.Any()).Return(nil, nil, fetchErr)
+			err := wws.Flush(0)
+			So(err, ShouldEqual, fetchErr)
+			So(wws.stopped(), ShouldBeFalse)
+		})
+
+		Convey("Should flush pending updates from storage", func() {
+			uaid := "bdee3a9cbbbf484a9cf8e11d1d22cf8c"
+			wws.SetUAID(uaid)
+
+			updates := []Update{
+				{"263d09f8950b11e4a1f83c15c2c622fe", 2, "I'm a little teapot"},
+				{"bac9d83a950b11e4bd713c15c2c622fe", 4, "Short and stout"},
+			}
+			expired := []string{"c778e94a950b11e4ba7f3c15c2c622fe"}
+
+			gomock.InOrder(
+				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
+					updates, expired, nil),
+				mckSocket.EXPECT().WriteJSON(FlushReply{
+					Type:    "notification",
+					Updates: updates,
+					Expired: expired,
+				}),
+				mckStat.EXPECT().IncrementBy("updates.sent", int64(2)),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+
+			err := wws.Flush(0)
+			So(err, ShouldBeNil)
+		})
+
+		Convey("Should not write to the socket if no updates are pending", func() {
+			uaid := "21fd5a6e27764853b32308e0724b971d"
+			wws.SetUAID(uaid)
+
+			gomock.InOrder(
+				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+			err := wws.Flush(0)
+			So(err, ShouldBeNil)
+		})
+	})
+}
+
+func TestWorkerSend(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStat := NewMockStatistician(mockCtrl)
+	mckSocket := NewMockSocket(mockCtrl)
 	mckPinger := NewMockPropPinger(mockCtrl)
 
 	Convey("Should deliver new updates", t, func() {
 		app := NewApplication()
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
-		app.SetStore(mckStore)
 		app.SetPropPinger(mckPinger)
 
 		wws := NewWorker(app, mckSocket, "test")
@@ -166,7 +244,7 @@ func TestWorkerFlush(t *testing.T) {
 		Convey("Should reject unidentified clients", func() {
 			wws.SetUAID("")
 
-			err := wws.Flush(0, "", 0, "")
+			err := wws.Flush(0)
 			So(err, ShouldBeNil)
 			So(wws.stopped(), ShouldBeTrue)
 		})
@@ -192,61 +270,11 @@ func TestWorkerFlush(t *testing.T) {
 				mckPinger.EXPECT().Send(uaid, version, data),
 			)
 
-			err := wws.Flush(0, chid, version, data)
+			err := wws.Send(chid, version, data)
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("Should fail if storage is unavailable", func() {
-			uaid := "6fcb17770fa54b95af7bd338c0f28737"
-			wws.SetUAID(uaid)
-
-			fetchErr := errors.New("synergies not aligned")
-			mckStore.EXPECT().FetchAll(uaid,
-				gomock.Any()).Return(nil, nil, fetchErr)
-			err := wws.Flush(0, "", 0, "")
-			So(err, ShouldEqual, fetchErr)
-			So(wws.stopped(), ShouldBeFalse)
-		})
-
-		Convey("Should flush pending updates if the channel is omitted", func() {
-			uaid := "bdee3a9cbbbf484a9cf8e11d1d22cf8c"
-			wws.SetUAID(uaid)
-
-			updates := []Update{
-				{"263d09f8950b11e4a1f83c15c2c622fe", 2, "I'm a little teapot"},
-				{"bac9d83a950b11e4bd713c15c2c622fe", 4, "Short and stout"},
-			}
-			expired := []string{"c778e94a950b11e4ba7f3c15c2c622fe"}
-
-			gomock.InOrder(
-				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
-					updates, expired, nil),
-				mckSocket.EXPECT().WriteJSON(FlushReply{
-					Type:    "notification",
-					Updates: updates,
-					Expired: expired,
-				}),
-				mckStat.EXPECT().IncrementBy("updates.sent", int64(2)),
-				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
-			)
-
-			err := wws.Flush(0, "", 0, "")
-			So(err, ShouldBeNil)
-		})
-
-		Convey("Should not write to the socket if no updates are pending", func() {
-			uaid := "21fd5a6e27764853b32308e0724b971d"
-			wws.SetUAID(uaid)
-
-			gomock.InOrder(
-				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
-				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
-			)
-			err := wws.Flush(0, "", 0, "")
-			So(err, ShouldBeNil)
-		})
-
-		Convey("Should send an update packet if a channel is given", func() {
+		Convey("Should send an update with the given payload", func() {
 			wws.SetUAID("4f76ffb92747471c85f8ebda7650b047")
 
 			chid := "732bb79fc5684b76a67b9a08f547f968"
@@ -262,7 +290,7 @@ func TestWorkerFlush(t *testing.T) {
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
 
-			err := wws.Flush(0, chid, version, data)
+			err := wws.Send(chid, version, data)
 			So(err, ShouldBeNil)
 		})
 	})

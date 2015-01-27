@@ -65,14 +65,24 @@ func (_mr *_MockWorkerRecorder) Run() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Run")
 }
 
-func (_m *MockWorker) Flush(lastAccessed int64, chid string, version int64, data string) error {
-	ret := _m.ctrl.Call(_m, "Flush", lastAccessed, chid, version, data)
+func (_m *MockWorker) Send(chid string, version int64, data string) error {
+	ret := _m.ctrl.Call(_m, "Send", chid, version, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockWorkerRecorder) Flush(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Flush", arg0, arg1, arg2, arg3)
+func (_mr *_MockWorkerRecorder) Send(arg0, arg1, arg2 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Send", arg0, arg1, arg2)
+}
+
+func (_m *MockWorker) Flush(lastAccessed int64) error {
+	ret := _m.ctrl.Call(_m, "Flush", lastAccessed)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockWorkerRecorder) Flush(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Flush", arg0)
 }
 
 func (_m *MockWorker) Close() error {

@@ -422,7 +422,7 @@ func TestEndpointPinger(t *testing.T) {
 				mckPinger.EXPECT().Send(uaid, int64(1257894000), data).Return(true, nil),
 				mckPinger.EXPECT().CanBypassWebsocket().Return(false),
 				mckStore.EXPECT().Update(uaid, "456", int64(1257894000)),
-				mckWorker.EXPECT().Flush(int64(0), "456", int64(1257894000), data),
+				mckWorker.EXPECT().Send("456", int64(1257894000), data),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 				mckStat.EXPECT().Timer("updates.handled", gomock.Any()),
 			)
@@ -453,7 +453,7 @@ func TestEndpointPinger(t *testing.T) {
 				mckPinger.EXPECT().Send(uaid, int64(7), "").Return(
 					true, errors.New("oops")),
 				mckStore.EXPECT().Update(uaid, "456", int64(7)),
-				mckWorker.EXPECT().Flush(int64(0), "456", int64(7), ""),
+				mckWorker.EXPECT().Send("456", int64(7), ""),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 				mckStat.EXPECT().Timer("updates.handled", gomock.Any()),
 			)
@@ -540,7 +540,7 @@ func TestEndpointDelivery(t *testing.T) {
 				app.AddWorker(uaid, mckWorker)
 
 				gomock.InOrder(
-					mckWorker.EXPECT().Flush(int64(0), chid, int64(3), "").Return(
+					mckWorker.EXPECT().Send(chid, int64(3), "").Return(
 						errors.New("client gone")),
 					mckStat.EXPECT().Increment("updates.appserver.rejected"),
 				)
@@ -589,7 +589,7 @@ func TestEndpointDelivery(t *testing.T) {
 				mckStat.EXPECT().Increment("updates.routed.outgoing"),
 				mckRouter.EXPECT().Route(nil, uaid, chid, version,
 					gomock.Any(), "", data).Return(false, nil),
-				mckWorker.EXPECT().Flush(int64(0), chid, version, data).Return(nil),
+				mckWorker.EXPECT().Send(chid, version, data).Return(nil),
 				mckStat.EXPECT().Increment("updates.appserver.received"),
 			)
 

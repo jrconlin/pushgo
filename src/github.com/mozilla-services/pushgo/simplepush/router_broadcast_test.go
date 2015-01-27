@@ -97,7 +97,7 @@ func TestBroadcastRouter(t *testing.T) {
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
+		mockWorker.EXPECT().Send(chid, version, "").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
@@ -171,7 +171,7 @@ func BenchmarkRouter(b *testing.B) {
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
+		mockWorker.EXPECT().Send(chid, version, "").Return(nil)
 
 		router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 	}
