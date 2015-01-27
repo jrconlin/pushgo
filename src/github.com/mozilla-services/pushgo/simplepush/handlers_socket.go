@@ -16,13 +16,18 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func NewSocketHandler() *SocketHandler {
-	return new(SocketHandler)
+func NewSocketHandler() (h *SocketHandler) {
+	h = &SocketHandler{mux: mux.NewRouter()}
+	h.mux.Handle("/", websocket.Server{
+		Handler:   h.PushSocketHandler,
+		Handshake: h.checkOrigin,
+	})
+	return h
 }
 
 type SocketHandlerConfig struct {
 	Origins  []string
-	Listener ListenerConfig
+	Listener TCPListenerConfig
 }
 
 type SocketHandler struct {
@@ -32,7 +37,7 @@ type SocketHandler struct {
 	store     Store
 	origins   []*url.URL
 	listener  net.Listener
-	server    *ServeCloser
+	server    Server
 	mux       *mux.Router
 	url       string
 	maxConns  int
@@ -41,7 +46,7 @@ type SocketHandler struct {
 
 func (h *SocketHandler) ConfigStruct() interface{} {
 	return &SocketHandlerConfig{
-		Listener: ListenerConfig{
+		Listener: TCPListenerConfig{
 			Addr:            ":8080",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
@@ -51,52 +56,71 @@ func (h *SocketHandler) ConfigStruct() interface{} {
 
 func (h *SocketHandler) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*SocketHandlerConfig)
-
-	h.app = app
-	h.logger = app.Logger()
-	h.metrics = app.Metrics()
-	h.store = app.Store()
-
-	if len(conf.Origins) > 0 {
-		h.origins = make([]*url.URL, len(conf.Origins))
-		for index, origin := range conf.Origins {
-			if h.origins[index], err = url.ParseRequestURI(origin); err != nil {
-				return fmt.Errorf("Error parsing origin: %s", err)
-			}
-		}
+	h.setApp(app)
+	if err = h.setOrigins(conf.Origins); err != nil {
+		h.logger.Panic("handlers_socket", "Could not set allowed origins",
+			LogFields{"error": err.Error()})
+		return err
 	}
-
-	if h.listener, err = conf.Listener.Listen(); err != nil {
+	if err = h.listenConfig(conf.Listener); err != nil {
 		h.logger.Panic("handlers_socket", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
+	h.setServer(h.newServer())
+	return nil
+}
 
+// setApp sets the parent application for this WebSocket handler.
+func (h *SocketHandler) setApp(app *Application) {
+	h.app = app
+	h.logger = app.Logger()
+	h.metrics = app.Metrics()
+	h.store = app.Store()
+}
+
+// listenWithConfig starts a listener for this WebSocket handler.
+func (h *SocketHandler) listenConfig(conf ListenerConfig) (err error) {
+	if h.listener, err = conf.Listen(); err != nil {
+		return err
+	}
 	var scheme string
-	if conf.Listener.UseTLS() {
+	if conf.UseTLS() {
 		scheme = "wss"
 	} else {
 		scheme = "ws"
 	}
-	host, port := HostPort(h.listener, app)
+	host, port := HostPort(h.listener, h.app)
 	h.url = CanonicalURL(scheme, host, port)
+	h.maxConns = conf.GetMaxConns()
+	return nil
+}
 
-	h.maxConns = conf.Listener.MaxConns
+// setOrigins sets the allowed WebSocket origins.
+func (h *SocketHandler) setOrigins(origins []string) (err error) {
+	h.origins = make([]*url.URL, len(origins))
+	for i, origin := range origins {
+		if h.origins[i], err = url.ParseRequestURI(origin); err != nil {
+			return fmt.Errorf("Error parsing origin %q: %s", origin, err)
+		}
+	}
+	return nil
+}
 
-	h.mux = mux.NewRouter()
-	h.mux.Handle("/", websocket.Server{Handler: h.PushSocketHandler,
-		Handshake: h.checkOrigin})
+// setServer sets the server for this WebSocket handler.
+func (h *SocketHandler) setServer(srv Server) { h.server = srv }
 
-	h.server = NewServeCloser(&http.Server{
+// newServer returns the default server for this WebSocket handler. This is
+// used by the tests to wrap the server in a testServer.
+func (h *SocketHandler) newServer() *ServeCloser {
+	return NewServeCloser(&http.Server{
 		Handler: &LogHandler{h.mux, h.logger},
 		ErrorLog: log.New(&LogWriter{
-			Logger: h.logger.Logger,
+			Logger: h.logger,
 			Name:   "handlers_socket",
 			Level:  ERROR,
 		}, "", 0),
 	})
-
-	return nil
 }
 
 func (h *SocketHandler) Listener() net.Listener { return h.listener }
@@ -138,15 +162,14 @@ func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 }
 
 func (h *SocketHandler) checkOrigin(conf *websocket.Config, req *http.Request) (err error) {
-	if len(h.origins) == 0 {
-		return nil
-	}
 	if conf.Origin, err = websocket.Origin(conf, req); err != nil {
-		if h.logger.ShouldLog(WARNING) {
-			h.logger.Warn("handlers_socket", "Error parsing WebSocket origin",
+		if h.logger.ShouldLog(NOTICE) {
+			h.logger.Notice("handlers_socket", "Error parsing WebSocket origin",
 				LogFields{"rid": req.Header.Get(HeaderID), "error": err.Error()})
 		}
-		return err
+	}
+	if len(h.origins) == 0 {
+		return nil
 	}
 	if conf.Origin == nil {
 		return ErrMissingOrigin
@@ -168,30 +191,21 @@ func (h *SocketHandler) Close() error {
 	return h.closeOnce.Do(h.close)
 }
 
-func (h *SocketHandler) close() error {
+func (h *SocketHandler) close() (err error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_socket", "Closing WebSocket handler",
 			LogFields{"url": h.url})
 	}
-	var errors MultipleError
-	if err := h.listener.Close(); err != nil {
-		if h.logger.ShouldLog(ERROR) {
+	if h.listener != nil {
+		if err = h.listener.Close(); err != nil && h.logger.ShouldLog(ERROR) {
 			h.logger.Error("handlers_socket", "Error closing WebSocket listener",
 				LogFields{"error": err.Error(), "url": h.url})
 		}
-		errors = append(errors, err)
 	}
-	if err := h.server.Close(); err != nil {
-		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers_socket", "Error closing WebSocket server",
-				LogFields{"error": err.Error(), "url": h.url})
-		}
-		errors = append(errors, err)
+	if h.server != nil {
+		h.server.Close()
 	}
-	if len(errors) > 0 {
-		return errors
-	}
-	return nil
+	return
 }
 
 func isSameOrigin(a, b *url.URL) bool {

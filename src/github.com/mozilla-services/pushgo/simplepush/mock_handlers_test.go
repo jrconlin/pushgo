@@ -54,6 +54,47 @@ func (_mr *_MockServeMuxRecorder) ServeHTTP(arg0, arg1 interface{}) *gomock.Call
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "ServeHTTP", arg0, arg1)
 }
 
+// Mock of Server interface
+type MockServer struct {
+	ctrl     *gomock.Controller
+	recorder *_MockServerRecorder
+}
+
+// Recorder for MockServer (not exported)
+type _MockServerRecorder struct {
+	mock *MockServer
+}
+
+func NewMockServer(ctrl *gomock.Controller) *MockServer {
+	mock := &MockServer{ctrl: ctrl}
+	mock.recorder = &_MockServerRecorder{mock}
+	return mock
+}
+
+func (_m *MockServer) EXPECT() *_MockServerRecorder {
+	return _m.recorder
+}
+
+func (_m *MockServer) Serve(_param0 net.Listener) error {
+	ret := _m.ctrl.Call(_m, "Serve", _param0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockServerRecorder) Serve(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Serve", arg0)
+}
+
+func (_m *MockServer) Close() error {
+	ret := _m.ctrl.Call(_m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockServerRecorder) Close() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
+}
+
 // Mock of Handler interface
 type MockHandler struct {
 	ctrl     *gomock.Controller
@@ -131,4 +172,56 @@ func (_m *MockHandler) Close() error {
 
 func (_mr *_MockHandlerRecorder) Close() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
+}
+
+// Mock of ListenerConfig interface
+type MockListenerConfig struct {
+	ctrl     *gomock.Controller
+	recorder *_MockListenerConfigRecorder
+}
+
+// Recorder for MockListenerConfig (not exported)
+type _MockListenerConfigRecorder struct {
+	mock *MockListenerConfig
+}
+
+func NewMockListenerConfig(ctrl *gomock.Controller) *MockListenerConfig {
+	mock := &MockListenerConfig{ctrl: ctrl}
+	mock.recorder = &_MockListenerConfigRecorder{mock}
+	return mock
+}
+
+func (_m *MockListenerConfig) EXPECT() *_MockListenerConfigRecorder {
+	return _m.recorder
+}
+
+func (_m *MockListenerConfig) UseTLS() bool {
+	ret := _m.ctrl.Call(_m, "UseTLS")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+func (_mr *_MockListenerConfigRecorder) UseTLS() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "UseTLS")
+}
+
+func (_m *MockListenerConfig) GetMaxConns() int {
+	ret := _m.ctrl.Call(_m, "GetMaxConns")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+func (_mr *_MockListenerConfigRecorder) GetMaxConns() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "GetMaxConns")
+}
+
+func (_m *MockListenerConfig) Listen() (net.Listener, error) {
+	ret := _m.ctrl.Call(_m, "Listen")
+	ret0, _ := ret[0].(net.Listener)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (_mr *_MockListenerConfigRecorder) Listen() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Listen")
 }

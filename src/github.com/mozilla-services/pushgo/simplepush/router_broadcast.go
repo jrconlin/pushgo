@@ -53,7 +53,7 @@ type BroadcastRouterConfig struct {
 
 	// Listener specifies the address and port, maximum connections, TCP
 	// keep-alive period, and certificate information for the routing listener.
-	Listener ListenerConfig
+	Listener TCPListenerConfig
 
 	MaxDataLen int `toml:"max_data_len" env:"max_data_len"`
 }
@@ -93,7 +93,7 @@ func (*BroadcastRouter) ConfigStruct() interface{} {
 		Ctimeout:   "3s",
 		Rwtimeout:  "3s",
 		IdleConns:  50,
-		Listener: ListenerConfig{
+		Listener: TCPListenerConfig{
 			Addr:            ":3000",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
