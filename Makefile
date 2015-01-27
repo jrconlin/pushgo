@@ -147,7 +147,7 @@ travis-cov: test-cov
 	GOPATH=$(GOPATH) goveralls -coverprofile=coverage.out \
 		-service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
-test:
+test: test-mocks
 	GOPATH=$(GOPATH) $(GO) test -v \
 		-tags smoke \
 		-ldflags "$(GOLDFLAGS)" $(PACKAGE)/simplepush
