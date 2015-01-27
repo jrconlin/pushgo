@@ -13,6 +13,7 @@ package simplepush
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"testing"
 
@@ -52,20 +53,9 @@ func (r *mockGCMClient) reset() {
 	r.err = nil
 }
 
-// fake response body
-type rbody struct {
-	io.Reader
-}
-
-func (r rbody) Close() error {
-	return nil
-}
-
 // Generate a fake body ReadCloser
 func respBody(data string) io.ReadCloser {
-	return rbody{
-		io.MultiReader(bytes.NewReader([]byte(data))),
-	}
+	return ioutil.NopCloser(io.MultiReader(bytes.NewReader([]byte(data))))
 }
 
 // Remember, you can add methods to package "local" structs that
