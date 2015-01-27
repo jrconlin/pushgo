@@ -4,8 +4,8 @@
 package simplepush
 
 import (
-	io "io"
 	gomock "github.com/rafrombrc/gomock/gomock"
+	io "io"
 )
 
 // Mock of Logger interface

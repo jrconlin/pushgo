@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
 	"net"
@@ -23,9 +24,10 @@ import (
 )
 
 const (
-	AMZ_DATE      string = "20060102T150405Z"
-	AMZ_SHORTDATE string = "20060102"
-	AMZ_HASH_ALGO string = "AWS4-HMAC-SHA256"
+	AMZ_DATE        string = "20060102T150405Z"
+	AMZ_SHORTDATE   string = "20060102"
+	AMZ_HASH_ALGO   string = "AWS4-HMAC-SHA256"
+	AWS_TERM_STRING string = "aws4_request"
 )
 
 var (
@@ -36,7 +38,7 @@ var (
 )
 
 type AWSCache struct {
-	expry    int64
+	expry    time.Time
 	sha256   hash.Hash
 	region   string
 	service  string
@@ -45,19 +47,19 @@ type AWSCache struct {
 	signKey  []byte
 }
 
-func (r *AWSCache) checkDate() boolean {
-	return time.Now().UTC().Unix() > r.expry
+func (r *AWSCache) Expired() bool {
+	return time.Now().UTC().After(r.expry)
 }
 
-func NewAWSCache(secret, region, service) (*AWSCache, error) {
+func NewAWSCache(secret, region, service string) (*AWSCache, error) {
 	y, m, d := time.Now().UTC().Date()
-	tomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC).Unix()
+	tomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
 	return &AWSCache{
 		shortNow: time.Now().UTC().Format(AMZ_SHORTDATE),
+		expry:    tomorrow,
 		secret:   secret,
 		sha256:   sha256.New(),
 		service:  service,
-		expry:    tomorrow,
 	}, nil
 }
 
@@ -274,11 +276,11 @@ func awsCanonicalArgs(queryString string) (result string, err error) {
 	return
 }
 
-func awsHash(in []byte) string {
+func genAWSHash(in []byte) string {
 	// reuse the hash object, since it never changes.
 	awsHash.Reset()
-	hash.Write(in)
-	return strings.ToLower(hex.EncodeToString(hash.Sum(nil)))
+	awsHash.Write(in)
+	return strings.ToLower(hex.EncodeToString(awsHash.Sum(nil)))
 }
 
 func awsHMac(key, data []byte) []byte {
@@ -322,7 +324,7 @@ func AWSSignature(req *http.Request, kSecret, region, service string, payload []
 	}
 
 	awsTermString := "aws4_request"
-	hashPayload := awsHash(payload)
+	hashPayload := genAWSHash(payload)
 	path := req.URL.Path
 	if len(path) == 0 {
 		path = "/"
@@ -336,7 +338,7 @@ func AWSSignature(req *http.Request, kSecret, region, service string, payload []
 		canHeaders,
 		canHeaderList,
 		hashPayload)
-	requestSignature := awsHash([]byte(canonicalRequest))
+	requestSignature := genAWSHash([]byte(canonicalRequest))
 	canonicalSig := fmt.Sprintf(
 		"%s\n%s\n%s\n%s",
 		AMZ_HASH_ALGO,

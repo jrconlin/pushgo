@@ -4,8 +4,8 @@
 package simplepush
 
 import (
-	time "time"
 	gomock "github.com/rafrombrc/gomock/gomock"
+	time "time"
 )
 
 // Mock of Statistician interface
