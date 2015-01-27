@@ -4,8 +4,8 @@
 package simplepush
 
 import (
-	gomock "github.com/rafrombrc/gomock/gomock"
 	time "time"
+	gomock "github.com/rafrombrc/gomock/gomock"
 )
 
 // Mock of Store interface
