@@ -310,7 +310,10 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 
 	cn, _ := resp.(http.CloseNotifier)
 	if !h.deliver(cn, uaid, chid, version, requestID, data) {
-		writeJSON(resp, http.StatusNotFound, []byte("false"))
+		// We've accepted the valid endpoint, stored the data for
+		// eventual pickup by the client, but failed to deliver to
+		// the client via routing.
+		writeJSON(resp, http.StatusAccepted, []byte("{}"))
 		return
 	}
 
