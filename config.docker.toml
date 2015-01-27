@@ -11,10 +11,6 @@
 #use_aws_host = false
 # Specifies whether the hostname should be resolved to an IP address.
 resolve_host = true
-# A list of allowed WebSocket origins. An empty list allows all origins;
-# otherwise, the scheme, hostname, and port specified in the client's
-# `Origin` header must match at least one allowed origin.
-#origins = []
 
 # This defines what endpoint to use for updates.
 # {{.CurrentHost}} = the current host to connect to.
@@ -40,8 +36,12 @@ resolve_host = true
 client_min_ping_interval = "10s"
 ## Timeout socket if not recv'd hello
 #client_hello_timeout = "30s"
+client_pong_interval = "5m"
 
-[default.websocket]
+[websocket]
+#origins = []
+
+[websocket.listener]
 # The WebSocket listener address and port. 0.0.0.0 = all interfaces
 addr = ":8080"
 # The maximum number of concurrent connections that this listener can
@@ -53,12 +53,22 @@ max_connections = 250000
 #cert_file = "certs/test.crt"
 #key_file = "certs/test.key"
 
+[endpoint]
+#max_data_len = 4096
+
 [default.endpoint]
 addr = ":8081"
 max_connections = 40000
 #tcp_keep_alive = "3m"
 #cert_file = "certs/test.crt"
 #key_file = "certs/test.key"
+
+[profile]
+enable = true
+
+[profile.listener]
+addr = ":8082"
+max_connections = 100
 
 # Proprietary pings
 [propping]
@@ -141,6 +151,8 @@ type = "none"
 # means 16 buckets. Have fun with probability tables to figure out the
 # size that works best for you.)
 #bucket_size = 10
+#max_data_len = 4096
+#idle_conns = 50
 
 [router.listener]
 # Default interface and port for shard routing
@@ -159,6 +171,3 @@ statsd_server = ":8125"
 
 [balancer]
 type = "none"
-
-[handlers]
-max_data_len = 1024

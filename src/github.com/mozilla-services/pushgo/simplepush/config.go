@@ -52,9 +52,14 @@ type ConfigFile map[string]toml.Primitive
 
 // Interface for something that needs a set of config options
 type HasConfigStruct interface {
+	HasInit
 	// Returns a default-value-populated configuration structure into which
 	// the plugin's TOML configuration will be deserialized.
 	ConfigStruct() interface{}
+}
+
+// Interface for something that can be initialized
+type HasInit interface {
 	// The configuration loaded after ConfigStruct will be passed in
 	// Throwing an error here will cause the application to stop loading
 	Init(app *Application, config interface{}) error
@@ -84,6 +89,7 @@ const (
 	PluginSocket
 	PluginEndpoint
 	PluginHealth
+	PluginProfile
 )
 
 var pluginNames = map[PluginType]string{
@@ -99,6 +105,7 @@ var pluginNames = map[PluginType]string{
 	PluginSocket:   "socket",
 	PluginEndpoint: "endpoint",
 	PluginHealth:   "health",
+	PluginProfile:  "profile",
 }
 
 func (t PluginType) String() string {
@@ -202,6 +209,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	serv := obj.(Server)
 	app.SetServer(serv)
 
+	// Set up the WebSocket handler.
+	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginServer.
 	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
 		return nil, err
 	}
@@ -218,16 +227,28 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
+	// Set up the HTTP update handler.
+	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginRouter,
+	// PluginPinger, PluginBalancer, PluginServer.
 	if obj, err = l.loadPlugin(PluginEndpoint, app); err != nil {
 		return nil, err
 	}
 	eh := obj.(Handler)
 	app.SetEndpointHandler(eh)
 
+	// Attach the health handlers to PluginSocket and PluginEndpoint.
 	// Loaded for side effects only.
 	if _, err = l.loadPlugin(PluginHealth, app); err != nil {
 		return nil, err
 	}
+
+	// Set up the performance profiling handlers.
+	// Deps: PluginLogger.
+	if obj, err = l.loadPlugin(PluginProfile, app); err != nil {
+		return nil, err
+	}
+	ph := obj.(Handler)
+	app.SetProfileHandlers(ph)
 
 	return app, nil
 }
@@ -281,6 +302,20 @@ func LoadConfigStruct(sectionName string, env envconf.Environment,
 	return configStruct, nil
 }
 
+// Applies environment variable overrides to confStruct and initializes obj
+func LoadConfigFromEnvironment(app *Application, sectionName string,
+	obj HasInit, env envconf.Environment, confStruct interface{}) (err error) {
+
+	if confStruct == nil {
+		return nil
+	}
+	if err = env.Decode(toEnvName(sectionName), EnvSep, confStruct); err != nil {
+		return fmt.Errorf("Invalid environment variable for section '%s': %s",
+			sectionName, err)
+	}
+	return obj.Init(app, confStruct)
+}
+
 // Loads the config for a section supplied, configures the supplied object, and initializes
 func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
 	env envconf.Environment, configFile ConfigFile) (err error) {
@@ -299,13 +334,7 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 			sectionName, err)
 	}
 
-	if err = env.Decode(toEnvName(sectionName), EnvSep, confStruct); err != nil {
-		return fmt.Errorf("Invalid environment variable for section '%s': %s",
-			sectionName, err)
-	}
-
-	err = obj.Init(app, confStruct)
-	return
+	return LoadConfigFromEnvironment(app, sectionName, obj, env, confStruct)
 }
 
 // Load an extensible section that has a type keyword
@@ -412,6 +441,21 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 		PluginHealth: func(app *Application) (HasConfigStruct, error) {
 			h := NewHealthHandlers()
 			if err := h.Init(app, h.ConfigStruct()); err != nil {
+				return nil, err
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (plugin HasConfigStruct, err error) {
+			h := new(ProfileHandlers)
+			sectionName := "profile"
+			if _, ok := configFile[sectionName]; ok {
+				// Performance profiling is optional and disabled by default.
+				err = LoadConfigForSection(app, sectionName, h, env, configFile)
+			} else {
+				confStruct := h.ConfigStruct()
+				err = LoadConfigFromEnvironment(app, sectionName, h, env, confStruct)
+			}
+			if err != nil {
 				return nil, err
 			}
 			return h, nil
