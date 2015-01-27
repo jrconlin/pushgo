@@ -1,8 +1,10 @@
 package simplepush
 
 import (
+	"bytes"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func Test_AWSSignature(t *testing.T) {
@@ -28,5 +30,25 @@ func Test_AWSSignature(t *testing.T) {
 	}
 	if header != "content-type;host;x-amz-date" {
 		t.Error("Header list failed to match")
+	}
+}
+
+func Test_AWSCache(t *testing.T) {
+	testSecret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	testRegion := "us-east-1"
+	testService := "iam"
+	testNow := "20100508"
+	retSig := []byte{91, 130, 236, 62, 156, 58, 160, 221, 200, 73,
+		158, 236, 73, 132, 179, 27, 49, 118, 13, 182, 116, 19, 119,
+		20, 111, 166, 54, 176, 126, 111, 151, 134}
+	acache := NewAWSCache(testNow, testSecret, testRegion, testService)
+	y, m, d := time.Now().UTC().Date()
+	acache.expry = time.Date(y, m, d-1, 0, 0, 0, 0, time.UTC)
+	if !acache.Expired() {
+		t.Error("Failed to notice cache expired")
+	}
+	if !bytes.Equal(acache.SignKey, retSig) {
+		t.Error("Signature doesn't match expected value")
+		t.Logf("%v, %v\n", retSig, acache.SignKey)
 	}
 }

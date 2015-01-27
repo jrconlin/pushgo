@@ -37,30 +37,32 @@ var (
 	awsHash               hash.Hash    = sha256.New()
 )
 
+var awsCache map[string]*AWSCache
+
+func init() {
+	awsCache = make(map[string]*AWSCache)
+}
+
 type AWSCache struct {
-	expry    time.Time
-	sha256   hash.Hash
-	region   string
-	service  string
-	secret   string
-	shortNow string
-	signKey  []byte
+	expry   time.Time
+	SignKey []byte
+}
+
+func NewAWSCache(shortNow, secret, region, service string) *AWSCache {
+	y, m, d := time.Now().UTC().Date()
+	tomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
+	kDate := awsHMac([]byte("AWS4"+secret), []byte(shortNow))
+	kRegion := awsHMac(kDate, []byte(region))
+	kService := awsHMac(kRegion, []byte(service))
+	kSigning := awsHMac(kService, []byte(AWS_TERM_STRING))
+	return &AWSCache{
+		expry:   tomorrow,
+		SignKey: kSigning,
+	}
 }
 
 func (r *AWSCache) Expired() bool {
 	return time.Now().UTC().After(r.expry)
-}
-
-func NewAWSCache(secret, region, service string) (*AWSCache, error) {
-	y, m, d := time.Now().UTC().Date()
-	tomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
-	return &AWSCache{
-		shortNow: time.Now().UTC().Format(AMZ_SHORTDATE),
-		expry:    tomorrow,
-		secret:   secret,
-		sha256:   sha256.New(),
-		service:  service,
-	}, nil
 }
 
 type AWSError string
@@ -349,11 +351,17 @@ func AWSSignature(req *http.Request, kSecret, region, service string, payload []
 			strings.ToLower(service),
 			awsTermString),
 		requestSignature)
-	kDate := awsHMac([]byte("AWS4"+kSecret), []byte(shortNow))
-	kRegion := awsHMac(kDate, []byte(region))
-	kService := awsHMac(kRegion, []byte(service))
-	kSigning := awsHMac(kService, []byte(awsTermString))
-	sigKey := strings.ToLower(hex.EncodeToString(awsHMac(kSigning,
+	var cache *AWSCache
+	key := fmt.Sprintf("%s.%s", region, service)
+	cache, ok := awsCache[key]
+	if ok {
+		ok = cache.Expired()
+	}
+	if !ok {
+		cache = NewAWSCache(shortNow, kSecret, region, service)
+		awsCache[key] = cache
+	}
+	signature = strings.ToLower(hex.EncodeToString(awsHMac(cache.SignKey,
 		[]byte(canonicalSig))))
-	return canHeaderList, sigKey, nil
+	return canHeaderList, signature, nil
 }
