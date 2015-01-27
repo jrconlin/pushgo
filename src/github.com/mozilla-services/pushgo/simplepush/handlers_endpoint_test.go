@@ -511,7 +511,10 @@ func TestEndpointDelivery(t *testing.T) {
 				So(ok, ShouldBeTrue)
 			})
 
-			Convey("Should return a 404 if routing fails", func() {
+			// A routing failure still stores the alert for potential
+			// client delivery. We should only return 404 for absolute
+			// failures (where the endpoint is no longer valid
+			Convey("Should return a 202 if routing fails", func() {
 				resp := httptest.NewRecorder()
 				req := &http.Request{
 					Method: "PUT",
@@ -529,10 +532,10 @@ func TestEndpointDelivery(t *testing.T) {
 				)
 				eh.ServeMux().ServeHTTP(resp, req)
 
-				So(resp.Code, ShouldEqual, 404)
+				So(resp.Code, ShouldEqual, 202)
 				body, isJSON := getJSON(resp.HeaderMap, resp.Body)
 				So(isJSON, ShouldBeTrue)
-				So(body.String(), ShouldEqual, "false")
+				So(body.String(), ShouldEqual, "{}")
 			})
 
 			Convey("Should return a 404 if local delivery fails", func() {
