@@ -62,8 +62,9 @@ type Application struct {
 	router             Router
 	locator            Locator
 	balancer           Balancer
-	sh                 Handler
-	eh                 Handler
+	sh                 Handler // WebSocket handler.
+	eh                 Handler // HTTP update handler.
+	ph                 Handler // Performance profiling handlers.
 	propping           PropPinger
 	closeChan          chan bool
 	closeOnce          Once
@@ -174,13 +175,19 @@ func (a *Application) SetEndpointHandler(h Handler) error {
 	return nil
 }
 
+func (a *Application) SetProfileHandlers(h Handler) error {
+	a.ph = h
+	return nil
+}
+
 // Start the application
 func (a *Application) Run() (errChan chan error) {
-	errChan = make(chan error, 3)
+	errChan = make(chan error, 4)
 
 	go a.sh.Start(errChan)
 	go a.eh.Start(errChan)
 	go a.router.Start(errChan)
+	go a.ph.Start(errChan)
 
 	go a.sendClientCount()
 	return errChan
@@ -233,6 +240,10 @@ func (a *Application) SocketHandler() Handler {
 
 func (a *Application) EndpointHandler() Handler {
 	return a.eh
+}
+
+func (a *Application) ProfileHandlers() Handler {
+	return a.ph
 }
 
 func (a *Application) TokenKey() []byte {
@@ -334,9 +345,15 @@ func (a *Application) close() error {
 			errors = append(errors, err)
 		}
 	}
-	if a.router != nil {
+	if r := a.Router(); r != nil {
 		// Close the routing listener.
-		if err := a.router.Close(); err != nil {
+		if err := r.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if ph := a.ProfileHandlers(); ph != nil {
+		// Stop the profiling listener.
+		if err := ph.Close(); err != nil {
 			errors = append(errors, err)
 		}
 	}

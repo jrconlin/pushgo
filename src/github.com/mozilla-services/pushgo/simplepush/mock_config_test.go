@@ -28,6 +28,16 @@ func (_m *MockHasConfigStruct) EXPECT() *_MockHasConfigStructRecorder {
 	return _m.recorder
 }
 
+func (_m *MockHasConfigStruct) Init(app *Application, config interface{}) error {
+	ret := _m.ctrl.Call(_m, "Init", app, config)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockHasConfigStructRecorder) Init(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Init", arg0, arg1)
+}
+
 func (_m *MockHasConfigStruct) ConfigStruct() interface{} {
 	ret := _m.ctrl.Call(_m, "ConfigStruct")
 	ret0, _ := ret[0].(interface{})
@@ -38,12 +48,33 @@ func (_mr *_MockHasConfigStructRecorder) ConfigStruct() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "ConfigStruct")
 }
 
-func (_m *MockHasConfigStruct) Init(app *Application, config interface{}) error {
+// Mock of HasInit interface
+type MockHasInit struct {
+	ctrl     *gomock.Controller
+	recorder *_MockHasInitRecorder
+}
+
+// Recorder for MockHasInit (not exported)
+type _MockHasInitRecorder struct {
+	mock *MockHasInit
+}
+
+func NewMockHasInit(ctrl *gomock.Controller) *MockHasInit {
+	mock := &MockHasInit{ctrl: ctrl}
+	mock.recorder = &_MockHasInitRecorder{mock}
+	return mock
+}
+
+func (_m *MockHasInit) EXPECT() *_MockHasInitRecorder {
+	return _m.recorder
+}
+
+func (_m *MockHasInit) Init(app *Application, config interface{}) error {
 	ret := _m.ctrl.Call(_m, "Init", app, config)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockHasConfigStructRecorder) Init(arg0, arg1 interface{}) *gomock.Call {
+func (_mr *_MockHasInitRecorder) Init(arg0, arg1 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Init", arg0, arg1)
 }

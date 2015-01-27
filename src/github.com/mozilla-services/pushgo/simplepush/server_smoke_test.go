@@ -192,6 +192,15 @@ func (t *TestServer) load() (*Application, error) {
 			}
 			return h, nil
 		},
+		PluginProfile: func(app *Application) (HasConfigStruct, error) {
+			ph := new(ProfileHandlers)
+			phConf := ph.ConfigStruct().(*ProfileHandlersConfig)
+			phConf.Enabled = false
+			if err := ph.Init(app, phConf); err != nil {
+				return nil, fmt.Errorf("Error initializing profiling handlers: %s", err)
+			}
+			return ph, nil
+		},
 	}
 	return loaders.Load(int(t.LogLevel))
 }

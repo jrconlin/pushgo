@@ -159,7 +159,7 @@ func TestLoad(t *testing.T) {
 	var (
 		appInst                                                    *Application
 		mockApp, mockMetrics, mockRouter, mockServ                 *mockPlugin
-		mockSocket, mockEndpoint, mockHealth                       *mockPlugin
+		mockSocket, mockEndpoint, mockHealth, mockProfile          *mockPlugin
 		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
 	loader := PluginLoaders{
@@ -263,7 +263,7 @@ func TestLoad(t *testing.T) {
 			h := NewSocketHandler()
 			mockSocket = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
-				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
+				return nil, fmt.Errorf("Error initializing WebSocket handler: %s", err)
 			}
 			return h, nil
 		},
@@ -276,7 +276,7 @@ func TestLoad(t *testing.T) {
 			h := NewEndpointHandler()
 			mockEndpoint = newMockPlugin(PluginSocket, h)
 			if err := loadEnvConfig(env, "endpoint", app, mockEndpoint); err != nil {
-				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
+				return nil, fmt.Errorf("Error initializing update handler: %s", err)
 			}
 			return h, nil
 		},
@@ -288,6 +288,17 @@ func TestLoad(t *testing.T) {
 			mockHealth = newMockPlugin(PluginHealth, h)
 			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
 				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger); err != nil {
+				return nil, err
+			}
+			h := new(ProfileHandlers)
+			mockProfile = newMockPlugin(PluginProfile, h)
+			if err := mockProfile.Init(app, mockProfile.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing profiling handlers: %s", err)
 			}
 			return h, nil
 		},
