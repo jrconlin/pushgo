@@ -62,12 +62,19 @@ func (h *SocketHandler) Init(app *Application, config interface{}) (err error) {
 			LogFields{"error": err.Error()})
 		return err
 	}
-	if err = h.listenConfig(conf.Listener); err != nil {
+	if err = h.listenWithConfig(conf.Listener); err != nil {
 		h.logger.Panic("handlers_socket", "Could not attach WebSocket listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
-	h.setServer(h.newServer())
+	h.server = NewServeCloser(&http.Server{
+		Handler: &LogHandler{h.mux, h.logger},
+		ErrorLog: log.New(&LogWriter{
+			Logger: h.logger,
+			Name:   "handlers_socket",
+			Level:  ERROR,
+		}, "", 0),
+	})
 	return nil
 }
 
@@ -80,7 +87,7 @@ func (h *SocketHandler) setApp(app *Application) {
 }
 
 // listenWithConfig starts a listener for this WebSocket handler.
-func (h *SocketHandler) listenConfig(conf ListenerConfig) (err error) {
+func (h *SocketHandler) listenWithConfig(conf ListenerConfig) (err error) {
 	if h.listener, err = conf.Listen(); err != nil {
 		return err
 	}
@@ -105,22 +112,6 @@ func (h *SocketHandler) setOrigins(origins []string) (err error) {
 		}
 	}
 	return nil
-}
-
-// setServer sets the server for this WebSocket handler.
-func (h *SocketHandler) setServer(srv Server) { h.server = srv }
-
-// newServer returns the default server for this WebSocket handler. This is
-// used by the tests to wrap the server in a testServer.
-func (h *SocketHandler) newServer() *ServeCloser {
-	return NewServeCloser(&http.Server{
-		Handler: &LogHandler{h.mux, h.logger},
-		ErrorLog: log.New(&LogWriter{
-			Logger: h.logger,
-			Name:   "handlers_socket",
-			Level:  ERROR,
-		}, "", 0),
-	})
 }
 
 func (h *SocketHandler) Listener() net.Listener { return h.listener }

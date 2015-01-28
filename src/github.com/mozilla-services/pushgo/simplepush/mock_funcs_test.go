@@ -146,12 +146,12 @@ func (pl *pipeListener) close() error {
 func (pl *pipeListener) Addr() net.Addr { return netAddr{"pipe", "pipe"} }
 
 // newServeWaiter wraps srv in a serveWaiter.
-func newServeWaiter(srv *ServeCloser) (t *serveWaiter) {
+func newServeWaiter(srv *http.Server) (t *serveWaiter) {
 	handler := srv.Handler
 	if handler == nil {
 		handler = http.DefaultServeMux
 	}
-	t = &serveWaiter{ServeCloser: srv}
+	t = &serveWaiter{ServeCloser: NewServeCloser(srv)}
 	srv.Handler = &waitGroupHandler{srv: t, handler: handler}
 	return
 }

@@ -7,6 +7,7 @@ package simplepush
 import (
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -65,7 +66,7 @@ func TestSocketListenConfig(t *testing.T) {
 	// Should forward Listen errors.
 	listenErr := errors.New("splines not reticulated")
 	mckListenerConfig.EXPECT().Listen().Return(nil, listenErr)
-	if err := sh.listenConfig(mckListenerConfig); err != listenErr {
+	if err := sh.listenWithConfig(mckListenerConfig); err != listenErr {
 		t.Errorf("Wrong error: got %#v; want %#v", err, listenErr)
 	}
 
@@ -76,7 +77,7 @@ func TestSocketListenConfig(t *testing.T) {
 		mckListenerConfig.EXPECT().UseTLS().Return(true),
 		mckListenerConfig.EXPECT().GetMaxConns().Return(1),
 	)
-	if err := sh.listenConfig(mckListenerConfig); err != nil {
+	if err := sh.listenWithConfig(mckListenerConfig); err != nil {
 		t.Errorf("Error setting listener: %s", err)
 	}
 	if maxConns := sh.MaxConns(); maxConns != 1 {
@@ -151,7 +152,7 @@ func TestSocketListenerConfig(t *testing.T) {
 			sh := NewSocketHandler()
 			defer sh.Close()
 			sh.setApp(app)
-			err := sh.listenConfig(test.conf)
+			err := sh.listenWithConfig(test.conf)
 			if err != nil {
 				if test.ok {
 					t.Errorf("On test %s, got listener error: %s", test.name, err)
@@ -202,10 +203,11 @@ func TestSocketOrigin(t *testing.T) {
 
 	pipe := newPipeListener()
 	defer pipe.Close()
-	if err := sh.listenConfig(listenerConfig{listener: pipe}); err != nil {
+	if err := sh.listenWithConfig(listenerConfig{listener: pipe}); err != nil {
 		t.Fatalf("Error setting listener: %s", err)
 	}
-	sh.setServer(newServeWaiter(sh.newServer()))
+	sh.server = newServeWaiter(&http.Server{Handler: sh.ServeMux()})
+	app.SetSocketHandler(sh)
 
 	errChan := make(chan error, 1)
 	go sh.Start(errChan)
@@ -325,10 +327,10 @@ func TestSocketInvalidOrigin(t *testing.T) {
 		sh.setApp(app)
 		sh.setOrigins(allowedOrigins)
 		pipe := newPipeListener()
-		if err := sh.listenConfig(listenerConfig{listener: pipe}); err != nil {
+		if err := sh.listenWithConfig(listenerConfig{listener: pipe}); err != nil {
 			return err
 		}
-		sh.setServer(newServeWaiter(sh.newServer()))
+		sh.server = newServeWaiter(&http.Server{Handler: sh.ServeMux()})
 		app.SetSocketHandler(sh)
 
 		errChan := make(chan error, 1)
