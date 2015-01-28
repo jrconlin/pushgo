@@ -65,7 +65,8 @@ type BroadcastRouter struct {
 	hostname    string
 	locator     Locator
 	listener    net.Listener
-	server      *ServeCloser
+	maxConns    int
+	server      Server
 	logger      *SimpleLogger
 	metrics     Statistician
 	ctimeout    time.Duration
@@ -82,8 +83,11 @@ type BroadcastRouter struct {
 
 func NewBroadcastRouter() (r *BroadcastRouter) {
 	r = &BroadcastRouter{
+		routerMux:   mux.NewRouter(),
 		closeSignal: make(chan bool),
+		rclient:     new(http.Client),
 	}
+	r.routerMux.HandleFunc("/route/{uaid}", r.RouteHandler)
 	return r
 }
 
@@ -105,58 +109,38 @@ func (*BroadcastRouter) ConfigStruct() interface{} {
 func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*BroadcastRouterConfig)
 
-	r.app = app
-	r.logger = app.Logger()
-	r.metrics = app.Metrics()
-	r.maxDataLen = conf.MaxDataLen
+	r.hostname = conf.DefaultHost
+	r.setApp(app)
 
-	if r.ctimeout, err = time.ParseDuration(conf.Ctimeout); err != nil {
+	// Client configs.
+	ctimeout, err := time.ParseDuration(conf.Ctimeout)
+	if err != nil {
 		r.logger.Panic("router", "Could not parse ctimeout",
 			LogFields{"error": err.Error(),
 				"ctimeout": conf.Ctimeout})
 		return err
 	}
-	if r.rwtimeout, err = time.ParseDuration(conf.Rwtimeout); err != nil {
+	rwtimeout, err := time.ParseDuration(conf.Rwtimeout)
+	if err != nil {
 		r.logger.Panic("router", "Could not parse rwtimeout",
 			LogFields{"error": err.Error(),
 				"rwtimeout": conf.Rwtimeout})
 		return err
 	}
+	r.setClientOptions(conf.BucketSize, ctimeout, rwtimeout)
+	r.setClientTransport(&http.Transport{
+		Dial:                r.dial,
+		MaxIdleConnsPerHost: conf.IdleConns,
+		TLSClientConfig:     new(tls.Config),
+	})
 
-	if len(conf.DefaultHost) > 0 {
-		r.hostname = conf.DefaultHost
-	} else {
-		r.hostname = app.Hostname()
-	}
-
-	if r.listener, err = conf.Listener.Listen(); err != nil {
+	// Server configs.
+	if err = r.listenWithConfig(conf.Listener); err != nil {
 		r.logger.Panic("router", "Could not attach listener",
 			LogFields{"error": err.Error()})
 		return err
 	}
-	var scheme string
-	if conf.Listener.UseTLS() {
-		scheme = "https"
-	} else {
-		scheme = "http"
-	}
-	host, port := HostPort(r.listener, r)
-	r.url = CanonicalURL(scheme, host, port)
-
-	r.bucketSize = conf.BucketSize
-
-	r.rclient = &http.Client{
-		Timeout: r.rwtimeout,
-		Transport: &http.Transport{
-			Dial:                r.dial,
-			MaxIdleConnsPerHost: conf.IdleConns,
-			TLSClientConfig:     new(tls.Config),
-		},
-	}
-
-	r.routerMux = mux.NewRouter()
-	r.routerMux.HandleFunc("/route/{uaid}", r.RouteHandler)
-
+	r.maxDataLen = conf.MaxDataLen
 	r.server = NewServeCloser(&http.Server{
 		ConnState: func(c net.Conn, state http.ConnState) {
 			if state == http.StateNew {
@@ -166,9 +150,53 @@ func (r *BroadcastRouter) Init(app *Application, config interface{}) (err error)
 			}
 		},
 		Handler:  &LogHandler{r.routerMux, r.logger},
-		ErrorLog: log.New(&LogWriter{r.logger.Logger, "router", ERROR}, "", 0)})
+		ErrorLog: log.New(&LogWriter{r.logger, "router", ERROR}, "", 0)})
 
 	return nil
+}
+
+// setApp sets the parent application for this router.
+func (r *BroadcastRouter) setApp(app *Application) {
+	r.app = app
+	r.logger = app.Logger()
+	r.metrics = app.Metrics()
+	if len(r.hostname) == 0 {
+		r.hostname = app.Hostname()
+	}
+}
+
+// listenWithConfig starts a listener for the routing handler.
+func (r *BroadcastRouter) listenWithConfig(conf ListenerConfig) (err error) {
+	if r.listener, err = conf.Listen(); err != nil {
+		return err
+	}
+	var scheme string
+	if conf.UseTLS() {
+		scheme = "https"
+	} else {
+		scheme = "http"
+	}
+	host, port := HostPort(r.listener, r)
+	r.url = CanonicalURL(scheme, host, port)
+	r.maxConns = conf.GetMaxConns()
+	return nil
+}
+
+// setClientOptions sets the bucket size, connection timeout, and request
+// timeout for the HTTP client.
+func (r *BroadcastRouter) setClientOptions(bucketSize int, ctimeout,
+	rwtimeout time.Duration) {
+
+	r.bucketSize = bucketSize
+	r.ctimeout = ctimeout
+	r.rwtimeout = rwtimeout
+	r.rclient.Timeout = rwtimeout
+}
+
+// setClientTransport overrides the HTTP client transport for this router.
+// This is used by the tests to install a synthetic dialer.
+func (r *BroadcastRouter) setClientTransport(transport http.RoundTripper) {
+	r.rclient.Transport = transport
 }
 
 func (r *BroadcastRouter) Hostname() string { return r.hostname }
@@ -272,8 +300,16 @@ func (r *BroadcastRouter) Listener() net.Listener {
 	return r.listener
 }
 
+func (r *BroadcastRouter) MaxConns() int {
+	return r.maxConns
+}
+
 func (r *BroadcastRouter) URL() string {
 	return r.url
+}
+
+func (r *BroadcastRouter) ServeMux() ServeMux {
+	return (*RouteMux)(r.routerMux)
 }
 
 func (r *BroadcastRouter) Register(uaid string) error {
