@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// The Simple Push server version, set by the linker.
-var VERSION string
+// The Simple Push server version.
+const VERSION = "1.5.0"
 
 var (
 	ErrMissingOrigin = errors.New("Missing WebSocket origin")
