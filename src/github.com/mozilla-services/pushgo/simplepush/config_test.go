@@ -158,7 +158,7 @@ func TestConfigFile(t *testing.T) {
 func TestLoad(t *testing.T) {
 	var (
 		appInst                                                    *Application
-		mockApp, mockMetrics, mockRouter, mockServ                 *mockPlugin
+		mockApp, mockMetrics, mockRouter                           *mockPlugin
 		mockSocket, mockEndpoint, mockHealth, mockProfile          *mockPlugin
 		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
@@ -234,19 +234,8 @@ func TestLoad(t *testing.T) {
 			}
 			return locator, nil
 		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			if err := isReady(mockLogger, mockMetrics); err != nil {
-				return nil, err
-			}
-			srv := NewServer()
-			mockServ = newMockPlugin(PluginServer, srv)
-			if err := loadEnvConfig(env, "server", app, mockServ); err != nil {
-				return nil, fmt.Errorf("Error initializing server: %#v", err)
-			}
-			return srv, nil
-		},
 		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
-			if err := isReady(mockLogger, mockMetrics, mockServ); err != nil {
+			if err := isReady(mockLogger, mockMetrics); err != nil {
 				return nil, err
 			}
 			balancer := &NoBalancer{}

@@ -85,7 +85,6 @@ const (
 	PluginRouter
 	PluginLocator
 	PluginBalancer
-	PluginServer
 	PluginSocket
 	PluginEndpoint
 	PluginHealth
@@ -101,7 +100,6 @@ var pluginNames = map[PluginType]string{
 	PluginRouter:   "router",
 	PluginLocator:  "locator",
 	PluginBalancer: "balancer",
-	PluginServer:   "server",
 	PluginSocket:   "socket",
 	PluginEndpoint: "endpoint",
 	PluginHealth:   "health",
@@ -201,16 +199,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Set up the server.
-	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginPinger.
-	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
-		return nil, err
-	}
-	serv := obj.(Server)
-	app.SetServer(serv)
-
 	// Set up the WebSocket handler.
-	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginServer.
+	// Deps: PluginLogger, PluginMetrics, PluginStore.
 	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
 		return nil, err
 	}
@@ -218,7 +208,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	app.SetSocketHandler(sh)
 
 	// Set up the balancer.
-	// Deps: PluginLogger, PluginMetrics, PluginServer.
+	// Deps: PluginLogger, PluginMetrics.
 	if obj, err = l.loadPlugin(PluginBalancer, app); err != nil {
 		return nil, err
 	}
@@ -416,13 +406,6 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 		},
 		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
 			return LoadExtensibleSection(app, "balancer", AvailableBalancers, env, configFile)
-		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := NewServer()
-			if err := LoadConfigForSection(app, "default", serv, env, configFile); err != nil {
-				return nil, err
-			}
-			return serv, nil
 		},
 		PluginSocket: func(app *Application) (HasConfigStruct, error) {
 			h := NewSocketHandler()

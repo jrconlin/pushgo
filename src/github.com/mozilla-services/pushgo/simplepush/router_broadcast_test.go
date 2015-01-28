@@ -46,11 +46,6 @@ func TestBroadcastRouter(t *testing.T) {
 
 	app.SetLocator(mckLocator)
 
-	srv := new(Serv)
-	defSrvConfig := srv.ConfigStruct()
-	srv.Init(app, defSrvConfig)
-	app.SetServer(srv)
-
 	cancelSignal := make(chan bool)
 
 	errChan := make(chan error, 10)
@@ -99,13 +94,10 @@ func TestBroadcastRouter(t *testing.T) {
 
 		mckLocator.EXPECT().Contacts(gomock.Any()).Return(thisNodeList, nil)
 		mckStat.EXPECT().Increment("updates.routed.incoming")
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
-			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
-		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
+		mockWorker.EXPECT().Send(chid, version, "").Return(nil)
 		mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Increment("updates.routed.received")
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
@@ -140,6 +132,7 @@ func BenchmarkRouter(b *testing.B) {
 	app.SetLogger(mckLogger)
 
 	mckStat := NewMockStatistician(mockCtrl)
+	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
 	app.SetMetrics(mckStat)
 
 	mckStore := NewMockStore(mockCtrl)
@@ -155,12 +148,6 @@ func BenchmarkRouter(b *testing.B) {
 	app.SetRouter(router)
 
 	app.SetLocator(mckLocator)
-
-	srv := new(Serv)
-	defSrvConfig := srv.ConfigStruct()
-	mckStat.EXPECT().Gauge("update.client.connections", gomock.Any()).AnyTimes()
-	srv.Init(app, defSrvConfig)
-	app.SetServer(srv)
 
 	cancelSignal := make(chan bool)
 
@@ -181,13 +168,10 @@ func BenchmarkRouter(b *testing.B) {
 		mckStat.EXPECT().Increment(gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Gauge(gomock.Any(), gomock.Any()).AnyTimes()
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().UAID().Return(uaid).Times(2)
-		mckStore.EXPECT().Update(gomock.Any(), gomock.Any(),
-			gomock.Any()).Return(nil)
 		mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
 		mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes()
-		mockWorker.EXPECT().Flush(gomock.Any(), chid, version, "").Return(nil)
+		mockWorker.EXPECT().Send(chid, version, "").Return(nil)
 
 		router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
 	}

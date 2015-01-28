@@ -349,7 +349,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 		return
 	}
 	// Try local delivery if routing failed.
-	err := h.app.Server().RequestFlush(worker, chid, version, data)
+	err := worker.Send(chid, version, data)
 	if err != nil {
 		h.metrics.Increment("updates.appserver.rejected")
 		return false
