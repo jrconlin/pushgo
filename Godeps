@@ -17,7 +17,6 @@ github.com/gorilla/context 14f550f51af52180c2eefed15e5fd18d63c0a64a
 github.com/gorilla/mux 4b8fbc56f3b2400a7c7ea3dba9b3539787c486b6
 github.com/ianoshen/gomc 7b9f299f292d3dd707fe2749d966968c9bf1e128
 github.com/kitcambridge/envconf fdc1968532255bdb56182329cdaa1e5b9aa6a6ac
-github.com/rafrombrc/gomock/gomock c922279faf77f29ce5781e96eb0711837fcb477c
 github.com/smartystreets/goconvey 8298bc7d36389ffd3e57b85d9797850d8c2382a9
 github.com/jacobsa/oglematchers 4fc24f97b5b74022c2a3f4ca7eed57ca29083d3e
 
