@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/rafrombrc/gomock/gomock"
@@ -19,6 +20,11 @@ import (
 func TestWorkerRegister(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
+
+	invalidTemplate, err := template.New("Push").Parse("{{nil}}")
+	if err != nil {
+		t.Fatalf("Error parsing invalid endpoint template: %s", err)
+	}
 
 	mckLogger := NewMockLogger(mockCtrl)
 	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
@@ -31,15 +37,11 @@ func TestWorkerRegister(t *testing.T) {
 
 	Convey("Should register channels", t, func() {
 		app := NewApplication()
+		app.endpointTemplate = testEndpointTemplate
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
 		app.SetEndpointHandler(mckEndHandler)
-		srv := NewServer()
-		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
-			t.Fatalf("Error initializing server: %s", err)
-		}
-		app.SetServer(srv)
 
 		wws := NewWorker(app, mckSocket, "test")
 
@@ -68,15 +70,48 @@ func TestWorkerRegister(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			chid := "f2265458950511e49cae3c15c2c622fe"
-			regBytes, _ := json.Marshal(struct {
-				ChannelID string `json:"channelID"`
-			}{chid})
-
 			storeErr := errors.New("oops")
+
 			mckStore.EXPECT().Register(uaid, chid,
 				int64(0)).Return(storeErr)
-			err := wws.Register(&RequestHeader{Type: "register"}, regBytes)
+
+			err := wws.Register(&RequestHeader{Type: "register"}, []byte(
+				`{"channelID":"f2265458950511e49cae3c15c2c622fe"}`))
 			So(err, ShouldEqual, storeErr)
+		})
+
+		Convey("Should fail for invalid primary keys", func() {
+			uaid := "4eac2fad173b4306a7cbf6b3a3092edf"
+			wws.SetUAID(uaid)
+
+			chid := "f6022b9012a74e4ba392f13b86b7d8f6"
+			keyErr := errors.New("universe has imploded")
+
+			gomock.InOrder(
+				mckStore.EXPECT().Register(uaid, chid, int64(0)).Return(nil),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("", keyErr),
+			)
+			err := wws.Register(&RequestHeader{Type: "register"}, []byte(
+				`{"channelID":"f6022b9012a74e4ba392f13b86b7d8f6"}`))
+			So(err, ShouldEqual, keyErr)
+		})
+
+		Convey("Should fail for invalid endpoint templates", func() {
+			uaid := "0806b368-30ff-4327-9274-f23dc9fba5d9"
+			wws.SetUAID(uaid)
+
+			chid := "70107e766f9d4a03b0a75e3fb42f73a0"
+
+			app.endpointTemplate = invalidTemplate
+			gomock.InOrder(
+				mckStore.EXPECT().Register(uaid, chid, int64(0)).Return(nil),
+				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
+				mckEndHandler.EXPECT().URL().Return("https://example.com"),
+			)
+
+			err := wws.Register(&RequestHeader{Type: "register"}, []byte(
+				`{"channelID":"70107e766f9d4a03b0a75e3fb42f73a0"}`))
+			So(err, ShouldNotBeNil)
 		})
 
 		Convey("Should generate endpoints for registered channels", func() {
@@ -86,8 +121,7 @@ func TestWorkerRegister(t *testing.T) {
 			chid := "930c80b8950611e4be663c15c2c622fe"
 
 			gomock.InOrder(
-				mckStore.EXPECT().Register(uaid, chid,
-					int64(0)).Return(nil),
+				mckStore.EXPECT().Register(uaid, chid, int64(0)).Return(nil),
 				mckStore.EXPECT().IDsToKey(uaid, chid).Return("123", nil),
 				mckEndHandler.EXPECT().URL().Return("https://example.com"),
 				mckSocket.EXPECT().WriteJSON(RegisterReply{
@@ -95,7 +129,7 @@ func TestWorkerRegister(t *testing.T) {
 					DeviceID:  uaid,
 					Status:    200,
 					ChannelID: chid,
-					Endpoint:  "https://example.com/update/123",
+					Endpoint:  "https://example.com/123",
 				}),
 				mckStat.EXPECT().Increment("updates.client.register"),
 			)
@@ -119,7 +153,7 @@ func TestWorkerFlush(t *testing.T) {
 	mckStore := NewMockStore(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
 
-	Convey("Should deliver new updates", t, func() {
+	Convey("Should flush pending updates", t, func() {
 		app := NewApplication()
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
@@ -130,7 +164,7 @@ func TestWorkerFlush(t *testing.T) {
 		Convey("Should reject unidentified clients", func() {
 			wws.SetUAID("")
 
-			err := wws.Flush(0, "", 0, "")
+			err := wws.Send("", int64(0), "")
 			So(err, ShouldBeNil)
 			So(wws.stopped(), ShouldBeTrue)
 		})
@@ -140,13 +174,14 @@ func TestWorkerFlush(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			fetchErr := errors.New("synergies not aligned")
-			mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, fetchErr)
-			err := wws.Flush(0, "", 0, "")
+			mckStore.EXPECT().FetchAll(uaid,
+				gomock.Any()).Return(nil, nil, fetchErr)
+			err := wws.Flush(0)
 			So(err, ShouldEqual, fetchErr)
 			So(wws.stopped(), ShouldBeFalse)
 		})
 
-		Convey("Should flush pending updates if the channel is omitted", func() {
+		Convey("Should flush pending updates from storage", func() {
 			uaid := "bdee3a9cbbbf484a9cf8e11d1d22cf8c"
 			wws.SetUAID(uaid)
 
@@ -159,15 +194,16 @@ func TestWorkerFlush(t *testing.T) {
 			gomock.InOrder(
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
 					updates, expired, nil),
-				mckSocket.EXPECT().WriteJSON(&FlushReply{
+				mckSocket.EXPECT().WriteJSON(FlushReply{
 					Type:    "notification",
 					Updates: updates,
 					Expired: expired,
 				}),
+				mckStat.EXPECT().IncrementBy("updates.sent", int64(2)),
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
 
-			err := wws.Flush(0, "", 0, "")
+			err := wws.Flush(0)
 			So(err, ShouldBeNil)
 		})
 
@@ -179,11 +215,66 @@ func TestWorkerFlush(t *testing.T) {
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
-			err := wws.Flush(0, "", 0, "")
+			err := wws.Flush(0)
 			So(err, ShouldBeNil)
 		})
+	})
+}
 
-		Convey("Should send an update packet if a channel is given", func() {
+func TestWorkerSend(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStat := NewMockStatistician(mockCtrl)
+	mckSocket := NewMockSocket(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+
+	Convey("Should deliver new updates", t, func() {
+		app := NewApplication()
+		app.SetLogger(mckLogger)
+		app.SetMetrics(mckStat)
+		app.SetPropPinger(mckPinger)
+
+		wws := NewWorker(app, mckSocket, "test")
+
+		Convey("Should reject unidentified clients", func() {
+			wws.SetUAID("")
+
+			err := wws.Flush(0)
+			So(err, ShouldBeNil)
+			So(wws.stopped(), ShouldBeTrue)
+		})
+
+		Convey("Should send a proprietary ping if flush panics", func() {
+			uaid := "4dd3327e8a68462389eb6ab771c05867"
+			wws.SetUAID(uaid)
+
+			writeErr := errors.New("universe has imploded")
+			writePanic := func(interface{}) error {
+				panic(writeErr)
+				return nil
+			}
+			chid := "41d1a3a6517b47d5a4aaabd82ae5f3ba"
+			version := int64(3)
+			data := "Unfortunately, as you probably already know, people"
+
+			gomock.InOrder(
+				mckSocket.EXPECT().WriteJSON(FlushReply{
+					Type:    "notification",
+					Updates: []Update{{chid, uint64(version), data}},
+				}).Do(writePanic),
+				mckPinger.EXPECT().Send(uaid, version, data),
+			)
+
+			err := wws.Send(chid, version, data)
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("Should send an update with the given payload", func() {
 			wws.SetUAID("4f76ffb92747471c85f8ebda7650b047")
 
 			chid := "732bb79fc5684b76a67b9a08f547f968"
@@ -191,15 +282,15 @@ func TestWorkerFlush(t *testing.T) {
 			data := "Here is my handle; here is my spout"
 
 			gomock.InOrder(
-				mckStat.EXPECT().IncrementBy("updates.sent", int64(1)),
-				mckSocket.EXPECT().WriteJSON(&FlushReply{
+				mckSocket.EXPECT().WriteJSON(FlushReply{
 					Type:    "notification",
 					Updates: []Update{{chid, uint64(version), data}},
 				}),
+				mckStat.EXPECT().Increment("updates.sent"),
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
 
-			err := wws.Flush(0, chid, version, data)
+			err := wws.Send(chid, version, data)
 			So(err, ShouldBeNil)
 		})
 	})
@@ -299,11 +390,12 @@ func TestWorkerACK(t *testing.T) {
 				mckStore.EXPECT().Drop(uaid, "3b17fc39d36547789cb97d73a3b291bb"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
 					flushUpdates, flushExpired, nil),
-				mckSocket.EXPECT().WriteJSON(&FlushReply{
+				mckSocket.EXPECT().WriteJSON(FlushReply{
 					Type:    "notification",
 					Updates: flushUpdates,
 					Expired: flushExpired,
 				}),
+				mckStat.EXPECT().IncrementBy("updates.sent", int64(2)),
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
 
@@ -453,7 +545,6 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 		gomock.Any()).AnyTimes()
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
-	mckServ := NewMockServer(mockCtrl)
 	mckBalancer := NewMockBalancer(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
 
@@ -462,7 +553,6 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
-		app.SetServer(mckServ)
 		app.SetBalancer(mckBalancer)
 
 		wws := NewWorker(app, mckSocket, "test")
@@ -479,7 +569,8 @@ func TestWorkerHandshakeRedirect(t *testing.T) {
 			*redirectReply.RedirectURL = "https://example.com/2"
 			replyBytes, _ := json.Marshal(redirectReply)
 			gomock.InOrder(
-				mckBalancer.EXPECT().RedirectURL().Return("https://example.com/2", true, nil),
+				mckBalancer.EXPECT().RedirectURL().Return(
+					"https://example.com/2", true, nil),
 				mckSocket.EXPECT().WriteText(string(replyBytes)),
 			)
 			err := wws.Hello(&RequestHeader{Type: "hello"},
@@ -519,17 +610,17 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 		gomock.Any()).AnyTimes()
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
-	mckServ := NewMockServer(mockCtrl)
 	mckBalancer := NewMockBalancer(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
 
 	Convey("Should handle duplicate handshakes", t, func() {
 		app := NewApplication()
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
-		app.SetServer(mckServ)
 		app.SetBalancer(mckBalancer)
+		app.SetRouter(mckRouter)
 
 		wws := NewWorker(app, mckSocket, "test")
 
@@ -538,7 +629,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			gomock.InOrder(
-				mckServ.EXPECT().Hello(wws, nil).Return(nil),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -556,7 +647,7 @@ func TestWorkerHandshakeDupe(t *testing.T) {
 			wws.SetUAID(uaid)
 
 			gomock.InOrder(
-				mckServ.EXPECT().Hello(wws, nil).Return(nil),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -590,7 +681,6 @@ func TestWorkerError(t *testing.T) {
 		gomock.Any()).AnyTimes()
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
-	mckServ := NewMockServer(mockCtrl)
 	mckBalancer := NewMockBalancer(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
 
@@ -599,7 +689,6 @@ func TestWorkerError(t *testing.T) {
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
-		app.SetServer(mckServ)
 		app.SetBalancer(mckBalancer)
 
 		Convey("Should include request fields in error responses", func() {
@@ -640,6 +729,7 @@ func BenchmarkWorkerRun(b *testing.B) {
 	defer mockCtrl.Finish()
 
 	app := NewApplication()
+	app.endpointTemplate = testEndpointTemplate
 	app.pushLongPongs = false
 
 	mckLogger := NewMockLogger(mockCtrl)
@@ -675,12 +765,6 @@ func BenchmarkWorkerRun(b *testing.B) {
 	mckRouter.EXPECT().Register(testID).Times(b.N)
 	mckRouter.EXPECT().Unregister(testID).Times(b.N)
 	app.SetRouter(mckRouter)
-
-	srv := new(Serv)
-	if err := srv.Init(app, srv.ConfigStruct()); err != nil {
-		b.Fatalf("Error initializing server: %s", err)
-	}
-	app.SetServer(srv)
 
 	mckEndHandler := NewMockHandler(mockCtrl)
 	mckEndHandler.EXPECT().URL().Return("https://example.com").Times(b.N)
@@ -730,8 +814,80 @@ func BenchmarkWorkerRun(b *testing.B) {
 		)
 		wws := NewWorker(app, mckSocket, "test")
 		wws.Run()
-		srv.Bye(wws)
+		wws.Close()
 	}
+}
+
+func TestWorkerPinger(t *testing.T) {
+	useMockFuncs()
+	defer useStdFuncs()
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mckLogger := NewMockLogger(mockCtrl)
+	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
+	mckLogger.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any()).AnyTimes()
+	mckStat := NewMockStatistician(mockCtrl)
+	mckStore := NewMockStore(mockCtrl)
+	mckBalancer := NewMockBalancer(mockCtrl)
+	mckSocket := NewMockSocket(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+
+	Convey("Should support proprietary pingers", t, func() {
+		app := NewApplication()
+		app.endpointTemplate = testEndpointTemplate
+		app.SetLogger(mckLogger)
+		app.SetMetrics(mckStat)
+		app.SetStore(mckStore)
+		app.SetBalancer(mckBalancer)
+		app.SetRouter(mckRouter)
+		app.SetPropPinger(mckPinger)
+
+		wws := NewWorker(app, mckSocket, "test")
+
+		Convey("Should register with the proprietary pinger", func() {
+			gomock.InOrder(
+				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckPinger.EXPECT().Register(testID, []byte(`{"regid":123}`)).Return(nil),
+				mckRouter.EXPECT().Register(testID),
+				mckSocket.EXPECT().WriteText(gomock.Any()),
+				mckStat.EXPECT().Increment("updates.client.hello"),
+				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(
+				`{"uaid":"","channelIDs":[],"connect":{"regid":123}}`))
+			So(err, ShouldBeNil)
+			So(wws.state, ShouldEqual, WorkerActive)
+		})
+
+		Convey("Should not fail if pinger registration fails", func() {
+			uaid := "3529f588b03e411295b8df6d38e63ce7"
+
+			gomock.InOrder(
+				mckStore.EXPECT().CanStore(0).Return(true),
+				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckPinger.EXPECT().Register(uaid, []byte(`[123]`)).Return(errors.New(
+					"external system on fire")),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
+				mckSocket.EXPECT().WriteText(gomock.Any()),
+				mckStat.EXPECT().Increment("updates.client.hello"),
+				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+
+			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(`{
+				"uaid": "3529f588b03e411295b8df6d38e63ce7",
+				"channelIDs": [],
+				"connect": [123]
+			}`))
+			So(err, ShouldBeNil)
+			So(wws.state, ShouldEqual, WorkerActive)
+		})
+	})
 }
 
 type netErr struct {
@@ -760,20 +916,25 @@ func TestWorkerRun(t *testing.T) {
 		gomock.Any()).AnyTimes()
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
-	mckServ := NewMockServer(mockCtrl)
 	mckBalancer := NewMockBalancer(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
+	mckRouter := NewMockRouter(mockCtrl)
+	mckPinger := NewMockPropPinger(mockCtrl)
+	mckEndHandler := NewMockHandler(mockCtrl)
 
 	Convey("Should read and respond to client commands", t, func() {
 		app := NewApplication()
+		app.endpointTemplate = testEndpointTemplate
 		app.clientMinPing = 10 * time.Second
 		app.clientPongInterval = 10 * time.Second
 		app.clientHelloTimeout = 10 * time.Second
 		app.SetLogger(mckLogger)
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
-		app.SetServer(mckServ)
 		app.SetBalancer(mckBalancer)
+		app.SetRouter(mckRouter)
+		app.SetPropPinger(mckPinger)
+		app.SetEndpointHandler(mckEndHandler)
 
 		wws := NewWorker(app, mckSocket, "test")
 
@@ -793,7 +954,7 @@ func TestWorkerRun(t *testing.T) {
 
 			gomock.InOrder(
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().Hello(wws, nil).Return(nil),
+				mckRouter.EXPECT().Register(testID).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()),
@@ -882,7 +1043,8 @@ func TestWorkerRun(t *testing.T) {
 					"connect": {"id": 123}
 				}`), nil),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().Hello(wws, []byte(`{"id":123}`)).Return(nil),
+				mckPinger.EXPECT().Register(testID, []byte(`{"id":123}`)).Return(nil),
+				mckRouter.EXPECT().Register(testID).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -895,8 +1057,9 @@ func TestWorkerRun(t *testing.T) {
 				}`), nil),
 				mckStore.EXPECT().Register(testID,
 					"89101cfa01dd4294a00e3a813cb3da97", int64(0)),
-				mckServ.EXPECT().Regis(wws, "89101cfa01dd4294a00e3a813cb3da97").Return(
-					"https://example.com/123", nil),
+				mckStore.EXPECT().IDsToKey(testID,
+					"89101cfa01dd4294a00e3a813cb3da97").Return("123", nil),
+				mckEndHandler.EXPECT().URL().Return("https://example.com"),
 				mckSocket.EXPECT().WriteJSON(RegisterReply{
 					Type:      "register",
 					DeviceID:  testID,
@@ -943,6 +1106,7 @@ func TestRunCase(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	app := NewApplication()
+	app.endpointTemplate = testEndpointTemplate
 
 	mckLogger := NewMockLogger(mockCtrl)
 	mckLogger.EXPECT().ShouldLog(gomock.Any()).Return(true).AnyTimes()
@@ -956,8 +1120,11 @@ func TestRunCase(t *testing.T) {
 	mckStore := NewMockStore(mockCtrl)
 	app.SetStore(mckStore)
 
-	mckServ := NewMockServer(mockCtrl)
-	app.SetServer(mckServ)
+	mckRouter := NewMockRouter(mockCtrl)
+	app.SetRouter(mckRouter)
+
+	mckEndHandler := NewMockHandler(mockCtrl)
+	app.SetEndpointHandler(mckEndHandler)
 
 	mckSocket := NewMockSocket(mockCtrl)
 
@@ -972,7 +1139,7 @@ func TestRunCase(t *testing.T) {
 		mckSocket.EXPECT().SetReadDeadline(gomock.Any()),
 		mckSocket.EXPECT().ReadBinary().Return([]byte(
 			`{"messageType":"HELLO","uaid":"","channelIDs":[]}`), nil),
-		mckServ.EXPECT().Hello(wws, nil).Return(nil),
+		mckRouter.EXPECT().Register(testID).Return(nil),
 		mckSocket.EXPECT().WriteText(string(helloReply)),
 		mckStat.EXPECT().Increment("updates.client.hello"),
 		mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -985,8 +1152,9 @@ func TestRunCase(t *testing.T) {
 		}`), nil),
 		mckStore.EXPECT().Register(testID,
 			"929c148c588746b29f4ea3dee52fdbd0", int64(0)),
-		mckServ.EXPECT().Regis(wws, "929c148c588746b29f4ea3dee52fdbd0").Return(
-			"https://example.com/1", nil),
+		mckStore.EXPECT().IDsToKey(testID,
+			"929c148c588746b29f4ea3dee52fdbd0").Return("1", nil),
+		mckEndHandler.EXPECT().URL().Return("https://example.com"),
 		mckSocket.EXPECT().WriteJSON(RegisterReply{
 			Type:      "RegisteR",
 			DeviceID:  testID,
@@ -1027,18 +1195,12 @@ func TestWorkerHello(t *testing.T) {
 		app.SetRouter(mckRouter)
 		app.SetBalancer(mckBalancer)
 
-		srv := NewServer()
-		if err := srv.Init(app, srv.ConfigStruct()); err != nil {
-			t.Fatalf("Error initializing server: %s", err)
-		}
-		app.SetServer(srv)
-
 		Convey("Should supply a device ID if the client omits one", func() {
 			wws := NewWorker(app, mckSocket, "test")
 
 			gomock.InOrder(
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckRouter.EXPECT().Register(testID),
+				mckRouter.EXPECT().Register(testID).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -1056,7 +1218,7 @@ func TestWorkerHello(t *testing.T) {
 				mckRouter.EXPECT().Unregister(testID),
 				mckSocket.EXPECT().Close(),
 			)
-			app.Server().Bye(wws)
+			wws.Close()
 			So(app.WorkerExists(testID), ShouldBeFalse)
 		})
 
@@ -1083,7 +1245,7 @@ func TestWorkerHello(t *testing.T) {
 				mckStore.EXPECT().CanStore(5).Return(false),
 				mckStore.EXPECT().DropAll(prevID),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckRouter.EXPECT().Register(testID),
+				mckRouter.EXPECT().Register(testID).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -1119,7 +1281,7 @@ func TestWorkerHello(t *testing.T) {
 				mckStore.EXPECT().CanStore(1).Return(true),
 				mckStore.EXPECT().Exists(oldID).Return(false),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckRouter.EXPECT().Register(testID),
+				mckRouter.EXPECT().Register(testID).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -1262,7 +1424,6 @@ func TestHandshakeFlush(t *testing.T) {
 	mckStat := NewMockStatistician(mockCtrl)
 	mckStore := NewMockStore(mockCtrl)
 	mckBalancer := NewMockBalancer(mockCtrl)
-	mckServ := NewMockServer(mockCtrl)
 	mckRouter := NewMockRouter(mockCtrl)
 	mckSocket := NewMockSocket(mockCtrl)
 
@@ -1272,7 +1433,6 @@ func TestHandshakeFlush(t *testing.T) {
 		app.SetMetrics(mckStat)
 		app.SetStore(mckStore)
 		app.SetBalancer(mckBalancer)
-		app.SetServer(mckServ)
 		app.SetRouter(mckRouter)
 
 		wws := NewWorker(app, mckSocket, "test")
@@ -1289,16 +1449,17 @@ func TestHandshakeFlush(t *testing.T) {
 				mckStore.EXPECT().CanStore(3).Return(true),
 				mckStore.EXPECT().Exists(uaid).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().Hello(wws, nil).Return(nil),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(
 					updates, expired, nil),
-				mckSocket.EXPECT().WriteJSON(&FlushReply{
+				mckSocket.EXPECT().WriteJSON(FlushReply{
 					Type:    "notification",
 					Updates: updates,
 					Expired: expired,
 				}),
+				mckStat.EXPECT().IncrementBy("updates.sent", int64(2)),
 				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
 			)
 			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(`{
@@ -1325,7 +1486,7 @@ func TestHandshakeFlush(t *testing.T) {
 					`{"messageType":"hello","uaid":"","channelIDs":["1"]}`), nil),
 
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().Hello(wws, nil).Return(nil),
+				mckRouter.EXPECT().Register(gomock.Any()).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(handshakeErr),
 				mckSocket.EXPECT().WriteJSON(errReply),
 			)
@@ -1367,15 +1528,13 @@ func TestWorkerClientCollision(t *testing.T) {
 		curWorker := NewWorker(app, mckSocket, "test")
 
 		Convey("Should disconnect stale clients", func() {
-			mckServ := NewMockServer(mockCtrl)
-			app.SetServer(mckServ)
-
 			gomock.InOrder(
 				mckStore.EXPECT().CanStore(1).Return(true),
-				mckServ.EXPECT().Bye(prevWorker).Return(nil),
+				mckRouter.EXPECT().Unregister(uaid).Return(nil),
+				prevSocket.EXPECT().Close(),
 				mckStore.EXPECT().Exists(uaid).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckServ.EXPECT().Hello(curWorker, nil).Return(nil),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -1386,15 +1545,13 @@ func TestWorkerClientCollision(t *testing.T) {
 				`{"uaid":"1b156db9cda04b59ae6f85d229628306","channelIDs":["1"]}`))
 			So(err, ShouldBeNil)
 			So(curWorker.UAID(), ShouldEqual, uaid)
+			worker, workerConnected := app.GetWorker(uaid)
+			So(workerConnected, ShouldBeTrue)
+			So(worker, ShouldEqual, curWorker)
 		})
 
 		Convey("Should remove stale clients from the map", func() {
 			var err error
-			srv := NewServer()
-			if err = srv.Init(app, srv.ConfigStruct()); err != nil {
-				t.Fatalf("Error initializing server: %s", err)
-			}
-			app.SetServer(srv)
 
 			gomock.InOrder(
 				mckStore.EXPECT().CanStore(1).Return(true),
@@ -1402,7 +1559,7 @@ func TestWorkerClientCollision(t *testing.T) {
 				prevSocket.EXPECT().Close(),
 				mckStore.EXPECT().Exists(uaid).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckRouter.EXPECT().Register(uaid),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()).Return(nil),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),

@@ -169,11 +169,16 @@ func NewGCMPing() (r *GCMPing) {
 	return r
 }
 
+type GCMClient interface {
+	// for testing, based off minimial requirements from http.Client
+	Do(*http.Request) (*http.Response, error)
+}
+
 type GCMPing struct {
 	logger      *SimpleLogger
 	metrics     Statistician
 	store       Store
-	client      *http.Client
+	client      GCMClient
 	url         string
 	collapseKey string
 	dryRun      bool
@@ -274,6 +279,10 @@ func (r *GCMPing) CanBypassWebsocket() bool {
 }
 
 func (r *GCMPing) Register(uaid string, pingData []byte) (err error) {
+	if r.logger.ShouldLog(INFO) {
+		r.logger.Debug("propping", "Storing connect data",
+			LogFields{"connect": string(pingData)})
+	}
 	if err = r.store.PutPing(uaid, pingData); err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("propping", "Could not store GCM registration data",
@@ -339,6 +348,10 @@ func (r *GCMPing) Send(uaid string, vers int64, data string) (ok bool, err error
 			Msg: data,
 		},
 	}
+	if r.logger.ShouldLog(DEBUG) {
+		r.logger.Debug("propping", "GCM Ping data",
+			LogFields{"connect": string(pingData)})
+	}
 	body, err := json.Marshal(request)
 	if err != nil {
 		if r.logger.ShouldLog(ERROR) {
@@ -354,6 +367,16 @@ func (r *GCMPing) Send(uaid string, vers int64, data string) (ok bool, err error
 		}
 		req.Header.Add("Authorization", fmt.Sprintf("key=%s", r.apiKey))
 		req.Header.Add("Content-Type", "application/json")
+		if r.logger.ShouldLog(DEBUG) {
+			r.logger.Debug("propping", "#### Sending GCM update",
+				LogFields{
+					"url":           r.url,
+					"headers":       fmt.Sprintf("%+v", req.Header),
+					"authorization": fmt.Sprintf("key=%s", r.apiKey),
+					"body":          string(body),
+					"data":          string(data),
+				})
+		}
 		resp, err := r.client.Do(req)
 		if err != nil {
 			return err
@@ -362,6 +385,9 @@ func (r *GCMPing) Send(uaid string, vers int64, data string) (ok bool, err error
 		// Consume the response body so the underlying TCP connection can be reused.
 		io.Copy(ioutil.Discard, resp.Body)
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if r.logger.ShouldLog(DEBUG) {
+				r.logger.Debug("propping", "Ping message sent successfully.", nil)
+			}
 			return nil
 		}
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
@@ -398,10 +424,6 @@ func (r *GCMPing) CloseNotify() <-chan bool {
 }
 
 func (r *GCMPing) Close() error {
-	return r.closeOnce.Do(r.close)
-}
-
-func (r *GCMPing) close() error {
 	close(r.closeSignal)
 	return nil
 }

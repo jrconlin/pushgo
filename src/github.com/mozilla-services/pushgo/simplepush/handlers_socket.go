@@ -123,7 +123,7 @@ func (h *SocketHandler) PushSocketHandler(ws *websocket.Conn) {
 	defer func() {
 		now := time.Now()
 		// Clean-up the resources
-		h.app.Server().Bye(worker)
+		worker.Close()
 		h.metrics.Timer("client.socket.lifespan", now.Sub(worker.Born()))
 		h.metrics.Increment("client.socket.disconnect")
 	}()

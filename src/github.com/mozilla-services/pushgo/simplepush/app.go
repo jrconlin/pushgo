@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,11 +13,12 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"text/template"
 	"time"
 )
 
-// The Simple Push server version, set by the linker.
-var VERSION string
+// The Simple Push server version.
+const VERSION = "1.5.0"
 
 var (
 	ErrMissingOrigin = errors.New("Missing WebSocket origin")
@@ -26,6 +28,7 @@ var (
 type ApplicationConfig struct {
 	Hostname           string `toml:"current_host" env:"current_host"`
 	TokenKey           string `toml:"token_key" env:"token_key"`
+	PushEndpoint       string `toml:"push_endpoint_template" env:"push_endpoint_template"`
 	UseAwsHost         bool   `toml:"use_aws_host" env:"use_aws_host"`
 	ResolveHost        bool   `toml:"resolve_host" env:"resolve_host"`
 	ClientMinPing      string `toml:"client_min_ping_interval" env:"client_min_ping_interval"`
@@ -52,12 +55,12 @@ type Application struct {
 	clientPongInterval time.Duration
 	pushLongPongs      bool
 	tokenKey           []byte
+	endpointTemplate   *template.Template
 	log                *SimpleLogger
 	metrics            Statistician
 	workers            map[string]Worker
 	workerMux          sync.RWMutex
 	workerCount        int32
-	server             Server
 	store              Store
 	router             Router
 	locator            Locator
@@ -74,6 +77,7 @@ func (a *Application) ConfigStruct() interface{} {
 	defaultHost, _ := os.Hostname()
 	return &ApplicationConfig{
 		Hostname:           defaultHost,
+		PushEndpoint:       "{{.CurrentHost}}/update/{{.Token}}",
 		UseAwsHost:         false,
 		ResolveHost:        false,
 		ClientMinPing:      "20s",
@@ -106,6 +110,9 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 
 	if err = a.SetTokenKey(conf.TokenKey); err != nil {
 		return fmt.Errorf("Malformed token key: %s", err)
+	}
+	if a.endpointTemplate, err = template.New("Push").Parse(conf.PushEndpoint); err != nil {
+		return fmt.Errorf("Error parsing push endpoint template: %s", err)
 	}
 
 	if a.clientMinPing, err = time.ParseDuration(conf.ClientMinPing); err != nil {
@@ -157,11 +164,6 @@ func (a *Application) SetLocator(locator Locator) error {
 
 func (a *Application) SetBalancer(b Balancer) error {
 	a.balancer = b
-	return nil
-}
-
-func (a *Application) SetServer(server Server) error {
-	a.server = server
 	return nil
 }
 
@@ -230,10 +232,6 @@ func (a *Application) Balancer() Balancer {
 	return a.balancer
 }
 
-func (a *Application) Server() Server {
-	return a.server
-}
-
 func (a *Application) SocketHandler() Handler {
 	return a.sh
 }
@@ -275,15 +273,22 @@ func (a *Application) GetWorker(uaid string) (worker Worker, ok bool) {
 	return
 }
 
-func (a *Application) AddWorker(uaid string, worker Worker) {
+func (a *Application) AddWorker(uaid string, worker Worker) (replaced bool) {
 	if a.closeOnce.IsDone() {
 		worker.Close()
 		return
 	}
 	a.workerMux.Lock()
+	// Avoid incrementing the worker count for duplicate handshakes. Callers
+	// can use this to short-circuit other operations (e.g., re-registering
+	// with the router).
+	_, replaced = a.workers[uaid]
 	a.workers[uaid] = worker
 	a.workerMux.Unlock()
-	atomic.AddInt32(&a.workerCount, 1)
+	if !replaced {
+		atomic.AddInt32(&a.workerCount, 1)
+	}
+	return
 }
 
 func (a *Application) RemoveWorker(uaid string, worker Worker) (removed bool) {
@@ -309,6 +314,45 @@ func (a *Application) closeWorkers() {
 		delete(a.workers, uaid)
 		worker.Close()
 	}
+}
+
+// CreateEndpoint allocates an update endpoint with the given primary key.
+func (a *Application) CreateEndpoint(key string) (string, error) {
+	token, err := a.encodePK(key)
+	if err != nil {
+		return "", err
+	}
+	return a.genEndpoint(token)
+}
+
+// encodePK encodes a primary key if a token key is specified.
+func (a *Application) encodePK(key string) (token string, err error) {
+	tokenKey := a.TokenKey()
+	if len(tokenKey) == 0 {
+		return key, nil
+	}
+	btoken := []byte(key)
+	return Encode(tokenKey, btoken)
+}
+
+// genEndpoint generates an update endpoint.
+func (a *Application) genEndpoint(token string) (string, error) {
+	var currentHost string
+	if eh := a.EndpointHandler(); eh != nil {
+		currentHost = eh.URL()
+	}
+	// cheezy variable replacement.
+	endpoint := new(bytes.Buffer)
+	if err := a.endpointTemplate.Execute(endpoint, struct {
+		Token       string
+		CurrentHost string
+	}{
+		token,
+		currentHost,
+	}); err != nil {
+		return "", err
+	}
+	return endpoint.String(), nil
 }
 
 func (a *Application) Close() error {
