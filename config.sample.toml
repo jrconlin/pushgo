@@ -188,6 +188,14 @@ type = "none"
 #handle_timeout = 5s
 # The key prefix for proprietary pings.
 #prop_prefix = "_pc-"
+#
+#[storage.dynamodb]
+#tablename="simplepush"
+#region="us-west-1"
+#read_cap_units=1
+#write_cap_units=1
+#accesskey="YourAccessKey"
+#secret="YourAccessSecret"
 
 [router]
 # Default router to use, the rest of the options assume the broadcast
