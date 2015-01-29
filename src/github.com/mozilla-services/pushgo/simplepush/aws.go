@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -292,25 +293,36 @@ func awsHMac(key, data []byte) []byte {
 	return hmac.Sum(nil)
 }
 
-func AWSSignature(req *http.Request, kSecret, region, service string, payload []byte) (signedHeaders, signature string, err error) {
+type AWSHeaderInfo struct {
+	AMZDate       string
+	ContentLen    int
+	ContentSHA256 string
+	Host          string
+	Signature     string
+	SignedHeaders string
+}
+
+func AWSSignature(req *http.Request, kSecret, region, service string) (reply AWSHeaderInfo, err error) {
 	var canQuery string
 	var now time.Time
+	var rdate string
 
-	if rdate := req.Header.Get("Date"); rdate != "" {
+	if rdate = req.Header.Get("Date"); rdate != "" {
 		now, err = time.Parse(time.RFC1123, rdate)
 		if err != nil {
 			return
 		}
-	}
-	if rdate := req.Header.Get("x-amz-date"); rdate != "" {
+		reply.AMZDate = now.Format(AMZ_DATE)
+	} else if rdate = req.Header.Get("x-amz-date"); rdate != "" {
 		now, err = time.Parse(AMZ_DATE, rdate)
 		if err != nil {
 			return
 		}
+		reply.AMZDate = rdate
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
-		req.Header.Set("x-amz-date", time.Now().Format(AMZ_DATE))
+		reply.AMZDate = time.Now().Format(AMZ_DATE)
 	}
 	shortNow := now.Format(AMZ_SHORTDATE)
 
@@ -325,8 +337,16 @@ func AWSSignature(req *http.Request, kSecret, region, service string, payload []
 		return
 	}
 
+	reply.SignedHeaders = canHeaderList
 	awsTermString := "aws4_request"
-	hashPayload := genAWSHash(payload)
+	payload := new(bytes.Buffer)
+	payload.ReadFrom(req.Body)
+	// reading from the body is destructive, because go.
+	// need to restore the Body
+	req.Body = ioutil.NopCloser(payload)
+	reply.ContentLen = payload.Len()
+	hashPayload := genAWSHash(payload.Bytes())
+	reply.ContentSHA256 = hashPayload
 	path := req.URL.Path
 	if len(path) == 0 {
 		path = "/"
@@ -361,7 +381,7 @@ func AWSSignature(req *http.Request, kSecret, region, service string, payload []
 		cache = NewAWSCache(shortNow, kSecret, region, service)
 		awsCache[key] = cache
 	}
-	signature = strings.ToLower(hex.EncodeToString(awsHMac(cache.SignKey,
+	reply.Signature = strings.ToLower(hex.EncodeToString(awsHMac(cache.SignKey,
 		[]byte(canonicalSig))))
-	return canHeaderList, signature, nil
+	return
 }
