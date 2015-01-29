@@ -440,27 +440,28 @@ func (r *BroadcastRouter) notifyAll(cancelSignal <-chan bool, contacts []string,
 func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool, contacts []string,
 	uaid string, segment *capn.Segment, logID string) (ok bool, err error) {
 
-	result, stop := make(chan bool), make(chan struct{})
-	defer close(stop)
 	timeout := r.ctimeout + r.rwtimeout + 1*time.Second
+	results := make(chan bool, len(contacts))
 	for _, contact := range contacts {
 		url := fmt.Sprintf("%s/route/%s", contact, uaid)
-		go r.notifyContact(result, stop, url, segment, logID)
+		go r.notifyContact(results, url, segment, logID)
 	}
-	timer := time.NewTimer(timeout)
-	select {
-	case ok = <-r.closeSignal:
-		return false, io.EOF
-	case <-cancelSignal:
-	case ok = <-result:
-	case <-timer.C:
+	timer := time.After(timeout)
+	for i := 0; i < cap(results) && !ok; i++ {
+		select {
+		case ok = <-r.closeSignal:
+			return false, io.EOF
+		case <-cancelSignal:
+		case ok = <-results:
+		case <-timer:
+		}
 	}
 	return ok, nil
 }
 
 // notifyContact routes a message to a single contact.
-func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{},
-	url string, segment *capn.Segment, logID string) {
+func (r *BroadcastRouter) notifyContact(results chan<- bool, url string,
+	segment *capn.Segment, logID string) {
 
 	buf := bytes.Buffer{}
 	segment.WriteTo(&buf)
@@ -470,6 +471,7 @@ func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{}
 			r.logger.Error("router", "Router request failed",
 				LogFields{"rid": logID, "error": err.Error()})
 		}
+		results <- false
 		return
 	}
 	req.Header.Set(HeaderID, logID)
@@ -484,6 +486,7 @@ func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{}
 			r.logger.Error("router", "Router send failed",
 				LogFields{"rid": logID, "error": err.Error()})
 		}
+		results <- false
 		return
 	}
 	defer resp.Body.Close()
@@ -495,17 +498,14 @@ func (r *BroadcastRouter) notifyContact(result chan<- bool, stop <-chan struct{}
 			r.logger.Debug("router", "Denied",
 				LogFields{"rid": logID, "url": url})
 		}
+		results <- false
 		return
 	}
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Server accepted",
 			LogFields{"rid": logID, "url": url})
 	}
-	select {
-	case <-stop:
-	case result <- true:
-	case <-time.After(1 * time.Second):
-	}
+	results <- true
 }
 
 func init() {
