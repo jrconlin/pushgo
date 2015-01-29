@@ -332,40 +332,20 @@ func (r *BroadcastRouter) Close() error {
 	return r.closeOnce.Do(r.close)
 }
 
-func (r *BroadcastRouter) close() error {
+func (r *BroadcastRouter) close() (err error) {
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Closing router",
 			LogFields{"url": r.url})
 	}
 	close(r.closeSignal)
 	r.closeWait.Wait()
-	var errors MultipleError
-	if err := r.listener.Close(); err != nil {
+	if err = r.listener.Close(); err != nil {
 		if r.logger.ShouldLog(ERROR) {
 			r.logger.Error("router", "Error closing routing listener",
 				LogFields{"error": err.Error(), "url": r.url})
 		}
-		errors = append(errors, err)
 	}
-	if err := r.server.Close(); err != nil {
-		if r.logger.ShouldLog(ERROR) {
-			r.logger.Error("router", "Error closing routing server",
-				LogFields{"error": err.Error(), "url": r.url})
-		}
-		errors = append(errors, err)
-	}
-	if locator := r.app.Locator(); locator != nil {
-		if err := locator.Close(); err != nil {
-			if r.logger.ShouldLog(ERROR) {
-				r.logger.Error("router", "Error closing locator",
-					LogFields{"error": err.Error(), "url": r.url})
-			}
-			errors = append(errors, err)
-		}
-	}
-	if len(errors) > 0 {
-		return errors
-	}
+	r.server.Close()
 	return nil
 }
 

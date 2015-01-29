@@ -116,7 +116,6 @@ func TestBroadcastRouter(t *testing.T) {
 		So(ok, ShouldBeTrue)
 	})
 
-	mckLocator.EXPECT().Close()
 	router.Close()
 	<-errChan
 }
