@@ -24,7 +24,7 @@ func NewEndpointHandler() (h *EndpointHandler) {
 type EndpointHandlerConfig struct {
 	MaxDataLen  int  `toml:"max_data_len" env:"max_data_len"`
 	AlwaysRoute bool `toml:"always_route" env:"always_route"`
-	Listener    ListenerConfig
+	Listener    TCPListenerConfig
 }
 
 type EndpointHandler struct {
@@ -51,7 +51,7 @@ func (h *EndpointHandler) ConfigStruct() interface{} {
 	return &EndpointHandlerConfig{
 		MaxDataLen:  4096,
 		AlwaysRoute: false,
-		Listener: ListenerConfig{
+		Listener: TCPListenerConfig{
 			Addr:            ":8081",
 			MaxConns:        1000,
 			KeepAlivePeriod: "3m",
@@ -90,7 +90,7 @@ func (h *EndpointHandler) MaxConns() int          { return h.maxConns }
 func (h *EndpointHandler) URL() string            { return h.url }
 func (h *EndpointHandler) ServeMux() ServeMux     { return (*RouteMux)(h.mux) }
 
-// setApp sets the parent application for this endpoint handler.
+// setApp sets the parent application for this update handler.
 func (h *EndpointHandler) setApp(app *Application) {
 	h.app = app
 	h.logger = app.Logger()
@@ -362,30 +362,17 @@ func (h *EndpointHandler) Close() error {
 	return h.closeOnce.Do(h.close)
 }
 
-func (h *EndpointHandler) close() error {
+func (h *EndpointHandler) close() (err error) {
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Closing update handler",
 			LogFields{"url": h.url})
 	}
-	var errors MultipleError
-	if err := h.listener.Close(); err != nil {
-		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers_endpoint", "Error closing update listener",
-				LogFields{"error": err.Error(), "url": h.url})
-		}
-		errors = append(errors, err)
+	if err = h.listener.Close(); err != nil && h.logger.ShouldLog(ERROR) {
+		h.logger.Error("handlers_endpoint", "Error closing update listener",
+			LogFields{"error": err.Error(), "url": h.url})
 	}
-	if err := h.server.Close(); err != nil {
-		if h.logger.ShouldLog(ERROR) {
-			h.logger.Error("handlers_endpoint", "Error closing update server",
-				LogFields{"error": err.Error(), "url": h.url})
-		}
-		errors = append(errors, err)
-	}
-	if len(errors) > 0 {
-		return errors
-	}
-	return nil
+	h.server.Close()
+	return
 }
 
 func validPK(pk string) bool {

@@ -57,6 +57,16 @@ func (_mr *_MockWorkerRecorder) SetUAID(arg0 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "SetUAID", arg0)
 }
 
+func (_m *MockWorker) Origin() string {
+	ret := _m.ctrl.Call(_m, "Origin")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+func (_mr *_MockWorkerRecorder) Origin() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Origin")
+}
+
 func (_m *MockWorker) Run() {
 	_m.ctrl.Call(_m, "Run")
 }

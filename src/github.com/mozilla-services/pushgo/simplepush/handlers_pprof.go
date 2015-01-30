@@ -13,7 +13,7 @@ import (
 
 type ProfileHandlersConfig struct {
 	Enabled  bool
-	Listener ListenerConfig
+	Listener TCPListenerConfig
 }
 
 // ProfileHandlers exposes handlers provided by package net/http/pprof. These
@@ -29,7 +29,7 @@ type ProfileHandlers struct {
 func (p *ProfileHandlers) ConfigStruct() interface{} {
 	return &ProfileHandlersConfig{
 		Enabled: false,
-		Listener: ListenerConfig{
+		Listener: TCPListenerConfig{
 			Addr:            ":8082",
 			MaxConns:        100,
 			KeepAlivePeriod: "3m",
@@ -92,28 +92,17 @@ func (p *ProfileHandlers) Start(errChan chan<- error) {
 	errChan <- p.server.Serve(p.listener)
 }
 
-func (p *ProfileHandlers) Close() error {
-	var errors MultipleError
+func (p *ProfileHandlers) Close() (err error) {
 	if p.listener != nil {
-		if err := p.listener.Close(); err != nil {
+		if err = p.listener.Close(); err != nil {
 			if p.logger.ShouldLog(ERROR) {
 				p.logger.Error("handlers_profile", "Error closing profiling listener",
 					LogFields{"error": err.Error(), "url": p.url})
 			}
-			errors = append(errors, err)
 		}
 	}
 	if p.server != nil {
-		if err := p.server.Close(); err != nil {
-			if p.logger.ShouldLog(ERROR) {
-				p.logger.Error("handlers_profile", "Error closing profiling server",
-					LogFields{"error": err.Error(), "url": p.url})
-			}
-			errors = append(errors, err)
-		}
+		p.server.Close()
 	}
-	if len(errors) > 0 {
-		return errors
-	}
-	return nil
+	return
 }

@@ -39,6 +39,9 @@ type Worker interface {
 	// SetUAID assigns uaid to the client.
 	SetUAID(uaid string)
 
+	// Origin returns the origin of the underlying socket.
+	Origin() string
+
 	// Run reads and responds to client commands, blocking until the connection
 	// is closed by either party.
 	Run()
@@ -142,7 +145,7 @@ type SendData struct {
 func NewWorker(app *Application, socket Socket, logID string) *WorkerWS {
 	return &WorkerWS{
 		Socket:       socket,
-		born:         time.Now(),
+		born:         timeNow(),
 		app:          app,
 		logger:       app.Logger(),
 		metrics:      app.Metrics(),
@@ -917,6 +920,7 @@ func (r *NoWorker) Close() error        { return nil }
 func (r *NoWorker) Born() time.Time     { return time.Time{} }
 func (r *NoWorker) UAID() string        { return r.uaid }
 func (r *NoWorker) SetUAID(uaid string) { r.uaid = uaid }
+func (r *NoWorker) Origin() string      { return "" }
 
 func (r *NoWorker) Run() {
 	r.Logger.Debug("noworker", "Run", nil)

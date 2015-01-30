@@ -41,6 +41,12 @@ func (r *RouteMux) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	(*mux.Router)(r).ServeHTTP(res, req)
 }
 
+// Server is an HTTP server, implemented by ServeCloser and http.Server.
+type Server interface {
+	Serve(net.Listener) error
+	Close() error
+}
+
 type Handler interface {
 	Listener() net.Listener
 	MaxConns() int
@@ -50,7 +56,13 @@ type Handler interface {
 	Close() error
 }
 
-type ListenerConfig struct {
+type ListenerConfig interface {
+	UseTLS() bool
+	GetMaxConns() int
+	Listen() (net.Listener, error)
+}
+
+type TCPListenerConfig struct {
 	Addr            string
 	MaxConns        int    `toml:"max_connections" env:"max_connections"`
 	KeepAlivePeriod string `toml:"tcp_keep_alive" env:"tcp_keep_alive"`
@@ -58,11 +70,15 @@ type ListenerConfig struct {
 	KeyFile         string `toml:"key_file" env:"key_file"`
 }
 
-func (conf *ListenerConfig) UseTLS() bool {
+func (conf TCPListenerConfig) UseTLS() bool {
 	return len(conf.CertFile) > 0 && len(conf.KeyFile) > 0
 }
 
-func (conf *ListenerConfig) Listen() (ln net.Listener, err error) {
+func (conf TCPListenerConfig) GetMaxConns() int {
+	return conf.MaxConns
+}
+
+func (conf TCPListenerConfig) Listen() (ln net.Listener, err error) {
 	keepAlivePeriod, err := time.ParseDuration(conf.KeepAlivePeriod)
 	if err != nil {
 		return nil, err
