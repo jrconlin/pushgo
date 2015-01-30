@@ -22,6 +22,6 @@ github.com/jacobsa/oglematchers 4fc24f97b5b74022c2a3f4ca7eed57ca29083d3e
 
 # Installable packages.
 github.com/gogo/protobuf/... d59ce9ecb817e6fbca932115f03520207f5a8a07
-github.com/glycerine/go-capnproto/... d56197a98e456a3b42c3bd9b25ff40a1a8f31420
+github.com/glycerine/go-capnproto/... bcaa96eba53bcffef7006dd987728357995e18f6
 github.com/rafrombrc/gomock/... c922279faf77f29ce5781e96eb0711837fcb477c
 github.com/mattn/goveralls eddc233731034b539ce80ec41380bf14efd473d3

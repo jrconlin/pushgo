@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 func TestBroadcastRouter(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
+
+	pipe := newPipeListener()
+	defer pipe.Close()
 
 	uaid := "2130ac71-6f04-47cf-b7dc-2570ba1d2afe"
 	chid := "90662645-a7b5-4dfe-8105-a290553507e4"
@@ -38,10 +42,11 @@ func TestBroadcastRouter(t *testing.T) {
 	mckLocator := NewMockLocator(mockCtrl)
 
 	router := NewBroadcastRouter()
-	defaultConfig := router.ConfigStruct()
-	conf := defaultConfig.(*BroadcastRouterConfig)
-	conf.Listener.Addr = ""
-	router.Init(app, conf)
+	router.setApp(app)
+	router.setClientOptions(10, 3*time.Second, 3*time.Second)
+	router.setClientTransport(&http.Transport{Dial: pipe.Dial})
+	router.listenWithConfig(listenerConfig{listener: pipe})
+	router.server = newServeWaiter(&http.Server{Handler: router.ServeMux()})
 	app.SetRouter(router)
 
 	app.SetLocator(mckLocator)
@@ -113,11 +118,15 @@ func TestBroadcastRouter(t *testing.T) {
 
 	mckLocator.EXPECT().Close()
 	router.Close()
+	<-errChan
 }
 
 func BenchmarkRouter(b *testing.B) {
 	mockCtrl := gomock.NewController(b)
 	defer mockCtrl.Finish()
+
+	pipe := newPipeListener()
+	defer pipe.Close()
 
 	uaid := "2130ac71-6f04-47cf-b7dc-2570ba1d2afe"
 	chid := "90662645-a7b5-4dfe-8105-a290553507e4"
@@ -141,10 +150,11 @@ func BenchmarkRouter(b *testing.B) {
 	mckLocator := NewMockLocator(mockCtrl)
 
 	router := NewBroadcastRouter()
-	defaultConfig := router.ConfigStruct()
-	conf := defaultConfig.(*BroadcastRouterConfig)
-	conf.Listener.Addr = ""
-	router.Init(app, conf)
+	router.setApp(app)
+	router.setClientOptions(10, 3*time.Second, 3*time.Second)
+	router.setClientTransport(&http.Transport{Dial: pipe.Dial})
+	router.listenWithConfig(listenerConfig{listener: pipe})
+	router.server = newServeWaiter(&http.Server{Handler: router.ServeMux()})
 	app.SetRouter(router)
 
 	app.SetLocator(mckLocator)
@@ -178,4 +188,5 @@ func BenchmarkRouter(b *testing.B) {
 
 	mckLocator.EXPECT().Close()
 	router.Close()
+	<-errChan
 }
