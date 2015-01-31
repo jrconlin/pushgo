@@ -189,7 +189,8 @@ type = "none"
 # The key prefix for proprietary pings.
 #prop_prefix = "_pc-"
 #
-#[storage.dynamodb]
+# DynamoDB config
+#[storage]
 #tablename="simplepush"
 #region="us-west-1"
 #read_cap_units=1
