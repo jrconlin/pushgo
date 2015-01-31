@@ -352,7 +352,7 @@ func (r *BroadcastRouter) close() (err error) {
 // Route routes an update packet to the correct server.
 func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 	version int64, sentAt time.Time, logID string, data string) (
-	ok bool, err error) {
+	delivered bool, err error) {
 
 	startTime := time.Now()
 	locator := r.app.Locator()
@@ -392,7 +392,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 			"data":    data,
 			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
 	}
-	ok, err = r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
+	delivered, err = r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
 	endTime := time.Now()
 	if err != nil {
 		if r.logger.ShouldLog(WARNING) {
@@ -403,7 +403,7 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 		return false, err
 	}
 	var counterName, timerName string
-	if ok {
+	if delivered {
 		counterName = "router.broadcast.hit"
 		timerName = "updates.routed.hits"
 	} else {
@@ -413,20 +413,20 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 	r.metrics.Increment(counterName)
 	r.metrics.Timer(timerName, endTime.Sub(sentAt))
 	r.metrics.Timer("router.handled", endTime.Sub(startTime))
-	return ok, nil
+	return delivered, nil
 }
 
 // notifyAll partitions a slice of contacts into buckets, then broadcasts an
 // update to each bucket.
 func (r *BroadcastRouter) notifyAll(cancelSignal <-chan bool, contacts []string,
-	uaid string, segment *capn.Segment, logID string) (ok bool, err error) {
+	uaid string, segment *capn.Segment, logID string) (delivered bool, err error) {
 
-	for fromIndex := 0; !ok && fromIndex < len(contacts); {
+	for fromIndex := 0; !delivered && fromIndex < len(contacts); {
 		toIndex := fromIndex + r.bucketSize
 		if toIndex > len(contacts) {
 			toIndex = len(contacts)
 		}
-		if ok, err = r.notifyBucket(cancelSignal, contacts[fromIndex:toIndex],
+		if delivered, err = r.notifyBucket(cancelSignal, contacts[fromIndex:toIndex],
 			uaid, segment, logID); err != nil {
 			break
 		}
@@ -437,30 +437,31 @@ func (r *BroadcastRouter) notifyAll(cancelSignal <-chan bool, contacts []string,
 
 // notifyBucket routes a message to all contacts in a bucket, returning as soon
 // as a contact accepts the update.
-func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool, contacts []string,
-	uaid string, segment *capn.Segment, logID string) (ok bool, err error) {
+func (r *BroadcastRouter) notifyBucket(cancelSignal <-chan bool,
+	contacts []string, uaid string, segment *capn.Segment, logID string) (
+	delivered bool, err error) {
 
 	timeout := r.ctimeout + r.rwtimeout + 1*time.Second
-	results := make(chan bool, len(contacts))
+	deliveries := make(chan bool, len(contacts))
 	for _, contact := range contacts {
 		url := fmt.Sprintf("%s/route/%s", contact, uaid)
-		go r.notifyContact(results, url, segment, logID)
+		go r.notifyContact(deliveries, url, segment, logID)
 	}
 	timer := time.After(timeout)
-	for i := 0; i < cap(results) && !ok; i++ {
+	for i := 0; !delivered && i < cap(deliveries); i++ {
 		select {
-		case ok = <-r.closeSignal:
+		case <-r.closeSignal:
 			return false, io.EOF
 		case <-cancelSignal:
-		case ok = <-results:
+		case delivered = <-deliveries:
 		case <-timer:
 		}
 	}
-	return ok, nil
+	return delivered, nil
 }
 
 // notifyContact routes a message to a single contact.
-func (r *BroadcastRouter) notifyContact(results chan<- bool, url string,
+func (r *BroadcastRouter) notifyContact(deliveries chan<- bool, url string,
 	segment *capn.Segment, logID string) {
 
 	buf := bytes.Buffer{}
@@ -471,7 +472,7 @@ func (r *BroadcastRouter) notifyContact(results chan<- bool, url string,
 			r.logger.Error("router", "Router request failed",
 				LogFields{"rid": logID, "error": err.Error()})
 		}
-		results <- false
+		deliveries <- false
 		return
 	}
 	req.Header.Set(HeaderID, logID)
@@ -486,7 +487,7 @@ func (r *BroadcastRouter) notifyContact(results chan<- bool, url string,
 			r.logger.Error("router", "Router send failed",
 				LogFields{"rid": logID, "error": err.Error()})
 		}
-		results <- false
+		deliveries <- false
 		return
 	}
 	defer resp.Body.Close()
@@ -498,14 +499,14 @@ func (r *BroadcastRouter) notifyContact(results chan<- bool, url string,
 			r.logger.Debug("router", "Denied",
 				LogFields{"rid": logID, "url": url})
 		}
-		results <- false
+		deliveries <- false
 		return
 	}
 	if r.logger.ShouldLog(INFO) {
 		r.logger.Info("router", "Server accepted",
 			LogFields{"rid": logID, "url": url})
 	}
-	results <- true
+	deliveries <- true
 }
 
 func init() {

@@ -71,9 +71,10 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.miss").Times(1)
 		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
-		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		delivered, err := router.Route(cancelSignal, uaid, chid, version, sentAt,
+			"", "")
 		So(err, ShouldBeNil)
-		So(ok, ShouldBeFalse)
+		So(delivered, ShouldBeFalse)
 	})
 
 	Convey("Should fail to route if contacts errors", t, func() {
@@ -85,9 +86,10 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
 		mckStat.EXPECT().Increment("router.broadcast.error").Times(1)
-		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		delivered, err := router.Route(cancelSignal, uaid, chid, version, sentAt,
+			"", "")
 		So(err, ShouldEqual, myErr)
-		So(ok, ShouldBeFalse)
+		So(delivered, ShouldBeFalse)
 	})
 
 	Convey("Should succeed self-routing to a valid uaid", t, func() {
@@ -111,9 +113,10 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
 		mckStat.EXPECT().Timer("router.handled", gomock.Any())
 
-		ok, err := router.Route(cancelSignal, uaid, chid, version, sentAt, "", "")
+		delivered, err := router.Route(cancelSignal, uaid, chid, version, sentAt,
+			"", "")
 		So(err, ShouldBeNil)
-		So(ok, ShouldBeTrue)
+		So(delivered, ShouldBeTrue)
 	})
 
 	router.Close()

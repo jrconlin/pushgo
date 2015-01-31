@@ -223,10 +223,11 @@ func TestLocatorReadyNotify(t *testing.T) {
 
 	// Initial routing attempt should fail; the WebSocket listener shouldn't
 	// accept client connections before the locator is ready.
-	ok, err := sndApp.Router().Route(nil, uaid, chid, version, timeNow(), "disconnected", data)
+	delivered, err := sndApp.Router().Route(nil, uaid, chid, version, timeNow(),
+		"disconnected", data)
 	if err != nil {
 		t.Errorf("Error routing to disconnected client: %s", err)
-	} else if ok {
+	} else if delivered {
 		t.Error("Should not route to disconnected client")
 	}
 	// Signal the locator is ready, then wait for the client to connect.
@@ -237,10 +238,11 @@ func TestLocatorReadyNotify(t *testing.T) {
 		t.Fatalf("Timed out waiting for the client to connect")
 	}
 	// Routing should succeed once the client is connected.
-	ok, err = sndApp.Router().Route(nil, uaid, chid, version, timeNow(), "connected", data)
+	delivered, err = sndApp.Router().Route(nil, uaid, chid, version, timeNow(),
+		"connected", data)
 	if err != nil {
 		t.Errorf("Error routing to connected client: %s", err)
-	} else if !ok {
+	} else if !delivered {
 		t.Error("Should route to connected client")
 	}
 
