@@ -235,6 +235,9 @@ type = "static"
 #defaultTTL = "1m"
 # The polling interval for new nodes.
 #refresh_interval = "10s"
+# Time to wait after starting the locator and registering with etcd. Should
+# be 1-2 times the refresh_interval.
+#start_delay = "10s"
 # Time to wait after removing the host from etcd during shutdown. Should
 # be 1-2 times the refresh_interval.
 #close_delay = "20s"
