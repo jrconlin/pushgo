@@ -13,6 +13,18 @@ import (
 	"github.com/cactus/go-statsd-client/statsd"
 )
 
+// cleanMetricPart is a mapping function passed to strings.Map that replaces
+// reserved characters in a metric key with hyphens.
+func cleanMetricPart(r rune) rune {
+	if r >= 'A' && r <= 'F' {
+		r += 'a' - 'A'
+	}
+	if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+		return r
+	}
+	return '-'
+}
+
 type trec struct {
 	Count uint64
 	Avg   float64
@@ -49,6 +61,7 @@ type Metrics struct {
 	statsd         *statsd.Client
 	born           time.Time
 	storeSnapshots bool
+	hostname       string
 }
 
 func (m *Metrics) ConfigStruct() interface{} {
@@ -63,6 +76,7 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*MetricsConfig)
 
 	m.logger = app.Logger()
+	m.hostname = strings.Map(cleanMetricPart, app.Hostname())
 
 	if conf.StatsdServer != "" {
 		name := strings.ToLower(conf.StatsdName)
@@ -73,7 +87,7 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 		}
 	}
 
-	m.prefix = conf.Prefix
+	m.Prefix(conf.Prefix)
 	m.born = time.Now()
 
 	if m.storeSnapshots = conf.StoreSnapshots; m.storeSnapshots {
@@ -87,33 +101,41 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 
 func (m *Metrics) Prefix(newPrefix string) {
 	m.prefix = strings.TrimRight(newPrefix, ".")
-	if m.statsd != nil {
-		m.statsd.SetPrefix(newPrefix)
+}
+
+func (m *Metrics) formatMetric(metric string, tags ...string) string {
+	var parts []string
+	if len(m.prefix) > 0 {
+		parts = append(parts, m.prefix)
 	}
+	if len(tags) > 0 {
+		parts = append(parts, tags...)
+	}
+	parts = append(parts, metric)
+	if len(m.hostname) > 0 {
+		parts = append(parts, m.hostname)
+	}
+	return strings.Join(parts, ".")
 }
 
 func (m *Metrics) Snapshot() map[string]interface{} {
 	if !m.storeSnapshots {
 		return nil
 	}
-	var pfx string
-	if len(m.prefix) > 0 {
-		pfx = m.prefix + "."
-	}
 	oldMetrics := make(map[string]interface{})
 	// copy the old metrics
 	m.RLock()
 	for k, v := range m.counter {
-		oldMetrics[pfx+"counter."+k] = v
+		oldMetrics[m.formatMetric(k, "counter")] = v
 	}
 	for k, v := range m.timer {
-		oldMetrics[pfx+"avg."+k] = v.Avg
+		oldMetrics[m.formatMetric(k, "avg")] = v.Avg
 	}
 	for k, v := range m.gauge {
-		oldMetrics[pfx+"gauge."+k] = v
+		oldMetrics[m.formatMetric(k, "gauge")] = v
 	}
 	m.RUnlock()
-	oldMetrics[pfx+"server.age"] = time.Now().Unix() - m.born.Unix()
+	oldMetrics[m.formatMetric("server.age")] = time.Now().Unix() - m.born.Unix()
 	return oldMetrics
 }
 
@@ -133,9 +155,9 @@ func (m *Metrics) IncrementBy(metric string, count int64) {
 
 	if statsd := m.statsd; statsd != nil {
 		if count >= 0 {
-			statsd.Inc(metric, count, 1.0)
+			statsd.Inc(m.formatMetric(metric), count, 1.0)
 		} else {
-			statsd.Dec(metric, count, 1.0)
+			statsd.Dec(m.formatMetric(metric), count, 1.0)
 		}
 	}
 }
@@ -174,7 +196,7 @@ func (m *Metrics) Timer(metric string, duration time.Duration) {
 				"type": "timer"})
 	}
 	if m.statsd != nil {
-		m.statsd.Timing(metric, value, 1.0)
+		m.statsd.Timing(m.formatMetric(metric), value, 1.0)
 	}
 }
 
@@ -187,14 +209,14 @@ func (m *Metrics) Gauge(metric string, value int64) {
 
 	if statsd := m.statsd; statsd != nil {
 		if value >= 0 {
-			statsd.Gauge(metric, value, 1.0)
+			statsd.Gauge(m.formatMetric(metric), value, 1.0)
 			return
 		}
 		// Gauges cannot be set to negative values; sign prefixes indicate deltas.
-		if err := statsd.Gauge(metric, 0, 1.0); err != nil {
+		if err := statsd.Gauge(m.formatMetric(metric), 0, 1.0); err != nil {
 			return
 		}
-		statsd.GaugeDelta(metric, value, 1.0)
+		statsd.GaugeDelta(m.formatMetric(metric), value, 1.0)
 	}
 }
 
@@ -207,7 +229,7 @@ func (m *Metrics) GaugeDelta(metric string, delta int64) {
 	}
 
 	if m.statsd != nil {
-		m.statsd.GaugeDelta(metric, delta, 1.0)
+		m.statsd.GaugeDelta(m.formatMetric(metric), delta, 1.0)
 	}
 }
 

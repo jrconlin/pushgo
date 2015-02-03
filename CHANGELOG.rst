@@ -40,7 +40,7 @@ Features
   attempt to hold the socket open to the device.
 - Added support for Google Cloud Messaging as a proprietary ping mechanism with
   testing.
-
+- Append the hostname to all emitted metric keys. PR #220, Issue #200.
 
 Bug Fixes
 ---------
@@ -82,6 +82,8 @@ Metrics
     'balancer.etcd.error', 'balancer.etcd.retry'
 - A counter that tracks failed local delivery attempts:
     'updates.appserver.rejected'
+- A gauge that tracks the number of active goroutines. PR #220, Issue #219.
+    'goroutines'
 
 Incompatibilities
 -----------------
