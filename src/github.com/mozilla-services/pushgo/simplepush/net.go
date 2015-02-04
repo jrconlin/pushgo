@@ -124,7 +124,9 @@ func (c *limitConn) Close() error {
 	return err
 }
 
-// isTerminalState indicates whether state is a terminal connection state.
+// isTerminalState indicates whether state is the last connection state for
+// which the http.Server.ConnState hook will be called. This is used by
+// ServeCloser to remove tracked connections from its map.
 func isTerminalState(state http.ConnState) bool {
 	return state == http.StateClosed || state == http.StateHijacked
 }
@@ -160,6 +162,8 @@ func (s *ServeCloser) Close() error {
 }
 
 func (s *ServeCloser) close() error {
+	// Disable HTTP keep-alive for requests handled before the underlying
+	// connections are closed.
 	s.SetKeepAlivesEnabled(false)
 	s.connsLock.Lock()
 	defer s.connsLock.Unlock()

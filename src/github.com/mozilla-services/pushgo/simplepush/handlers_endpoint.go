@@ -324,7 +324,7 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 
 // deliver routes an incoming update to the appropriate server.
 func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
-	version int64, requestID string, data string) (ok bool) {
+	version int64, requestID string, data string) (delivered bool) {
 
 	worker, workerConnected := h.app.GetWorker(uaid)
 	// Always route to other servers first, in case we're holding open a stale
@@ -337,9 +337,9 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 			cancelSignal = cn.CloseNotify()
 		}
 		// Route the update.
-		ok, _ = h.router.Route(cancelSignal, uaid, chid, version,
+		delivered, _ = h.router.Route(cancelSignal, uaid, chid, version,
 			timeNow().UTC(), requestID, data)
-		if ok {
+		if delivered {
 			return true
 		}
 	}

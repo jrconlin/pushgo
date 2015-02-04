@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"text/template"
@@ -408,12 +409,14 @@ func (a *Application) close() error {
 }
 
 func (a *Application) sendClientCount() {
+	metrics := a.Metrics()
 	ticker := time.NewTicker(1 * time.Second)
 	for ok := true; ok; {
 		select {
 		case ok = <-a.closeChan:
 		case <-ticker.C:
-			a.Metrics().Gauge("update.client.connections", int64(a.WorkerCount()))
+			metrics.Gauge("goroutines", int64(runtime.NumGoroutine()))
+			metrics.Gauge("update.client.connections", int64(a.WorkerCount()))
 		}
 	}
 	ticker.Stop()

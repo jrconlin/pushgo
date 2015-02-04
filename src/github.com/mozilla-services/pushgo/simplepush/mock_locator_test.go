@@ -7,6 +7,37 @@ import (
 	gomock "github.com/rafrombrc/gomock/gomock"
 )
 
+// Mock of ReadyNotifier interface
+type MockReadyNotifier struct {
+	ctrl     *gomock.Controller
+	recorder *_MockReadyNotifierRecorder
+}
+
+// Recorder for MockReadyNotifier (not exported)
+type _MockReadyNotifierRecorder struct {
+	mock *MockReadyNotifier
+}
+
+func NewMockReadyNotifier(ctrl *gomock.Controller) *MockReadyNotifier {
+	mock := &MockReadyNotifier{ctrl: ctrl}
+	mock.recorder = &_MockReadyNotifierRecorder{mock}
+	return mock
+}
+
+func (_m *MockReadyNotifier) EXPECT() *_MockReadyNotifierRecorder {
+	return _m.recorder
+}
+
+func (_m *MockReadyNotifier) ReadyNotify() <-chan bool {
+	ret := _m.ctrl.Call(_m, "ReadyNotify")
+	ret0, _ := ret[0].(<-chan bool)
+	return ret0
+}
+
+func (_mr *_MockReadyNotifierRecorder) ReadyNotify() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "ReadyNotify")
+}
+
 // Mock of Locator interface
 type MockLocator struct {
 	ctrl     *gomock.Controller
