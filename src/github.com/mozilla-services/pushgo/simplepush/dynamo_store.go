@@ -16,7 +16,12 @@ import (
 )
 
 const (
-	DB_LABEL = "dynamodb"
+	DB_LABEL   = "dynamodb"
+	UAID_LABEL = "uaid"
+	CHID_LABEL = "chid"
+	PING_LABEL = "proprietary_ping"
+	VERS_LABEL = "version"
+	MODD_LABEL = "modified"
 )
 
 var (
@@ -127,20 +132,20 @@ func (s *DynamoDBStore) createTable() (err error) {
 	tableDesc := dynamodb.TableDescriptionT{
 		TableName: s.tablename,
 		AttributeDefinitions: []dynamodb.AttributeDefinitionT{
-			dynamodb.AttributeDefinitionT{"uaid", "S"},
-			dynamodb.AttributeDefinitionT{"chid", "S"},
-			dynamodb.AttributeDefinitionT{"created", "N"},
+			dynamodb.AttributeDefinitionT{UAID_LABEL, "S"},
+			dynamodb.AttributeDefinitionT{CHID_LABEL, "S"},
+			dynamodb.AttributeDefinitionT{MODD_LABEL, "N"},
 		},
 		KeySchema: []dynamodb.KeySchemaT{
-			dynamodb.KeySchemaT{"uaid", "HASH"},
-			dynamodb.KeySchemaT{"chid", "RANGE"},
+			dynamodb.KeySchemaT{UAID_LABEL, "HASH"},
+			dynamodb.KeySchemaT{CHID_LABEL, "RANGE"},
 		},
 		GlobalSecondaryIndexes: []dynamodb.GlobalSecondaryIndexT{
 			dynamodb.GlobalSecondaryIndexT{
-				IndexName: "chid-created-index",
+				IndexName: "uaid-modified-index",
 				KeySchema: []dynamodb.KeySchemaT{
-					dynamodb.KeySchemaT{"chid", "HASH"},
-					dynamodb.KeySchemaT{"created", "RANGE"},
+					dynamodb.KeySchemaT{UAID_LABEL, "HASH"},
+					dynamodb.KeySchemaT{MODD_LABEL, "RANGE"},
 				},
 				Projection: dynamodb.ProjectionT{"ALL"},
 				ProvisionedThroughput: dynamodb.ProvisionedThroughputT{
@@ -211,6 +216,13 @@ func (s *DynamoDBStore) containsTable(tableSet []string, table string) bool {
 	return false
 }
 
+func (s *DynamoDBStore) getNow(t int64) string {
+	if t == 0 {
+		t = time.Now().UTC().Unix()
+	}
+	return strconv.FormatInt(t, 10)
+}
+
 // Init initializes the memcached adapter with the given configuration.
 // Implements HasConfigStruct.Init().
 func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
@@ -233,7 +245,6 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	}
 
 	if s.server == nil {
-		s.logger.Error("debug", "generating new server", nil)
 		s.server = &dynamodb.Server{auth, s.region}
 	}
 	tables, err := s.server.ListTables()
@@ -258,8 +269,8 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 			return
 		}
 	}
-	s.pk = dynamodb.PrimaryKey{dynamodb.NewStringAttribute("uaid", ""),
-		dynamodb.NewStringAttribute("chid", "")}
+	s.pk = dynamodb.PrimaryKey{dynamodb.NewStringAttribute(UAID_LABEL, ""),
+		dynamodb.NewStringAttribute(CHID_LABEL, "")}
 	s.table = s.server.NewTable(conf.TableName, s.pk)
 	return nil
 }
@@ -309,8 +320,8 @@ func (s *DynamoDBStore) Status() (success bool, err error) {
 // registered with the Simple Push server. Implements Store.Exists().
 func (s *DynamoDBStore) Exists(uaid string) bool {
 	res, err := s.table.CountQuery([]dynamodb.AttributeComparison{
-		*dynamodb.NewEqualStringAttributeComparison("uaid", uaid),
-		*dynamodb.NewEqualStringAttributeComparison("chid", " "),
+		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
+		*dynamodb.NewEqualStringAttributeComparison(CHID_LABEL, " "),
 	})
 	if err != nil {
 		if s.logger.ShouldLog(ERROR) {
@@ -327,18 +338,18 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 // Store.Register().
 func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 	// try to put the master record
-	now := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	now := s.getNow(0)
 	vers := strconv.FormatInt(version, 10)
 	success, err := s.table.PutItem(uaid, " ", []dynamodb.Attribute{
-		*dynamodb.NewNumericAttribute("created", now),
+		*dynamodb.NewNumericAttribute(MODD_LABEL, now),
 	})
 	if err != nil {
 		return
 	}
 	// now add the chid.
 	success, err = s.table.PutItem(uaid, chid, []dynamodb.Attribute{
-		*dynamodb.NewNumericAttribute("version", vers),
-		*dynamodb.NewNumericAttribute("created", now),
+		*dynamodb.NewNumericAttribute(VERS_LABEL, vers),
+		*dynamodb.NewNumericAttribute(MODD_LABEL, now),
 	})
 	if err != nil {
 		return
@@ -352,10 +363,12 @@ func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 // Update updates the version for the given device ID and channel ID.
 // Implements Store.Update().
 func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
+	now := s.getNow(0)
 	success, err := s.table.UpdateAttributes(&dynamodb.Key{uaid, chid},
 		[]dynamodb.Attribute{
-			*dynamodb.NewNumericAttribute("version",
+			*dynamodb.NewNumericAttribute(VERS_LABEL,
 				strconv.FormatInt(version, 10)),
+			*dynamodb.NewNumericAttribute(MODD_LABEL, now),
 		})
 	if err != nil {
 		return
@@ -391,8 +404,8 @@ func (s *DynamoDBStore) Drop(uaid, chid string) (err error) {
 func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update, expired []string, err error) {
 
 	attrs := []dynamodb.AttributeComparison{
-		*dynamodb.NewEqualStringAttributeComparison("uaid", uaid),
-		*dynamodb.NewStringAttributeComparison("chid", dynamodb.COMPARISON_GREATER_THAN, " "),
+		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
+		*dynamodb.NewStringAttributeComparison(CHID_LABEL, dynamodb.COMPARISON_GREATER_THAN, " "),
 	}
 	results, err := s.table.Query(
 		attrs,
@@ -400,24 +413,23 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 	if err != nil {
 		return
 	}
-	now := time.Now().UTC().Unix()
 	for _, r := range results {
 		var vers string
-		if vera, ok := r["version"]; ok {
+		if vera, ok := r[VERS_LABEL]; ok {
 			vers = vera.Value
 		} else {
 			if vera, ok := r["created"]; ok {
 				vers = vera.Value
 			} else {
-				vers = strconv.FormatInt(now, 10)
+				vers = s.getNow(0)
 			}
 		}
 		version, err := strconv.ParseUint(vers, 10, 64)
 		if err != nil {
-			version = uint64(now)
+			version = uint64(time.Now().UTC().Unix())
 		}
 		updates = append(updates, Update{
-			ChannelID: r["chid"].Value,
+			ChannelID: r[CHID_LABEL].Value,
 			Version:   version,
 		})
 	}
@@ -428,6 +440,22 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 // DropAll removes all channel records for the given device ID. Implements
 // Store.DropAll().
 func (s *DynamoDBStore) DropAll(uaid string) (err error) {
+	var ok bool
+	result, err := s.table.Query([]dynamodb.AttributeComparison{
+		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
+	})
+	if err != nil {
+		return
+	}
+	for _, record := range result {
+		key := &dynamodb.Key{
+			HashKey:  record[UAID_LABEL].Value,
+			RangeKey: record[CHID_LABEL].Value,
+		}
+		if ok, err = s.table.DeleteItem(key); !ok {
+			return
+		}
+	}
 	return
 }
 
@@ -435,14 +463,14 @@ func (s *DynamoDBStore) DropAll(uaid string) (err error) {
 // from memcached. Implements Store.FetchPing().
 func (s *DynamoDBStore) FetchPing(uaid string) (pingData []byte, err error) {
 	result, err := s.table.Query([]dynamodb.AttributeComparison{
-		*dynamodb.NewEqualStringAttributeComparison("uaid", uaid),
-		*dynamodb.NewEqualStringAttributeComparison("chid", " "),
+		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
+		*dynamodb.NewEqualStringAttributeComparison(CHID_LABEL, " "),
 	})
 	if err != nil {
 		return
 	}
 	if len(result) > 0 {
-		if pp, ok := result[0]["proprietary_ping"]; ok {
+		if pp, ok := result[0][PING_LABEL]; ok {
 			pingData = []byte(pp.Value)
 		}
 	}
@@ -455,7 +483,7 @@ func (s *DynamoDBStore) PutPing(uaid string, pingData []byte) (err error) {
 	// s.table.
 	_, err = s.table.UpdateAttributes(&dynamodb.Key{uaid, " "},
 		[]dynamodb.Attribute{
-			*dynamodb.NewStringAttribute("proprietary_ping", string(pingData)),
+			*dynamodb.NewStringAttribute(PING_LABEL, string(pingData)),
 		},
 	)
 	return
@@ -466,7 +494,7 @@ func (s *DynamoDBStore) PutPing(uaid string, pingData []byte) (err error) {
 func (s *DynamoDBStore) DropPing(uaid string) (err error) {
 	_, err = s.table.DeleteAttributes(&dynamodb.Key{uaid, " "},
 		[]dynamodb.Attribute{
-			*dynamodb.NewStringAttribute("proprietary_ping", ""),
+			*dynamodb.NewStringAttribute(PING_LABEL, ""),
 		},
 	)
 	return

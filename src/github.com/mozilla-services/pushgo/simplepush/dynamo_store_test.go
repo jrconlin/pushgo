@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,17 +75,22 @@ func (r *testDynamoTable) UpdateAttributes(key *dynamodb.Key, attributes []dynam
 }
 
 func (r *testDynamoTable) DeleteItem(key *dynamodb.Key) (bool, error) {
+	delete(r.attributes, fmt.Sprintf("%s-%s", key.HashKey, key.RangeKey))
 	return r.success, r.err
 }
 
 func (r *testDynamoTable) Query([]dynamodb.AttributeComparison) (reply []map[string]*dynamodb.Attribute, err error) {
 	c := 0
 	reply = make([]map[string]*dynamodb.Attribute, len(r.attributes))
-	for chid, rr := range r.attributes {
+	for key, rr := range r.attributes {
+		bits := strings.SplitN(key, "-", 2)
 		reply[c] = make(map[string]*dynamodb.Attribute)
 		for _, ar := range rr {
-			reply[c]["chid"] = &dynamodb.Attribute{
-				Value: chid,
+			reply[c][UAID_LABEL] = &dynamodb.Attribute{
+				Value: bits[0],
+			}
+			reply[c][CHID_LABEL] = &dynamodb.Attribute{
+				Value: bits[1],
 			}
 			reply[c][ar.Name] = &dynamodb.Attribute{
 				Value: ar.Value,
@@ -97,6 +103,28 @@ func (r *testDynamoTable) Query([]dynamodb.AttributeComparison) (reply []map[str
 
 func (r *testDynamoTable) DeleteAttributes(key *dynamodb.Key, attr []dynamodb.Attribute) (bool, error) {
 	return r.success, r.err
+}
+
+func NewDynamoTest() (testdb *DynamoDBStore, testTable *testDynamoTable) {
+	testdb = NewDynamoDB()
+	testTable = &testDynamoTable{
+		desc: []*dynamodb.TableDescriptionT{
+			&dynamodb.TableDescriptionT{
+				TableName:   "test",
+				TableStatus: "creating",
+			},
+			&dynamodb.TableDescriptionT{
+				TableName:   "test",
+				TableStatus: "active",
+			},
+		},
+		err:     nil,
+		success: true,
+	}
+	testdb.table = testTable
+	testdb.statusTimeout = time.Second * 1
+	testdb.statusIdle = time.Millisecond * 10
+	return
 }
 
 func Test_NewDynamoDB(t *testing.T) {
@@ -150,23 +178,7 @@ func Test_Dynamo_Init(t *testing.T) {
 }
 
 func Test_waitUntilStatus(t *testing.T) {
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "creating",
-			},
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		err:     nil,
-		success: true,
-	}
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
+	testdb, testTable := NewDynamoTest()
 	err := testdb.waitUntilStatus(testTable, "active")
 	if err != nil {
 		t.Error("waitUntilStatus returned error: %s", err.Error())
@@ -174,21 +186,8 @@ func Test_waitUntilStatus(t *testing.T) {
 }
 
 func Test_Dynamo_Exists(t *testing.T) {
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
+	testdb, testTable := NewDynamoTest()
+	testTable.count = 1
 	exist := testdb.Exists("testuaid")
 	if !exist {
 		t.Error("Failed to exist")
@@ -202,21 +201,7 @@ func Test_Dynamo_Exists(t *testing.T) {
 
 func Test_Dynamo_Register(t *testing.T) {
 	var ok bool
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
+	testdb, testTable := NewDynamoTest()
 	err := testdb.Register("testuaid", "testchid", 123)
 	if err != nil {
 		t.Error("Register errored %s", err.Error())
@@ -231,7 +216,7 @@ func Test_Dynamo_Register(t *testing.T) {
 	}
 	ok = false
 	for _, r := range rr {
-		if r.Name == "version" && r.Value == "123" {
+		if r.Name == VERS_LABEL && r.Value == "123" {
 			ok = true
 		}
 	}
@@ -242,22 +227,7 @@ func Test_Dynamo_Register(t *testing.T) {
 
 func Test_Dynamo_Update(t *testing.T) {
 	var ok bool
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
-
+	testdb, testTable := NewDynamoTest()
 	err := testdb.Register("testuaid", "testchid", 123)
 	if err != nil {
 		t.Error("Update errored %s", err.Error())
@@ -269,7 +239,7 @@ func Test_Dynamo_Update(t *testing.T) {
 	}
 	ok = false
 	for _, r := range rr {
-		if r.Name == "version" && r.Value == "123" {
+		if r.Name == VERS_LABEL && r.Value == "123" {
 			ok = true
 		}
 	}
@@ -280,22 +250,7 @@ func Test_Dynamo_Update(t *testing.T) {
 }
 
 func Test_Dynamo_Unregister(t *testing.T) {
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
-
+	testdb, testTable := NewDynamoTest()
 	err := testdb.Unregister("testuaid", "testchid")
 	if err != nil {
 		t.Error("Failed to unregister")
@@ -309,22 +264,7 @@ func Test_Dynamo_Unregister(t *testing.T) {
 }
 
 func Test_Dynamo_Drop(t *testing.T) {
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
-
+	testdb, testTable := NewDynamoTest()
 	err := testdb.Drop("testuaid", "testchid")
 	if err != nil {
 		t.Error("Failed to Drop")
@@ -337,29 +277,38 @@ func Test_Dynamo_Drop(t *testing.T) {
 	}
 }
 
-func Test_Dynamo_FetchAll(t *testing.T) {
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
+func Test_Dynamo_DropAll(t *testing.T) {
+	testdb, testTable := NewDynamoTest()
 	testTable.attributes = make(map[string][]dynamodb.Attribute)
+	testTable.attributes["testuaid- "] = []dynamodb.Attribute{
+		dynamodb.Attribute{Name: PING_LABEL, Value: "1234"},
+	}
 	testTable.attributes["testuaid-testchid1"] = []dynamodb.Attribute{
-		dynamodb.Attribute{Name: "version", Value: "1234"},
+		dynamodb.Attribute{Name: VERS_LABEL, Value: "1234"},
 	}
 	testTable.attributes["testuaid-testchid2"] = []dynamodb.Attribute{
-		dynamodb.Attribute{Name: "version", Value: "5678"},
+		dynamodb.Attribute{Name: VERS_LABEL, Value: "5678"},
 	}
 	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
+	err := testdb.DropAll("testuaid")
+	if err != nil {
+		t.Error("DropAll returned error: %s", err)
+	}
+	if len(testTable.attributes) > 0 {
+		t.Error("Did not drop all records")
+	}
+}
+
+func Test_Dynamo_FetchAll(t *testing.T) {
+	testdb, testTable := NewDynamoTest()
+	testTable.attributes = make(map[string][]dynamodb.Attribute)
+	testTable.attributes["testuaid-testchid1"] = []dynamodb.Attribute{
+		dynamodb.Attribute{Name: VERS_LABEL, Value: "1234"},
+	}
+	testTable.attributes["testuaid-testchid2"] = []dynamodb.Attribute{
+		dynamodb.Attribute{Name: VERS_LABEL, Value: "5678"},
+	}
+	testdb.table = testTable
 
 	updates, _, err := testdb.FetchAll("testuaid", time.Now())
 	if err != nil {
@@ -372,22 +321,8 @@ func Test_Dynamo_FetchAll(t *testing.T) {
 
 func Test_Dynamo_Ping(t *testing.T) {
 	// var ok bool
+	testdb, testTable := NewDynamoTest()
 	var testPing = []byte("This is a test ping")
-	testdb := NewDynamoDB()
-	testTable := &testDynamoTable{
-		desc: []*dynamodb.TableDescriptionT{
-			&dynamodb.TableDescriptionT{
-				TableName:   "test",
-				TableStatus: "active",
-			},
-		},
-		success: true,
-		err:     nil,
-		count:   1,
-	}
-	testdb.table = testTable
-	testdb.statusTimeout = time.Second * 1
-	testdb.statusIdle = time.Millisecond * 10
 
 	err := testdb.PutPing("testuaid", testPing)
 	if err != nil {
@@ -398,7 +333,7 @@ func Test_Dynamo_Ping(t *testing.T) {
 	if !ok {
 		t.Error("PutPing failed to create root record")
 	}
-	if p[0].Name != "proprietary_ping" || p[0].Value != string(testPing) {
+	if p[0].Name != PING_LABEL || p[0].Value != string(testPing) {
 		t.Error("PutPing failed to store ping record")
 	}
 
