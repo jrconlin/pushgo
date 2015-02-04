@@ -17,7 +17,7 @@ const (
 	TESTCHID = "decafbad-0123-4567-89ab-cdef01234567"
 )
 
-func Test_ConfigStruct(t *testing.T) {
+func Test_GomemcConfigStruct(t *testing.T) {
 	// passing endpoints via config because of limits in
 	//how the testing libs work
 	testGm := NewGomemc()
@@ -27,7 +27,7 @@ func Test_ConfigStruct(t *testing.T) {
 
 }
 
-func Test_Init(t *testing.T) {
+func Test_GomemcInit(t *testing.T) {
 	testGm := NewGomemc()
 	gmCfg := testGm.ConfigStruct()
 	testApp := &Application{}

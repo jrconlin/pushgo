@@ -7,7 +7,6 @@ package simplepush
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -47,29 +46,46 @@ type DynamoDBConf struct {
 	MaxChannels int `toml:"max_channels" env:"max_channels"`
 }
 
+type dynamoTable interface {
+	DescribeTable() (*dynamodb.TableDescriptionT, error)
+	CountQuery([]dynamodb.AttributeComparison) (int64, error)
+	PutItem(string, string, []dynamodb.Attribute) (bool, error)
+	UpdateAttributes(*dynamodb.Key, []dynamodb.Attribute) (bool, error)
+	DeleteItem(*dynamodb.Key) (bool, error)
+	Query([]dynamodb.AttributeComparison) ([]map[string]*dynamodb.Attribute, error)
+	DeleteAttributes(*dynamodb.Key, []dynamodb.Attribute) (bool, error)
+}
+
+type dynamoServer interface {
+	NewTable(string, dynamodb.PrimaryKey) *dynamodb.Table
+	CreateTable(dynamodb.TableDescriptionT) (string, error)
+	ListTables() ([]string, error)
+}
+
 type DynamoDBStore struct {
-	logger      *SimpleLogger
-	region      aws.Region
-	auth        aws.Auth
-	pk          dynamodb.PrimaryKey
-	server      *dynamodb.Server
-	table       *dynamodb.Table
-	tablename   string
-	readProv    int64
-	writeProv   int64
-	closeSignal chan bool
-	maxChannels int
+	logger        *SimpleLogger
+	region        aws.Region
+	auth          aws.Auth
+	pk            dynamodb.PrimaryKey
+	server        dynamoServer
+	table         dynamoTable
+	tablename     string
+	readProv      int64
+	writeProv     int64
+	closeSignal   chan bool
+	maxChannels   int
+	statusTimeout time.Duration
+	statusIdle    time.Duration
 }
 
 const (
-	RFC_ISO_8601 = "20060102T150405Z"
-	// serviceName_APIVersion
+	RFC_ISO_8601  = "20060102T150405Z"
 	DYNAMO_PREFIX = "DynamoDB_20120810"
 )
 
-func (s *DynamoDBStore) waitUntilStatus(table *dynamodb.Table, status string) (err error) {
+func (s *DynamoDBStore) waitUntilStatus(table dynamoTable, status string) (err error) {
 	done := make(chan bool)
-	timeout := time.After(3 * time.Minute)
+	timeout := time.After(s.statusTimeout)
 	go func() {
 		for {
 			select {
@@ -84,7 +100,7 @@ func (s *DynamoDBStore) waitUntilStatus(table *dynamodb.Table, status string) (e
 					done <- true
 					return
 				}
-				time.Sleep(5 * time.Second)
+				time.Sleep(s.statusIdle)
 			}
 		}
 	}()
@@ -164,7 +180,10 @@ func (s *DynamoDBStore) createTable() (err error) {
 
 // NewEmcee creates an unconfigured memcached adapter.
 func NewDynamoDB() *DynamoDBStore {
-	s := &DynamoDBStore{}
+	s := &DynamoDBStore{
+		statusTimeout: 3 * time.Minute,
+		statusIdle:    5 * time.Second,
+	}
 	return s
 }
 
@@ -206,14 +225,17 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 		return ErrInvalidRegion
 	}
 	auth, err := aws.GetAuth(conf.Access, conf.Secret,
-		"", time.Now().Add(time.Minute*5))
+		"", time.Now().Add(s.statusTimeout))
 	if err != nil {
 		s.logger.Panic("dynamodb", "Could not log into dynamodb",
 			LogFields{"error": err.Error()})
 		return
 	}
 
-	s.server = &dynamodb.Server{auth, s.region}
+	if s.server == nil {
+		s.logger.Error("debug", "generating new server", nil)
+		s.server = &dynamodb.Server{auth, s.region}
+	}
 	tables, err := s.server.ListTables()
 	if err != nil {
 		s.logger.Panic("dynamodb", "Could not query dynamodb",
@@ -335,7 +357,6 @@ func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 			*dynamodb.NewNumericAttribute("version",
 				strconv.FormatInt(version, 10)),
 		})
-	log.Printf("#### Updating! %s %s %d : %+v %s", uaid, chid, version, success, err)
 	if err != nil {
 		return
 	}
@@ -348,7 +369,6 @@ func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 // Unregister marks the channel ID associated with the given device ID
 // as inactive. Implements Store.Unregister().
 func (s *DynamoDBStore) Unregister(uaid, chid string) (err error) {
-	return
 	success, err := s.table.DeleteItem(&dynamodb.Key{uaid, chid})
 	if err != nil {
 		return
