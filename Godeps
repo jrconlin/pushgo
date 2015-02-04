@@ -19,8 +19,8 @@ github.com/ianoshen/gomc 7b9f299f292d3dd707fe2749d966968c9bf1e128
 github.com/kitcambridge/envconf fdc1968532255bdb56182329cdaa1e5b9aa6a6ac
 github.com/smartystreets/goconvey 8298bc7d36389ffd3e57b85d9797850d8c2382a9
 github.com/jacobsa/oglematchers 4fc24f97b5b74022c2a3f4ca7eed57ca29083d3e
-github.com/goamz/goamz/aws
-github.com/goamz/goamz/dynamodb
+github.com/goamz/goamz/aws 60a16f20090a0cc9981f5b5ee9fe034159504c86
+github.com/goamz/goamz/dynamodb e821c207a55e9837a95a4564d40e978bf6175f88
 # Installable packages.
 github.com/gogo/protobuf/... d59ce9ecb817e6fbca932115f03520207f5a8a07
 github.com/glycerine/go-capnproto/... bcaa96eba53bcffef7006dd987728357995e18f6
