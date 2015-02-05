@@ -83,7 +83,6 @@ func (a *Application) ConfigStruct() interface{} {
 		ResolveHost:        false,
 		ClientMinPing:      "20s",
 		ClientHelloTimeout: "30s",
-		ClientPongInterval: "5m",
 	}
 }
 
@@ -120,9 +119,11 @@ func (a *Application) Init(_ *Application, config interface{}) (err error) {
 		return fmt.Errorf("Unable to parse 'client_min_ping_interval': %s",
 			err.Error())
 	}
-	if a.clientPongInterval, err = time.ParseDuration(conf.ClientPongInterval); err != nil {
-		return fmt.Errorf("Unable to parse 'client_pong_interval': %s",
-			err.Error())
+	if len(conf.ClientPongInterval) > 0 {
+		if a.clientPongInterval, err = time.ParseDuration(conf.ClientPongInterval); err != nil {
+			return fmt.Errorf("Unable to parse 'client_pong_interval': %s",
+				err.Error())
+		}
 	}
 	if a.clientHelloTimeout, err = time.ParseDuration(conf.ClientHelloTimeout); err != nil {
 		return fmt.Errorf("Unable to parse 'client_hello_timeout': %s",
