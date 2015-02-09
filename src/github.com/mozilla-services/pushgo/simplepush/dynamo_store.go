@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jrconlin/goamz/aws"
-	"github.com/jrconlin/goamz/dynamodb"
+	"github.com/goamz/goamz/aws"
+	"github.com/goamz/goamz/dynamodb"
 )
 
 const (

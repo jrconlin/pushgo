@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jrconlin/goamz/dynamodb"
+	"github.com/goamz/goamz/dynamodb"
 )
 
 type testDynamoServer struct {
