@@ -11,6 +11,7 @@ MAINTAINER Ben Bangert <bbangert@mozilla.com>
 # we need to build it, build it, then remove all the stuff we made to build it
 # so that this docker layer only contains the libmemcached addition
 RUN \
+	apt-get update; \
 	apt-get install --no-install-recommends -y -q bzr automake flex bison libtool cloog-ppl wget; \
 	cd /usr/local/src; \
 	wget https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz; \
