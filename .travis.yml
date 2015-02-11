@@ -5,7 +5,7 @@ go:
 - tip
 env:
   global:
-    - secure: "APob97hNJ9w1261R94XWXsD4+P7wCKAT34S42tY9t/oyuDbCcv9BmVhX3dYl/YLLKbEPfa/W1uUMVAZuZre49vhICBWetGcj3qL2xt7OOhkGL2Jj8bFgb/NoszBkr2qUVT2CDflipeSi7sPliB/kqGzx+ILzBNa/No9EyRj3tNQ="
+    - secure: "aTmOO1+7Jgp57/CfTOka1tu+yLXfKQtnbKyuSJZ692KaAyo7ebJJW7yXGrDshD/2Dk2r5REehBBQEnLoWhBxrs91XZ3RVQM16w9AzDuIZ4JMC04RMgMcXy9CBI769AA1ueT3e1V+4H8B6yCpVKwNUXSEXdx2aEvOs7RYSFjfhv4="
 services:
 - memcached
 before_install:
