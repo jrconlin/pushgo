@@ -36,15 +36,27 @@ func newTestHandler(tb TBLoggingInterface) *Application {
 	app.SetLogger(tlogger)
 	locator := &NoLocator{logger: tlogger}
 	router := NewBroadcastRouter()
-	router.Init(app, router.ConfigStruct())
+	routerConf := router.ConfigStruct().(*BroadcastRouterConfig)
+	routerConf.Listener.Addr = ""
+	router.Init(app, routerConf)
 	app.SetRouter(router)
 	app.SetLocator(locator)
 
+	sh := NewSocketHandler()
+	shConfig := sh.ConfigStruct().(*SocketHandlerConfig)
+	shConfig.Listener.Addr = ""
+	if err := sh.Init(app, shConfig); err != nil {
+		tb.Logf("Failed to create WebSocket handler: %s", err)
+		return nil
+	}
+	app.SetSocketHandler(sh)
+
 	eh := NewEndpointHandler()
-	ehConfig := eh.ConfigStruct()
-	ehConfig.(*EndpointHandlerConfig).MaxDataLen = 140
+	ehConfig := eh.ConfigStruct().(*EndpointHandlerConfig)
+	ehConfig.Listener.Addr = ""
+	ehConfig.MaxDataLen = 140
 	if err := eh.Init(app, ehConfig); err != nil {
-		tb.Logf("Failed to create endpoint: %s", err)
+		tb.Logf("Failed to create update handler: %s", err)
 		return nil
 	}
 	app.SetEndpointHandler(eh)
