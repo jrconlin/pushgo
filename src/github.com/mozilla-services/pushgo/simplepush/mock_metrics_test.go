@@ -39,14 +39,6 @@ func (_mr *_MockStatisticianRecorder) Init(arg0, arg1 interface{}) *gomock.Call 
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Init", arg0, arg1)
 }
 
-func (_m *MockStatistician) Prefix(_param0 string) {
-	_m.ctrl.Call(_m, "Prefix", _param0)
-}
-
-func (_mr *_MockStatisticianRecorder) Prefix(arg0 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "Prefix", arg0)
-}
-
 func (_m *MockStatistician) Snapshot() map[string]interface{} {
 	ret := _m.ctrl.Call(_m, "Snapshot")
 	ret0, _ := ret[0].(map[string]interface{})

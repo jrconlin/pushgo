@@ -251,8 +251,6 @@ type = "static"
 [metrics]
 # The statsd client name, prepended to all metric names.
 #statsd_name = "undef"
-# Optional prefix for metric names, appended to the client name.
-#prefix = "myhostname.simplepush"
 #statsd_server = "heka_statsdinput_host:1234"
 
 [balancer]
