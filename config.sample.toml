@@ -250,7 +250,6 @@ type = "static"
 
 [metrics]
 # The statsd client name, prepended to all metric names.
-#statsd_name = "undef"
 #statsd_server = "heka_statsdinput_host:1234"
 
 # Optional metric name affixes for counters, timers, and gauges. May contain
@@ -258,13 +257,15 @@ type = "static"
 # {{.Host}} - The current hostname, as set by default.current_host.
 # {{.Version}} - The server version.
 #[metrics.counters]
-#prefix = "simplepush"
+#prefix = ""
+#suffix = ""
 
 #[metrics.timers]
-#prefix = "simplepush"
+#prefix = ""
+#suffix = ""
 
 #[metrics.gauges]
-#prefix = "simplepush"
+#prefix = ""
 #suffix = "{{.Host}}"
 
 [balancer]
