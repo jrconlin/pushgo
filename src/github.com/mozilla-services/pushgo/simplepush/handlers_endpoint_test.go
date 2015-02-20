@@ -502,6 +502,8 @@ func TestEndpointDelivery(t *testing.T) {
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
 					mckRouter.EXPECT().Route(nil, uaid, chid, int64(3), timeNow().UTC(),
 						"", "").Return(true, nil),
+					mckStat.EXPECT().Increment("router.broadcast.hit"),
+					mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any()),
 				)
 				ok := eh.deliver(nil, uaid, chid, 3, "", "")
 				So(ok, ShouldBeTrue)
@@ -525,6 +527,8 @@ func TestEndpointDelivery(t *testing.T) {
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
 					mckRouter.EXPECT().Route(nil, "123", "456", int64(1),
 						gomock.Any(), "reqID", "").Return(false, nil),
+					mckStat.EXPECT().Increment("router.broadcast.miss"),
+					mckStat.EXPECT().Timer("updates.routed.misses", gomock.Any()),
 				)
 				eh.ServeMux().ServeHTTP(resp, req)
 

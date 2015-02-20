@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -327,6 +328,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 	version int64, requestID string, data string) (delivered bool) {
 
 	worker, workerConnected := h.app.GetWorker(uaid)
+	var routingTime time.Duration
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
 	if h.alwaysRoute || !workerConnected {
@@ -337,16 +339,22 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 			cancelSignal = cn.CloseNotify()
 		}
 		// Route the update.
+		startTime := timeNow().UTC()
 		delivered, _ = h.router.Route(cancelSignal, uaid, chid, version,
-			timeNow().UTC(), requestID, data)
+			startTime, requestID, data)
+		routingTime = timeNow().UTC().Sub(startTime)
 		if delivered {
+			// Routing succeeded.
+			h.metrics.Increment("router.broadcast.hit")
+			h.metrics.Timer("updates.routed.hits", routingTime)
 			return true
 		}
 	}
-	// If the device is not connected to this server, indicate whether routing
-	// was successful.
 	if !workerConnected {
-		return
+		// Device is not connected to this server and routing failed.
+		h.metrics.Increment("router.broadcast.miss")
+		h.metrics.Timer("updates.routed.misses", routingTime)
+		return false
 	}
 	// Try local delivery if routing failed.
 	err := worker.Send(chid, version, data)

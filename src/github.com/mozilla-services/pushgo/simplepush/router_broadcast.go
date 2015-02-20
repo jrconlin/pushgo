@@ -354,7 +354,6 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 	version int64, sentAt time.Time, logID string, data string) (
 	delivered bool, err error) {
 
-	startTime := time.Now()
 	locator := r.app.Locator()
 	if locator == nil {
 		if r.logger.ShouldLog(ERROR) {
@@ -393,7 +392,6 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 			"time":    strconv.FormatInt(sentAt.UnixNano(), 10)})
 	}
 	delivered, err = r.notifyAll(cancelSignal, contacts, uaid, segment, logID)
-	endTime := time.Now()
 	if err != nil {
 		if r.logger.ShouldLog(WARNING) {
 			r.logger.Warn("router", "Could not post to server",
@@ -402,17 +400,6 @@ func (r *BroadcastRouter) Route(cancelSignal <-chan bool, uaid, chid string,
 		r.metrics.Increment("router.broadcast.error")
 		return false, err
 	}
-	var counterName, timerName string
-	if delivered {
-		counterName = "router.broadcast.hit"
-		timerName = "updates.routed.hits"
-	} else {
-		counterName = "router.broadcast.miss"
-		timerName = "updates.routed.misses"
-	}
-	r.metrics.Increment(counterName)
-	r.metrics.Timer(timerName, endTime.Sub(sentAt))
-	r.metrics.Timer("router.handled", endTime.Sub(startTime))
 	return delivered, nil
 }
 
