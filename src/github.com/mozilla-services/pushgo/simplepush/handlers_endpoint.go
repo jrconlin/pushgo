@@ -347,6 +347,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 			// Routing succeeded.
 			h.metrics.Increment("router.broadcast.hit")
 			h.metrics.Timer("updates.routed.hits", routingTime)
+			h.metrics.Increment("updates.appserver.received")
 			return true
 		}
 	}

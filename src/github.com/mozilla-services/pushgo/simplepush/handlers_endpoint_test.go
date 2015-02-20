@@ -504,6 +504,7 @@ func TestEndpointDelivery(t *testing.T) {
 						"", "").Return(true, nil),
 					mckStat.EXPECT().Increment("router.broadcast.hit"),
 					mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any()),
+					mckStat.EXPECT().Increment("updates.appserver.received"),
 				)
 				ok := eh.deliver(nil, uaid, chid, 3, "", "")
 				So(ok, ShouldBeTrue)
