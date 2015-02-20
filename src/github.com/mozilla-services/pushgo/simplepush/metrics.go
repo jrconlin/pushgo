@@ -84,10 +84,7 @@ type Metrics struct {
 func (m *Metrics) ConfigStruct() interface{} {
 	return &MetricsConfig{
 		StoreSnapshots: true,
-		StatsdName:     "undef",
-		Counters:       MetricConfig{Prefix: "simplepush"},
-		Timers:         MetricConfig{Prefix: "simplepush"},
-		Gauges:         MetricConfig{Prefix: "simplepush", Suffix: "{{.Host}}"},
+		Gauges:         MetricConfig{Suffix: "{{.Host}}"},
 	}
 }
 
