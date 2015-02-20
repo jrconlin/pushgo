@@ -196,14 +196,6 @@ func TestLocatorReadyNotify(t *testing.T) {
 
 	// First and second routing attempts to self.
 	sndStat.EXPECT().Increment("updates.routed.unknown").Times(2)
-	// First routing attempt to peer.
-	sndStat.EXPECT().Increment("router.broadcast.miss")
-	sndStat.EXPECT().Timer("updates.routed.misses", gomock.Any())
-	sndStat.EXPECT().Timer("router.handled", gomock.Any())
-	// Second routing attempt to peer.
-	sndStat.EXPECT().Increment("router.broadcast.hit")
-	sndStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
-	sndStat.EXPECT().Timer("router.handled", gomock.Any())
 
 	// Initial routing attempt to peer.
 	recvStat.EXPECT().Increment("updates.routed.unknown")
