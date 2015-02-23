@@ -69,8 +69,6 @@ func TestBroadcastRouter(t *testing.T) {
 			gomock.Any(), gomock.Any()).Times(2)
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
-		mckStat.EXPECT().Increment("router.broadcast.miss").Times(1)
-		mckStat.EXPECT().Timer(gomock.Any(), gomock.Any()).Times(2)
 		delivered, err := router.Route(cancelSignal, uaid, chid, version, sentAt,
 			"", "")
 		So(err, ShouldBeNil)
@@ -109,9 +107,6 @@ func TestBroadcastRouter(t *testing.T) {
 		mckStat.EXPECT().Increment("updates.routed.received")
 		mckStat.EXPECT().Increment("router.dial.success").AnyTimes()
 		mckStat.EXPECT().Increment("router.dial.error").AnyTimes()
-		mckStat.EXPECT().Increment("router.broadcast.hit")
-		mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any())
-		mckStat.EXPECT().Timer("router.handled", gomock.Any())
 
 		delivered, err := router.Route(cancelSignal, uaid, chid, version, sentAt,
 			"", "")

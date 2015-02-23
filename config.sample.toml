@@ -38,7 +38,7 @@
 #client_hello_timeout = "30s"
 # Client Pong Interval is the period for when the server should send a text
 # ping frame. Set to "0" for no server pings
-#client_pong_interval = "5m"
+#client_pong_interval = "0"
 
 [websocket]
 # A list of allowed WebSocket origins. An empty list allows all origins;
@@ -259,10 +259,23 @@ type = "static"
 
 [metrics]
 # The statsd client name, prepended to all metric names.
-#statsd_name = "undef"
-# Optional prefix for metric names, appended to the client name.
-#prefix = "myhostname.simplepush"
 #statsd_server = "heka_statsdinput_host:1234"
+
+# Optional metric name affixes for counters, timers, and gauges. May contain
+# the following substitutions:
+# {{.Host}} - The current hostname, as set by default.current_host.
+# {{.Version}} - The server version.
+#[metrics.counters]
+#prefix = ""
+#suffix = ""
+
+#[metrics.timers]
+#prefix = ""
+#suffix = ""
+
+#[metrics.gauges]
+#prefix = ""
+#suffix = "{{.Host}}"
 
 [balancer]
 type = "none"

@@ -140,7 +140,7 @@ html-server-cov: coverage.server.html
 
 # Upload full coverage profile to Coveralls.
 travis-cov: coverage.out check-cov
-	goveralls -coverprofile=$< -service=travis-ci -repotoken $(COVERALLS_TOKEN)
+	@goveralls -coverprofile=$< -service=travis-ci -repotoken $(COVERALLS_TOKEN)
 
 clean-cov:
 	rm -rf $(COVER_PATH)

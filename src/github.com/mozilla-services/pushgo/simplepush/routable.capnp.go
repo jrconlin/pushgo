@@ -11,6 +11,7 @@ type Routable C.Struct
 
 func NewRoutable(s *C.Segment) Routable      { return Routable(s.NewStruct(16, 2)) }
 func NewRootRoutable(s *C.Segment) Routable  { return Routable(s.NewRootStruct(16, 2)) }
+func AutoNewRoutable(s *C.Segment) Routable  { return Routable(s.NewStructAR(16, 2)) }
 func ReadRootRoutable(s *C.Segment) Routable { return Routable(s.Root(0).ToStruct()) }
 func (s Routable) ChannelID() string         { return C.Struct(s).GetObject(0).ToText() }
 func (s Routable) SetChannelID(v string)     { C.Struct(s).SetObject(0, s.Segment.NewText(v)) }

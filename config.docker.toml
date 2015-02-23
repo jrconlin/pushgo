@@ -64,7 +64,7 @@ max_connections = 40000
 #key_file = "certs/test.key"
 
 [profile]
-enable = true
+enabled = true
 
 [profile.listener]
 addr = ":8082"
@@ -165,7 +165,6 @@ type = "static"
 
 [metrics]
 store_snapshots = false
-prefix = "docker"
 statsd_name = "pushgo"
 statsd_server = ":8125"
 

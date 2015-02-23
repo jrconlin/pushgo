@@ -36,11 +36,13 @@ Features
 - New config option for specifying the shutdown delay for [discovery] and
   [balancer]. PR #178.
     close_delay
-- Added client "pong" function. This generates a server side protocol ping to
-  attempt to hold the socket open to the device.
+- Added client "pong" function, disabled by default. This generates a server
+  side protocol ping to attempt to hold the socket open to the device.
 - Added support for Google Cloud Messaging as a proprietary ping mechanism with
   testing.
-- Append the hostname to all emitted metric keys. PR #220, Issue #200.
+- Allow custom prefixes and suffixes for each metric type, with optional
+  variable interpolation. The hostname is appended as a suffix to all emitted
+  gauges by default. PR #228, Issue #200.
 
 Bug Fixes
 ---------
