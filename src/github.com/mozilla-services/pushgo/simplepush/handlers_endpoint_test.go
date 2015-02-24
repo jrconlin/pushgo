@@ -591,7 +591,7 @@ func TestEndpointDelivery(t *testing.T) {
 			version := int64(1)
 			data := "Happy, happy, joy, joy!"
 
-			Convey("And router delivery fails, route local", func() {
+			Convey("And router delivery fails, local succeeds", func() {
 				gomock.InOrder(
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
 					mckRouter.EXPECT().Route(nil, uaid, chid, version,
@@ -606,7 +606,7 @@ func TestEndpointDelivery(t *testing.T) {
 				So(ok, ShouldBeTrue)
 			})
 
-			Convey("And router delivery succeeds, route local", func() {
+			Convey("And router delivery succeeds, local succeeds", func() {
 				gomock.InOrder(
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
 					mckRouter.EXPECT().Route(nil, uaid, chid, version,
@@ -614,6 +614,22 @@ func TestEndpointDelivery(t *testing.T) {
 					mckStat.EXPECT().Increment("router.broadcast.hit"),
 					mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any()),
 					mckWorker.EXPECT().Send(chid, version, data).Return(nil),
+					mckStat.EXPECT().Increment("updates.appserver.received"),
+				)
+
+				ok := eh.deliver(nil, uaid, chid, version, "", data)
+				So(ok, ShouldBeTrue)
+			})
+
+			Convey("And router delivery succeds, local fails", func() {
+				gomock.InOrder(
+					mckStat.EXPECT().Increment("updates.routed.outgoing"),
+					mckRouter.EXPECT().Route(nil, uaid, chid, version,
+						gomock.Any(), "", data).Return(true, nil),
+					mckStat.EXPECT().Increment("router.broadcast.hit"),
+					mckStat.EXPECT().Timer("updates.routed.hits", gomock.Any()),
+					mckWorker.EXPECT().Send(chid, version, data).Return(
+						errors.New("client gone")),
 					mckStat.EXPECT().Increment("updates.appserver.received"),
 				)
 
