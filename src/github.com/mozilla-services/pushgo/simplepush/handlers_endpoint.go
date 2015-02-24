@@ -332,7 +332,9 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
-	if h.alwaysRoute || !workerConnected {
+	shouldRoute := h.alwaysRoute || !workerConnected
+
+	if shouldRoute {
 		h.metrics.Increment("updates.routed.outgoing")
 		// Abort routing if the connection goes away.
 		var cancelSignal <-chan bool
@@ -344,41 +346,35 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 		delivered, _ = h.router.Route(cancelSignal, uaid, chid, version,
 			startTime, requestID, data)
 		routingTime = timeNow().UTC().Sub(startTime)
+
+		// Increment appropriate metrics
+		if delivered {
+			h.metrics.Increment("router.broadcast.hit")
+			h.metrics.Timer("updates.routed.hits", routingTime)
+		} else {
+			h.metrics.Increment("router.broadcast.miss")
+			h.metrics.Timer("updates.routed.misses", routingTime)
+		}
 	}
 
-	// If we delivered the message
+	// Should we attempt local delivery? Only if the worker is connected
+	// and we either always route, or failed to remote deliver
+	shouldLocalDeliver := workerConnected && (h.alwaysRoute || !delivered)
+
+	if shouldLocalDeliver {
+		if err := worker.Send(chid, version, data); err == nil {
+			delivered = true
+		}
+	}
+
+	// Increment the appropriate final metric whether deliver did or
+	// did not work
 	if delivered {
-		h.metrics.Increment("router.broadcast.hit")
-		h.metrics.Timer("updates.routed.hits", routingTime)
-		// If we're not always routing, we're done now
-		if !h.alwaysRoute {
-			h.metrics.Increment("updates.appserver.received")
-			return true
-		}
-	} else if !workerConnected {
-		// Worker is not connected and routing failed
-		h.metrics.Increment("router.broadcast.miss")
-		h.metrics.Timer("updates.routed.misses", routingTime)
-		h.metrics.Increment("updates.appserver.rejected")
-		return false
-	}
-
-	// Possible conditions at this point:
-	// Router delivered, but alwaysRoute is true
-	// Router didn't deliver, alwaysRoute true or false
-
-	// Try local delivery
-	if err := worker.Send(chid, version, data); err == nil {
-		// Local delivery worked, avoid incrementing received if we
-		// also already delivered it
-		if !delivered {
-			h.metrics.Increment("updates.appserver.received")
-		}
-		delivered = true
-	} else if !delivered {
-		// Local delivery failed *and* routing failed
+		h.metrics.Increment("updates.appserver.received")
+	} else {
 		h.metrics.Increment("updates.appserver.rejected")
 	}
+
 	return delivered
 }
 
