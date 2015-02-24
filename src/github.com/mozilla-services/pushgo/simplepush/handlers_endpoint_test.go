@@ -620,6 +620,23 @@ func TestEndpointDelivery(t *testing.T) {
 				ok := eh.deliver(nil, uaid, chid, version, "", data)
 				So(ok, ShouldBeTrue)
 			})
+
+			Convey("And router/local delivery fails", func() {
+				gomock.InOrder(
+					mckStat.EXPECT().Increment("updates.routed.outgoing"),
+					mckRouter.EXPECT().Route(nil, uaid, chid, version,
+						gomock.Any(), "", data).Return(false, nil),
+					mckStat.EXPECT().Increment("router.broadcast.miss"),
+					mckStat.EXPECT().Timer("updates.routed.misses", gomock.Any()),
+					mckWorker.EXPECT().Send(chid, version, data).Return(
+						errors.New("client gone")),
+					mckStat.EXPECT().Increment("updates.appserver.rejected"),
+				)
+
+				ok := eh.deliver(nil, uaid, chid, version, "", data)
+				So(ok, ShouldBeFalse)
+			})
+
 		})
 	})
 }
