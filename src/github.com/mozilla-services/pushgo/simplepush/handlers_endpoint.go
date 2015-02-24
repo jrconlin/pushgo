@@ -330,10 +330,10 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 	worker, workerConnected := h.app.GetWorker(uaid)
 	var routingTime time.Duration
 
-	shouldRoute := h.alwaysRoute || !workerConnected
-
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
+	shouldRoute := h.alwaysRoute || !workerConnected
+
 	if shouldRoute {
 		h.metrics.Increment("updates.routed.outgoing")
 		// Abort routing if the connection goes away.

@@ -621,7 +621,7 @@ func TestEndpointDelivery(t *testing.T) {
 				So(ok, ShouldBeTrue)
 			})
 
-			Convey("And router delivery succeds, local fails", func() {
+			Convey("And router delivery succeeds, local fails", func() {
 				gomock.InOrder(
 					mckStat.EXPECT().Increment("updates.routed.outgoing"),
 					mckRouter.EXPECT().Route(nil, uaid, chid, version,
