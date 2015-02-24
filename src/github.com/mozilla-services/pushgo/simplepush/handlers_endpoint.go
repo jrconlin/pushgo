@@ -329,6 +329,7 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 
 	worker, workerConnected := h.app.GetWorker(uaid)
 	var routingTime time.Duration
+
 	// Always route to other servers first, in case we're holding open a stale
 	// connection and the client has already reconnected to a different server.
 	if h.alwaysRoute || !workerConnected {
@@ -343,28 +344,42 @@ func (h *EndpointHandler) deliver(cn http.CloseNotifier, uaid, chid string,
 		delivered, _ = h.router.Route(cancelSignal, uaid, chid, version,
 			startTime, requestID, data)
 		routingTime = timeNow().UTC().Sub(startTime)
-		if delivered {
-			// Routing succeeded.
-			h.metrics.Increment("router.broadcast.hit")
-			h.metrics.Timer("updates.routed.hits", routingTime)
+	}
+
+	// If we delivered the message
+	if delivered {
+		h.metrics.Increment("router.broadcast.hit")
+		h.metrics.Timer("updates.routed.hits", routingTime)
+		// If we're not always routing, we're done now
+		if !h.alwaysRoute {
 			h.metrics.Increment("updates.appserver.received")
 			return true
 		}
-	}
-	if !workerConnected {
-		// Device is not connected to this server and routing failed.
+	} else if !workerConnected {
+		// Worker is not connected and routing failed
 		h.metrics.Increment("router.broadcast.miss")
 		h.metrics.Timer("updates.routed.misses", routingTime)
-		return false
-	}
-	// Try local delivery if routing failed.
-	err := worker.Send(chid, version, data)
-	if err != nil {
 		h.metrics.Increment("updates.appserver.rejected")
 		return false
 	}
-	h.metrics.Increment("updates.appserver.received")
-	return true
+
+	// Possible conditions at this point:
+	// Router delivered, but alwaysRoute is true
+	// Router didn't deliver, alwaysRoute true or false
+
+	// Try local delivery
+	if err := worker.Send(chid, version, data); err == nil {
+		// Local delivery worked, avoid incrementing received if we
+		// also already delivered it
+		if !delivered {
+			h.metrics.Increment("updates.appserver.received")
+		}
+		delivered = true
+	} else if !delivered {
+		// Local delivery failed *and* routing failed
+		h.metrics.Increment("updates.appserver.rejected")
+	}
+	return delivered
 }
 
 func (h *EndpointHandler) Close() error {
