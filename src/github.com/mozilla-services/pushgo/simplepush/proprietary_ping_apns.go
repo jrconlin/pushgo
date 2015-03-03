@@ -373,8 +373,6 @@ func (r *APNSPing) ConfigStruct() interface{} {
 		CertFile: "apns.cert",
 		KeyFile:  "apns.key",
 		Timeout:  "3s",
-		Title:    "A new Push Event happened.",
-		Body:     "I wish that silent pushes actually worked.",
 		Retry: retry.Config{
 			Retries:   5,
 			Delay:     "200ms",
