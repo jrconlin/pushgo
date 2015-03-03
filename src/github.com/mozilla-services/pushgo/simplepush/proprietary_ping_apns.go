@@ -230,10 +230,9 @@ func (r *APNSSocket) Send(token string, data *APNSPingData) (err error) {
 		status := &APNSStatus{}
 		binary.Read(bytes.NewBuffer(reply), binary.BigEndian, &status)
 		if status.Status != 0 {
-			fmt.Printf(">>>> Read returned: %v\n", reply)
-			msg := fmt.Sprintf("Resend request: code %d, ID %x",
-				status.Status,
-				status.Identifier)
+			msg := "Resend request: code " +
+				strconv.FormatInt(status.Status, 10) +
+				" ID " + status.Identifier
 			return errors.New(msg)
 		}
 		fmt.Printf("\nSuccess:: %+v [%v]\n", status, reply)
@@ -310,17 +309,12 @@ func (r *APNSSocket) Send2(token string, data *APNSPingData) (err error) {
 	for retry := 2; retry != 0; retry-- {
 		_, err = r.tlsconn.Write(frame.Bytes())
 		if err != nil {
-			fmt.Printf("\n !!! Got Error %+v %T\n", err, err)
-			fmt.Printf("\n\n### Redialing to %s\n", r.addr)
 			err = r.Dial(r.addr)
 			if err != nil {
-				fmt.Printf("\n\n### Dial failed...%s\n", err.Error)
 				return
 			}
-			fmt.Printf("\n\n### Retrying send...\n")
 			continue
 		}
-		fmt.Printf("\n >>>> Success!\n")
 		err = nil
 		break
 	}
@@ -329,27 +323,18 @@ func (r *APNSSocket) Send2(token string, data *APNSPingData) (err error) {
 	// connection times out.
 	r.tlsconn.SetReadDeadline(time.Now().Add(r.Timeout))
 	reply := make([]byte, 6)
-	fmt.Printf("\n>>>> Checking read queue\n")
 	n, err := r.tlsconn.Read(reply[:])
 	if err != nil && !strings.Contains(err.Error(), "i/o timeout") {
-		fmt.Printf("\n >>>> Read failed %+v\n", err)
 		return
 	}
 	if n != 0 {
 		status := &APNSStatus{}
 		binary.Read(bytes.NewBuffer(reply), binary.BigEndian, &status)
 		if status.Status != 0 {
-			fmt.Printf(">>>> Read returned: %v\n", reply)
-			msg := fmt.Sprintf("Resend request: code %d, ID %x",
-				status.Status,
-				status.Identifier)
+			msg := "Resend request: code " + strconv.FormatInt(status.Status, 10) + " ID: " + status.Identifier
 			return errors.New(msg)
 		}
-		fmt.Printf("\nSuccess:: %+v [%v]\n", status, reply)
-	} else {
-		fmt.Printf(" --- Reader returned 0 length\n")
 	}
-	fmt.Printf("\n ==== Done \n")
 	return nil
 }
 
@@ -414,7 +399,8 @@ func (r *APNSPing) Init(app *Application, config interface{}) (err error) {
 	if r.port == 0 {
 		r.port = 2195
 	}
-	if err = r.conn.Dial(fmt.Sprintf("%s:%d", r.host, r.port)); err != nil {
+	if err = r.conn.Dial(r.host + ":" +
+		strconv.FormatInt(r.port, 10)); err != nil {
 		r.logger.Panic("propping",
 			"Could not connect to APNS service",
 			LogFields{"error": err.Error()})
