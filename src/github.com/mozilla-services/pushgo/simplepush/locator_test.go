@@ -104,6 +104,8 @@ func TestLocatorReadyNotify(t *testing.T) {
 	sndApp.SetLogger(mckLogger)
 	sndStat := NewMockStatistician(mockCtrl)
 	sndApp.SetMetrics(sndStat)
+	sndStore := NewMockStore(mockCtrl)
+	sndApp.SetStore(sndStore)
 	sndApp.SetLocator(mckLocator)
 	// Set up a fake router for the sender.
 	setRouter(sndApp, sndRouterPipe)
@@ -238,11 +240,18 @@ func TestLocatorReadyNotify(t *testing.T) {
 		t.Error("Should route to connected client")
 	}
 
-	mckLocator.EXPECT().Close().Times(2)
+	gomock.InOrder(
+		mckLocator.EXPECT().Close(),
+		recvStore.EXPECT().Close(),
+	)
 	if err := recvApp.Close(); err != nil {
 		t.Errorf("Error closing peer: %s", err)
 	}
 	wg.Wait()
+	gomock.InOrder(
+		mckLocator.EXPECT().Close(),
+		sndStore.EXPECT().Close(),
+	)
 	if err := sndApp.Close(); err != nil {
 		t.Errorf("Error closing self: %s", err)
 	}
