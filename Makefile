@@ -44,8 +44,8 @@ COVER_PACKAGES := $(addprefix $(COVER_PATH)/,\
 COVER_TARGETS := coverage.out coverage.server.out
 COVER_HTML_TARGETS := $(patsubst %.out,%.html,$(COVER_TARGETS))
 
-.PHONY: all build gen clean-gen $(TARGET) test-mocks clean-mocks test \
-	test-server test-gomc test-gomemcache check-cov travis-cov\
+.PHONY: all build gen clean-gen $(TARGET) $(TARGET)-no-gomc test-mocks\
+	clean-mocks test test-server test-gomc test-gomemcache check-cov travis-cov\
 	html-cov html-server-cov clean-cov bench bench-server vet clean
 .INTERMEDIATE: $(COVER_TARGETS)
 
@@ -97,9 +97,14 @@ memcached: libmemcached-1.0.18
 
 # Build the Simple Push server.
 $(TARGET):
-	rm -f $(TARGET)
+	rm -f $@
 	@echo "Building simplepush"
-	$(GO) build -tags libmemcached -o $(TARGET) $(PACKAGE)
+	$(GO) build -tags libmemcached -o $@ $(PACKAGE)
+
+$(TARGET)-no-gomc:
+	rm -f $@
+	@echo "Building simplepush without libmemcached"
+	$(GO) build -o $@ $(PACKAGE)
 
 # Generate mock interfaces for the tests.
 test-mocks: $(MOCKS)
@@ -178,4 +183,4 @@ vet:
 
 clean: clean-cov clean-mocks clean-gen
 	rm -rf bin $(DEPS)
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET)-no-gomc
