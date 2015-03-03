@@ -76,8 +76,8 @@ type DbConf struct {
 	// deleted records will be pruned after this timeout.
 	TimeoutDel int64 `toml:"timeout_del" env:"timeout_del"`
 
-	// HandleTimeout is the maximum time to wait when acquiring a connection from
-	// the pool. Defaults to 5 seconds.
+	// HandleTimeout is the socket connection timeout. Supports second precision;
+	// disabled if set to "" or "0". Defaults to 5 seconds.
 	HandleTimeout string `toml:"handle_timeout" env:"handle_timeout"`
 
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
