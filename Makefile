@@ -151,7 +151,7 @@ clean-cov:
 	rm -rf $(COVER_PATH)
 	rm -f $(COVER_HTML_TARGETS)
 
-$(COVER_PATH)/%.out: $(CURDIR)/src/%/*.go $(MOCKS)
+$(COVER_PATH)/%.out: $(CURDIR)/src/% $(MOCKS)
 	mkdir -p $(dir $@)
 	$(GO) test -tags smoke -covermode=$(COVER_MODE) -coverprofile=$@ $*
 
