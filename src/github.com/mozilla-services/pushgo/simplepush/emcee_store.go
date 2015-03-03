@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	mc "github.com/ianoshen/gomc"
+	mc "github.com/varstr/gomc"
 
 	"github.com/mozilla-services/pushgo/id"
 )
