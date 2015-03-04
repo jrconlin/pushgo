@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -231,8 +232,8 @@ func (r *APNSSocket) Send(token string, data *APNSPingData) (err error) {
 		binary.Read(bytes.NewBuffer(reply), binary.BigEndian, &status)
 		if status.Status != 0 {
 			msg := "Resend request: code " +
-				strconv.FormatInt(status.Status, 10) +
-				" ID " + status.Identifier
+				strconv.FormatInt(int64(status.Status), 10) +
+				" ID " + strconv.FormatInt(int64(status.Identifier), 10)
 			return errors.New(msg)
 		}
 		fmt.Printf("\nSuccess:: %+v [%v]\n", status, reply)
@@ -331,7 +332,9 @@ func (r *APNSSocket) Send2(token string, data *APNSPingData) (err error) {
 		status := &APNSStatus{}
 		binary.Read(bytes.NewBuffer(reply), binary.BigEndian, &status)
 		if status.Status != 0 {
-			msg := "Resend request: code " + strconv.FormatInt(status.Status, 10) + " ID: " + status.Identifier
+			msg := "Resend request: code " + strconv.FormatInt(
+				int64(status.Status), 10) + " ID: " +
+				strconv.FormatInt(int64(status.Identifier), 10)
 			return errors.New(msg)
 		}
 	}
@@ -400,7 +403,7 @@ func (r *APNSPing) Init(app *Application, config interface{}) (err error) {
 		r.port = 2195
 	}
 	if err = r.conn.Dial(r.host + ":" +
-		strconv.FormatInt(r.port, 10)); err != nil {
+		strconv.FormatInt(int64(r.port), 10)); err != nil {
 		r.logger.Panic("propping",
 			"Could not connect to APNS service",
 			LogFields{"error": err.Error()})
