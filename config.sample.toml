@@ -192,11 +192,11 @@ type = "none"
 # DynamoDB config
 #[storage]
 #tablename="simplepush"
-#region="us-west-1"
+#aws_region="us-west-1"
 #read_cap_units=1
 #write_cap_units=1
-#accesskey="YourAccessKey"
-#secret="YourAccessSecret"
+#aws_access_key="YourAccessKey"
+#aws_access_secret="YourAccessSecret"
 
 [router]
 # Default router to use, the rest of the options assume the broadcast

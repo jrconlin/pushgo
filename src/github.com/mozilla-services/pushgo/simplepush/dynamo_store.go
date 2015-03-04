@@ -5,8 +5,8 @@
 package simplepush
 
 import (
-	"errors"
-	"fmt"
+	"math/rand"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -24,12 +24,6 @@ const (
 	MODD_LABEL = "modified"
 )
 
-var (
-	ErrInvalidRegion   = errors.New("Invalid Region")
-	ErrDynamoDBTimeout = errors.New("DynamoDB function timed out")
-	ErrDynamoDBFailure = errors.New("DynamoDB returned non success")
-)
-
 type DynamoDBConf struct {
 	// Name of the table to use
 	TableName string `toml:"tablename" env:"tablename"`
@@ -39,32 +33,16 @@ type DynamoDBConf struct {
 	WriteProv int64 `toml:"write_cap_units" env:"write_cap_units"`
 
 	// Region that the dbstore is in
-	Region string `toml:"region" env:"region"`
+	Region string `toml:"aws_region" env:"aws_region"`
 
 	// Auth info (using aws.GetAuth)
 	// NOTE: if using environment variables, please use goamz Var names.
 	// AWS_ACCESS_KEY
 	// AWS_SECRET_KEY
-	Access string `toml:"accesskey" `
-	Secret string `toml:"secret" `
+	Access string `toml:"aws_access_key" env:"aws_access_key"`
+	Secret string `toml:"aws_access_secret" env:"aws_access_secret"`
 
 	MaxChannels int `toml:"max_channels" env:"max_channels"`
-}
-
-type dynamoTable interface {
-	DescribeTable() (*dynamodb.TableDescriptionT, error)
-	CountQuery([]dynamodb.AttributeComparison) (int64, error)
-	PutItem(string, string, []dynamodb.Attribute) (bool, error)
-	UpdateAttributes(*dynamodb.Key, []dynamodb.Attribute) (bool, error)
-	DeleteItem(*dynamodb.Key) (bool, error)
-	Query([]dynamodb.AttributeComparison) ([]map[string]*dynamodb.Attribute, error)
-	DeleteAttributes(*dynamodb.Key, []dynamodb.Attribute) (bool, error)
-}
-
-type dynamoServer interface {
-	NewTable(string, dynamodb.PrimaryKey) *dynamodb.Table
-	CreateTable(dynamodb.TableDescriptionT) (string, error)
-	ListTables() ([]string, error)
 }
 
 type DynamoDBStore struct {
@@ -83,14 +61,19 @@ type DynamoDBStore struct {
 	statusIdle    time.Duration
 }
 
-const (
-	RFC_ISO_8601  = "20060102T150405Z"
-	DYNAMO_PREFIX = "DynamoDB_20120810"
-)
-
 func (s *DynamoDBStore) waitUntilStatus(table dynamoTable, status string) (err error) {
 	done := make(chan bool)
 	timeout := time.After(s.statusTimeout)
+	defer func() {
+		if r := recover(); r != nil {
+			if err, ok := r.(error); ok {
+				if s.logger.ShouldLog(ERROR) {
+					s.logger.Error("dynamodb", "Recovering socket issue",
+						LogFields{"error": err.Error()})
+				}
+			}
+		}
+	}()
 	go func() {
 		for {
 			select {
@@ -112,7 +95,6 @@ func (s *DynamoDBStore) waitUntilStatus(table dynamoTable, status string) (err e
 	select {
 	case <-done:
 		err = nil
-		break
 	case <-timeout:
 		err = ErrDynamoDBTimeout
 		close(done)
@@ -183,7 +165,6 @@ func (s *DynamoDBStore) createTable() (err error) {
 	return
 }
 
-// NewEmcee creates an unconfigured memcached adapter.
 func NewDynamoDB() *DynamoDBStore {
 	s := &DynamoDBStore{
 		statusTimeout: 3 * time.Minute,
@@ -204,26 +185,6 @@ func (*DynamoDBStore) ConfigStruct() interface{} {
 	}
 }
 
-func (s *DynamoDBStore) containsTable(tableSet []string, table string) bool {
-	if len(tableSet) == 0 {
-		return false
-	}
-	for _, t := range tableSet {
-		if t == table {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *DynamoDBStore) getNow(t int64) string {
-	if t == 0 {
-		t = time.Now().UTC().Unix()
-	}
-	return strconv.FormatInt(t, 10)
-}
-
-// Init initializes the memcached adapter with the given configuration.
 // Implements HasConfigStruct.Init().
 func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	var ok bool
@@ -234,7 +195,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	s.region, ok = aws.Regions[conf.Region]
 	if !ok {
 		s.logger.Panic("dynamodb", "Invalid region specified", nil)
-		return ErrInvalidRegion
+		return ErrDynamoDBInvalidRegion
 	}
 	auth, err := aws.GetAuth(conf.Access, conf.Secret,
 		"", time.Now().Add(s.statusTimeout))
@@ -259,7 +220,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	s.tablename = conf.TableName
 
 	// check if the table exists
-	if !s.containsTable(tables, conf.TableName) {
+	if !ddb_containsTable(tables, conf.TableName) {
 		if s.logger.ShouldLog(INFO) {
 			s.logger.Info("dynamodb", "creating dynamodb table...", nil)
 		}
@@ -304,15 +265,14 @@ func (*DynamoDBStore) IDsToKey(uaid, chid string) (string, error) {
 	if len(uaid) == 0 || len(chid) == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf("%s.%s", uaid, chid), nil
+	return uaid + "." + chid, nil
 }
 
-// Status queries whether memcached is available for reading and writing.
 // Implements Store.Status().
 func (s *DynamoDBStore) Status() (success bool, err error) {
 	success = false
 	tables, err := s.server.ListTables()
-	success = err == nil && s.containsTable(tables, s.tablename)
+	success = err == nil && ddb_containsTable(tables, s.tablename)
 	return true, nil
 }
 
@@ -338,7 +298,7 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 // Store.Register().
 func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 	// try to put the master record
-	now := s.getNow(0)
+	now := ddb_getNow(0)
 	vers := strconv.FormatInt(version, 10)
 	success, err := s.table.PutItem(uaid, " ", []dynamodb.Attribute{
 		*dynamodb.NewNumericAttribute(MODD_LABEL, now),
@@ -363,7 +323,7 @@ func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 // Update updates the version for the given device ID and channel ID.
 // Implements Store.Update().
 func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
-	now := s.getNow(0)
+	now := ddb_getNow(0)
 	success, err := s.table.UpdateAttributes(&dynamodb.Key{uaid, chid},
 		[]dynamodb.Attribute{
 			*dynamodb.NewNumericAttribute(VERS_LABEL,
@@ -393,7 +353,7 @@ func (s *DynamoDBStore) Unregister(uaid, chid string) (err error) {
 }
 
 // Drop removes a channel ID associated with the given device ID from
-// memcached. Deregistration calls should call s.Unregister() instead.
+// storage. Deregistration calls should call s.Unregister() instead.
 // Implements Store.Drop().
 func (s *DynamoDBStore) Drop(uaid, chid string) (err error) {
 	return s.Unregister(uaid, chid)
@@ -421,7 +381,7 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 			if vera, ok := r["created"]; ok {
 				vers = vera.Value
 			} else {
-				vers = s.getNow(0)
+				vers = ddb_getNow(0)
 			}
 		}
 		version, err := strconv.ParseUint(vers, 10, 64)
@@ -440,27 +400,90 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 // DropAll removes all channel records for the given device ID. Implements
 // Store.DropAll().
 func (s *DynamoDBStore) DropAll(uaid string) (err error) {
-	var ok bool
+	//TODO: Pass this to a goroutine to make it non blocking.
 	result, err := s.table.Query([]dynamodb.AttributeComparison{
 		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
 	})
 	if err != nil {
 		return
 	}
-	for _, record := range result {
-		key := &dynamodb.Key{
-			HashKey:  record[UAID_LABEL].Value,
-			RangeKey: record[CHID_LABEL].Value,
+	// Need to reflect to prevent testing from causing panics galore.
+	// Damn good thing this method is not on the critical path.
+	testing := reflect.TypeOf(s.table).String() == "*simplepush.testDynamoTable"
+	items := make(map[string][][]dynamodb.Attribute)
+	items["Delete"] = make([][]dynamodb.Attribute, len(result))
+	for n, record := range result {
+		//Use partial names for item labels (e.g. Put or Delete instead of
+		// "PutRequest" or "DeleteRequest")
+		items["Delete"][n] = []dynamodb.Attribute{
+			dynamodb.Attribute{
+				Type:  dynamodb.TYPE_STRING,
+				Name:  UAID_LABEL,
+				Value: record[UAID_LABEL].Value,
+			},
+			dynamodb.Attribute{
+				Type:  dynamodb.TYPE_STRING,
+				Name:  CHID_LABEL,
+				Value: record[CHID_LABEL].Value,
+			}}
+	}
+	defer func() {
+		// unravelling this is.. not simple or well explained.
+		// added bonus that there's no clear example of how to do it.
+		// So this will probably puke or throw exceptions like an angry
+		// monkey.
+		if r := recover(); r != nil {
+			if err, ok := r.(error); ok {
+				if s.logger.ShouldLog(ERROR) {
+					s.logger.Error("dynamodb", "Unhandled exception during dropall",
+						LogFields{"error": err.Error()})
+				}
+			}
 		}
-		if ok, err = s.table.DeleteItem(key); !ok {
-			return
+	}()
+	var i int
+	for i = 0; i < 5; i++ {
+		//AMZ states that it's possible for a BatchWrite to partially fail.
+		// In that case, you're required to retry the "missed" records after
+		// some period, ideally, with an exponential timeout
+		// I'm also arbitrarily giving up after 5 retries to prevent endless
+		// loops if crap has really gone to hell.
+		batch := s.table.BatchWriteItems(items)
+
+		missed := make(map[string]interface{})
+		if !testing {
+			missed, err = batch.Execute()
+		}
+		if err != nil {
+			if s.logger.ShouldLog(ERROR) {
+				s.logger.Error("dynamodb", "Could not complete DropAll",
+					LogFields{"error": err.Error()})
+			}
+			return err
+		}
+		if missActions, ok := missed["DeleteRequest"]; ok {
+
+			// This may throw an index errorfor various reasons.
+			items = missActions.(dynamodb.BatchWriteItem).ItemActions[s.table.(*dynamodb.Table)]
+			if len(items) > 0 {
+				// TODO: replace this with a proper exponential backoff.
+				time.Sleep(time.Duration(rand.Intn(4)+1) * time.Second)
+				continue
+			}
+		}
+		break
+	}
+	if i == 4 {
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("dynamodb", "Could not drop all records for uaid",
+				LogFields{"uaid": uaid})
 		}
 	}
-	return
+	return nil
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
-// from memcached. Implements Store.FetchPing().
+// from storage. Implements Store.FetchPing().
 func (s *DynamoDBStore) FetchPing(uaid string) (pingData []byte, err error) {
 	result, err := s.table.Query([]dynamodb.AttributeComparison{
 		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
@@ -478,7 +501,7 @@ func (s *DynamoDBStore) FetchPing(uaid string) (pingData []byte, err error) {
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
-// memcached. Implements Store.PutPing().
+// storage. Implements Store.PutPing().
 func (s *DynamoDBStore) PutPing(uaid string, pingData []byte) (err error) {
 	// s.table.
 	_, err = s.table.UpdateAttributes(&dynamodb.Key{uaid, " "},
