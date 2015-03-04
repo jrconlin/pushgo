@@ -324,12 +324,24 @@ func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 // Implements Store.Update().
 func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 	now := ddb_getNow(0)
-	success, err := s.table.UpdateAttributes(&dynamodb.Key{uaid, chid},
+	// Write or update the existing value.
+	// NOTE: ConditionalUpdateAttributes requires knowledge of the previous
+	// value (it only updates if the previous value matches)
+	// this is a problem for new fields or running statelessly.
+	// It does mean that there's a chance of a delayed packet decrementing
+	// a version or otherwise causing an issue.
+	// This can either be resolved by pre-fetching existing data and only
+	// updating if the version is greater, (thus doubling the dynamodb access
+	// rate or by just accepting that it's a possiblity and dealing with it
+	// later if it's a problem.
+	success, err := s.table.UpdateAttributes(
+		&dynamodb.Key{uaid, chid},
 		[]dynamodb.Attribute{
 			*dynamodb.NewNumericAttribute(VERS_LABEL,
 				strconv.FormatInt(version, 10)),
 			*dynamodb.NewNumericAttribute(MODD_LABEL, now),
-		})
+		},
+	)
 	if err != nil {
 		return
 	}
