@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/goamz/goamz/dynamodb"
+	"github.com/jrconlin/goamz/dynamodb"
 )
 
 const (
@@ -34,6 +34,7 @@ type dynamoTable interface {
 	Query([]dynamodb.AttributeComparison) ([]map[string]*dynamodb.Attribute, error)
 	DeleteAttributes(*dynamodb.Key, []dynamodb.Attribute) (bool, error)
 	BatchWriteItems(itemActions map[string][][]dynamodb.Attribute) *dynamodb.BatchWriteItem
+	ModifyConditionally(*dynamodb.Key, []dynamodb.Attribute, string, string) ([]byte, error)
 }
 
 type dynamoBatchWriteItem interface {

@@ -5,6 +5,7 @@
 package simplepush
 
 import (
+	"fmt"
 	"math/rand"
 	"reflect"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/goamz/goamz/aws"
-	"github.com/goamz/goamz/dynamodb"
+	"github.com/mozilla-services/pushgo/dynamodb"
 )
 
 const (
@@ -49,9 +50,8 @@ type DynamoDBStore struct {
 	logger        *SimpleLogger
 	region        aws.Region
 	auth          aws.Auth
-	pk            dynamodb.PrimaryKey
-	server        dynamoServer
-	table         dynamoTable
+	server        dynamoDB.DynamoServer
+	table         dynamoDB.DynamoTable
 	tablename     string
 	readProv      int64
 	writeProv     int64
@@ -80,7 +80,7 @@ func (s *DynamoDBStore) waitUntilStatus(table dynamoTable, status string) (err e
 			case <-done:
 				return
 			default:
-				desc, err := table.DescribeTable()
+				desc, err := dynamoDB.DescribeTable(s.Server, table.TableName)
 				if err != nil {
 					return
 				}
@@ -111,45 +111,39 @@ func (s *DynamoDBStore) createTable() (err error) {
 	   		QUERY with chid > " ".
 	   created = UTC().Unix() of the record creation. Used for cleanup.
 	*/
-	tableDesc := dynamodb.TableDescriptionT{
+	s.table = dynamodb.Table{
+		Server:    s.Server,
 		TableName: s.tablename,
-		AttributeDefinitions: []dynamodb.AttributeDefinitionT{
-			dynamodb.AttributeDefinitionT{UAID_LABEL, "S"},
-			dynamodb.AttributeDefinitionT{CHID_LABEL, "S"},
-			dynamodb.AttributeDefinitionT{MODD_LABEL, "N"},
+		AttributeDefinitions: []dynamodb.AttributeDefinition{
+			dynamodb.AttributeDefinition{UAID_LABEL, "S"},
+			dynamodb.AttributeDefinition{CHID_LABEL, "S"},
+			dynamodb.AttributeDefinition{MODD_LABEL, "N"},
 		},
-		KeySchema: []dynamodb.KeySchemaT{
-			dynamodb.KeySchemaT{UAID_LABEL, "HASH"},
-			dynamodb.KeySchemaT{CHID_LABEL, "RANGE"},
+		KeySchema: []dynamodb.KeySchema{
+			dynamodb.KeySchema{UAID_LABEL, "HASH"},
+			dynamodb.KeySchema{CHID_LABEL, "RANGE"},
 		},
-		GlobalSecondaryIndexes: []dynamodb.GlobalSecondaryIndexT{
-			dynamodb.GlobalSecondaryIndexT{
+		GlobalSecondaryIndexes: []dynamodb.GlobalSecondaryIndex{
+			dynamodb.GlobalSecondaryIndex{
 				IndexName: "uaid-modified-index",
-				KeySchema: []dynamodb.KeySchemaT{
-					dynamodb.KeySchemaT{UAID_LABEL, "HASH"},
-					dynamodb.KeySchemaT{MODD_LABEL, "RANGE"},
+				KeySchema: []dynamodb.KeySchema{
+					dynamodb.KeySchema{UAID_LABEL, "HASH"},
+					dynamodb.KeySchema{MODD_LABEL, "RANGE"},
 				},
-				Projection: dynamodb.ProjectionT{"ALL"},
-				ProvisionedThroughput: dynamodb.ProvisionedThroughputT{
+				Projection: dynamodb.Projection{ProjectionType: "ALL"},
+				ProvisionedThroughput: dynamodb.ProvisionedThroughput{
 					ReadCapacityUnits:  s.readProv,
 					WriteCapacityUnits: s.writeProv,
 				},
 			},
 		},
-		ProvisionedThroughput: dynamodb.ProvisionedThroughputT{
+		ProvisionedThroughput: dynamodb.ProvisionedThroughput{
 			ReadCapacityUnits:  s.readProv,
 			WriteCapacityUnits: s.writeProv,
 		},
 	}
 
-	pk, err := tableDesc.BuildPrimaryKey()
-	if err != nil {
-		s.logger.Panic(DB_LABEL, "Could not create primary key",
-			LogFields{"error": err.Error()})
-		return
-	}
-	s.table = s.server.NewTable(tableDesc.TableName, pk)
-	_, err = s.server.CreateTable(tableDesc)
+	_, err = s.table.Create()
 	if err != nil {
 		s.logger.Panic(DB_LABEL, "Could not create",
 			LogFields{"error": err.Error()})
@@ -208,7 +202,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	if s.server == nil {
 		s.server = &dynamodb.Server{auth, s.region}
 	}
-	tables, err := s.server.ListTables()
+	tables, _, err := dynamodb.ListTables(s.server, "", 100)
 	if err != nil {
 		s.logger.Panic("dynamodb", "Could not query dynamodb",
 			LogFields{"error": err.Error()})
@@ -220,7 +214,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	s.tablename = conf.TableName
 
 	// check if the table exists
-	if !ddb_containsTable(tables, conf.TableName) {
+	if !dynamodb.SetContains(tables, conf.TableName) {
 		if s.logger.ShouldLog(INFO) {
 			s.logger.Info("dynamodb", "creating dynamodb table...", nil)
 		}
@@ -230,9 +224,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 			return
 		}
 	}
-	s.pk = dynamodb.PrimaryKey{dynamodb.NewStringAttribute(UAID_LABEL, ""),
-		dynamodb.NewStringAttribute(CHID_LABEL, "")}
-	s.table = s.server.NewTable(conf.TableName, s.pk)
+	s.table = dynamodb.DescribeTable(s.server, conf.TableName)
 	return nil
 }
 
@@ -271,7 +263,7 @@ func (*DynamoDBStore) IDsToKey(uaid, chid string) (string, error) {
 // Implements Store.Status().
 func (s *DynamoDBStore) Status() (success bool, err error) {
 	success = false
-	tables, err := s.server.ListTables()
+	tables, _, err := dynamodb.ListTables(s.server, "", 100)
 	success = err == nil && ddb_containsTable(tables, s.tablename)
 	return true, nil
 }
@@ -279,9 +271,23 @@ func (s *DynamoDBStore) Status() (success bool, err error) {
 // Exists returns a Boolean indicating whether a device has previously
 // registered with the Simple Push server. Implements Store.Exists().
 func (s *DynamoDBStore) Exists(uaid string) bool {
-	res, err := s.table.CountQuery([]dynamodb.AttributeComparison{
-		*dynamodb.NewEqualStringAttributeComparison(UAID_LABEL, uaid),
-		*dynamodb.NewEqualStringAttributeComparison(CHID_LABEL, " "),
+	resp, err := s.table.Query(&dynamodb.ItemQuery{
+		Limit:          1,
+		ConsistentRead: true,
+		KeyConditions{
+			UAID_LABEL: &dynamodb.KeyCondition{
+				AttributeValueList: []dynamodb.Attribute(
+					dynamodb.Attribute{dynamodb.DDB_STRING: uaid},
+				),
+				ComparisonOperator: "EQ",
+			},
+			CHID_LABEL: &dynamodb.KeyCondition{
+				AttributeValueList: []dynamodb.Attribute(
+					dynamodb.Attribute{dynamodb.DDB_STRING: " "},
+				),
+				ComparisonOperator: "EQ",
+			},
+		},
 	})
 	if err != nil {
 		if s.logger.ShouldLog(ERROR) {
@@ -290,7 +296,7 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 		}
 		return false
 	}
-	return res > 0
+	return resp.Count > 0
 }
 
 // Register creates and stores a channel record for the given device ID and
@@ -298,24 +304,34 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 // Store.Register().
 func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 	// try to put the master record
-	now := ddb_getNow(0)
-	vers := strconv.FormatInt(version, 10)
-	success, err := s.table.PutItem(uaid, " ", []dynamodb.Attribute{
-		*dynamodb.NewNumericAttribute(MODD_LABEL, now),
+	now := dynamodb.Now(0)
+	_, err := s.table.PutItem(&dynamodb.ItemRequest{
+		Key: {
+			UAID_LABEL: &dynamodb.Attribute{"S": uaid},
+			CHID_LABEL: &dynamodb.Attribute{"S": " "},
+		},
+		TableName: s.tableName,
+		ExpressionAttributeValues: {
+			MODD_LABEL: &dynamodb.Attribute{"N", now},
+		},
 	})
 	if err != nil {
 		return
 	}
 	// now add the chid.
-	success, err = s.table.PutItem(uaid, chid, []dynamodb.Attribute{
-		*dynamodb.NewNumericAttribute(VERS_LABEL, vers),
-		*dynamodb.NewNumericAttribute(MODD_LABEL, now),
+	_, err = s.table.PutItem(&dynamodb.ItemRequest{
+		Key: {
+			UAID_LABEL: &dynamodb.Attribute{"S": uaid},
+			CHID_LABEL: &dynamodb.Attribute{"S": chid},
+		},
+		TableName: s.tableName,
+		ExpressionAttributeValues: {
+			MODD_LABEL: &dynamodb.Attribute{"N", now},
+			VERS_LABEL: &dynamodb.Attribute{"N", vers},
+		},
 	})
 	if err != nil {
 		return
-	}
-	if success != true {
-		err = ErrDynamoDBFailure
 	}
 	return
 }
@@ -325,27 +341,25 @@ func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 	now := ddb_getNow(0)
 	// Write or update the existing value.
-	// NOTE: ConditionalUpdateAttributes requires knowledge of the previous
-	// value (it only updates if the previous value matches)
-	// this is a problem for new fields or running statelessly.
-	// It does mean that there's a chance of a delayed packet decrementing
-	// a version or otherwise causing an issue.
-	// This can either be resolved by pre-fetching existing data and only
-	// updating if the version is greater, (thus doubling the dynamodb access
-	// rate or by just accepting that it's a possiblity and dealing with it
-	// later if it's a problem.
-	success, err := s.table.UpdateAttributes(
+
+	//TODO:: HERE
+
+	success, err := s.table.ModifyConditionally(
 		&dynamodb.Key{uaid, chid},
 		[]dynamodb.Attribute{
 			*dynamodb.NewNumericAttribute(VERS_LABEL,
 				strconv.FormatInt(version, 10)),
 			*dynamodb.NewNumericAttribute(MODD_LABEL, now),
 		},
+		"version "+dynamodb.COMPARISON_LESS_THAN+" "+
+			strconv.FormatInt(version, 10),
+		"PUT",
 	)
 	if err != nil {
 		return
 	}
-	if success != true {
+	fmt.Printf("Update reply :%+v\n", success)
+	if success == nil {
 		err = ErrDynamoDBFailure
 	}
 	return

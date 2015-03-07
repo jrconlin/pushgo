@@ -19,6 +19,8 @@ import (
 func NewEndpointHandler() (h *EndpointHandler) {
 	h = &EndpointHandler{mux: mux.NewRouter()}
 	h.mux.HandleFunc("/update/{key}", h.UpdateHandler)
+	//TODO BURN BEFORE DEPLOY
+	h.mux.HandleFunc("/test", h.Test)
 	return h
 }
 
@@ -198,6 +200,23 @@ func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, dat
 }
 
 // -- REST
+//TODO BUR BEFORE DEPLOY
+func (h *EndpointHandler) Test(resp http.ResponseWriter, req *http.Request) {
+	log.Printf("#####\n")
+	sv := req.FormValue("v")
+	if sv == "" {
+		return
+	}
+	v, _ := strconv.ParseInt(sv, 10, 64)
+	err := h.store.Update("test", "test", v)
+	if err == nil {
+		writeJSON(resp, 200, []byte(`"OK"`))
+		return
+	}
+	writeJSON(resp, 500, []byte(`"`+err.Error()+`"`))
+	return
+}
+
 func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	timer := timeNow()
