@@ -7,9 +7,12 @@
 package dynamodb
 
 import (
-	"encode/json"
+	"encoding/json"
 	"errors"
-	"strconv"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/goamz/goamz/aws"
@@ -31,7 +34,7 @@ type Server struct {
 	Region aws.Region
 }
 
-type Error struct {
+type DError struct {
 	StatusCode int
 	Status     string
 	Code       string
@@ -43,29 +46,29 @@ type AWSError struct {
 	Message string `json:"message"`
 }
 
-func (e *Error) Error() string {
+func (e DError) Error() string {
 	return e.Code + ": " + e.Message
 }
 
-func buildError(r *http.Response, jsonBody []byte) error {
+func buildError(r *http.Response, jsonBody []byte) (err error) {
 	log.Printf("!!!!!! Got Error! %s\n", jsonBody)
-	err := Error{
+	derr := DError{
 		StatusCode: r.StatusCode,
 		Status:     r.Status,
 	}
 
 	awsErr := &AWSError{}
-	err := json.Unmarshal(jsonBody, &awsErr)
+	err = json.Unmarshal(jsonBody, &awsErr)
 	if err != nil {
 		return err
 	}
-	err.Code = awsErr.Type
+	derr.Code = awsErr.Type
 	parts := strings.Split(awsErr.Type, "#")
 	if len(parts) == 2 {
-		err.Code = parts[1]
+		derr.Code = parts[1]
 	}
-	err.Message = awsErr.Message
-	return err
+	derr.Message = awsErr.Message
+	return error(derr)
 }
 
 func (s *Server) Query(target string, query []byte) ([]byte, error) {
@@ -76,7 +79,7 @@ func (s *Server) Query(target string, query []byte) ([]byte, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
-	req.Header.Set("X-Amz-Date", time.Now().UTC().FOrmat(aws.ISO8601BasicFormat))
+	req.Header.Set("X-Amz-Date", time.Now().UTC().Format(aws.ISO8601BasicFormat))
 	req.Header.Set("X-Amz-Target", DYNAMO_PREFIX+"."+target)
 
 	token := s.Auth.Token()
@@ -86,7 +89,7 @@ func (s *Server) Query(target string, query []byte) ([]byte, error) {
 
 	signer := aws.NewV4Signer(s.Auth, "dynamodb", s.Region)
 	signer.Sign(req)
-	resp, err := http.DefaultClient.Do(hreq)
+	resp, err := http.DefaultClient.Do(req)
 
 	if err != nil {
 		log.Printf("AWS Call Failure, %s", err.Error())
@@ -123,7 +126,11 @@ const (
 type Attribute map[string]interface{}
 
 func (r *Attribute) Type() string {
-	return r.Keys()[0]
+	for k := range *r {
+		// horrible hack to get the key value for this single item map.
+		return k
+	}
+	return ""
 }
 
 // It's possible to create functions that use reflect to autoconvert
@@ -248,7 +255,7 @@ type Item struct {
 	TableName                string
 }
 
-type BatchItemReply struct {
+type BatchGetReply struct {
 	ConsumedCapacity ConsumedCapacity
 	Item             map[string]Attribute
 }
@@ -269,7 +276,7 @@ type BatchPut struct {
 }
 
 type BatchWriteRequestItem struct {
-	DeleteRequest BatchKey
+	DeleteRequest BatchDelete
 	PutRequest    BatchPut
 }
 
@@ -291,7 +298,8 @@ type BatchWriteReply struct {
 }
 
 type ItemRequest struct {
-	Key                         map[string]Attribute
+	Key                         map[string]Attribute `json:omitempty`
+	Item                        map[string]Attribute `json:omitempty`
 	TableName                   string
 	ExpressionAttributeNames    map[string]string
 	ExpressionAttributeValues   map[string]Attribute
@@ -315,7 +323,7 @@ type KeyCondition struct {
 type ItemQuery struct {
 	KeyConditions             map[string]KeyCondition
 	ConditionalOperator       string
-	ConsistenRead             bool                 `json:omitempty`
+	ConsistentRead            bool                 `json:omitempty`
 	ExclusiveStartKey         map[string]Attribute `json:omitempty`
 	ExpressionAttributeNames  map[string]string    `json:omitempty`
 	ExpressionAttributeValues map[string]Attribute `json:omitempty`
@@ -338,10 +346,14 @@ type QueryResponse struct {
 }
 
 type ItemUpdate struct {
-	Key                 map[string]Attribute
-	TableName           string
-	ConditionExpression string
-	ConditionalOperator string
+	Key                       map[string]Attribute
+	TableName                 string
+	ConditionExpression       string
+	ConditionalOperator       string
+	ExpressionAttributeNames  map[string]string
+	ExpressionAttributeValues map[string]Attribute
+	UpdateExpression          string
+	ReturnValues              string
 }
 
 // Generic interfaces (used by testing)
@@ -358,6 +370,7 @@ type DynamoTable interface {
 	Query(*ItemQuery) (*QueryResponse, error)
 	Scan(*ItemQuery) (*QueryResponse, error)
 	UpdateItem(*ItemUpdate) (*ItemReply, error)
+	WaitUntilStatus(string, time.Duration, time.Duration) (err error)
 }
 
 type DynamoServer interface {
@@ -365,11 +378,14 @@ type DynamoServer interface {
 }
 
 // Class method
-func DescribeTable(server *Server, tableName string) (table *Table, err error) {
-	req := json.Marshal(struct{ TableName string }{tableName})
+func DescribeTable(server DynamoServer, tableName string) (table *Table, err error) {
+	req, err := json.Marshal(struct{ TableName string }{tableName})
+	if err != nil {
+		return
+	}
 	target := "DescribeTable"
 	// send query,
-	resp, err := serverQuery(target, req)
+	resp, err := server.Query(target, req)
 	if err != nil {
 		return
 	}
@@ -380,7 +396,10 @@ func DescribeTable(server *Server, tableName string) (table *Table, err error) {
 }
 
 func DeleteTable(server *Server, tableName string) (err error) {
-	req := json.Marshal(struct{ TableName string }{tableName})
+	req, err := json.Marshal(struct{ TableName string }{tableName})
+	if err != nil {
+		return nil
+	}
 	target := "DeleteTable"
 	// send query
 	_, err = server.Query(target, req)
@@ -393,7 +412,6 @@ type TableList struct {
 }
 
 func ListTables(server Server, fromTable string, limit int64) (tables []string, lastEvaluatedTableName string, err error) {
-	tableList := &tableList
 	req, err := json.Marshal(struct {
 		ExclusiveStartTableName string `json:omitempty`
 		Limit                   int64
@@ -422,7 +440,7 @@ func (t *Table) modTable(target string) (table *Table, err error) {
 		return t, err
 	}
 	// send to server
-	resp, err = t.Server.Query(target, jsquery)
+	resp, err := t.Server.Query(target, jsquery)
 	if err == nil {
 		table = &Table{}
 		err = json.Unmarshal(resp, table)
@@ -439,6 +457,55 @@ func (t *Table) Create() (table *Table, err error) {
 
 func (t *Table) Update() (table *Table, err error) {
 	return t.modTable("UpdateTable")
+}
+
+func (t *Table) WaitUntilStatus(status string, idle, timeoutVal time.Duration) (err error) {
+	if idle == 0 {
+		idle = 5 * time.Second
+	}
+	if timeoutVal == 0 {
+		timeoutVal = 30 * time.Second
+	}
+
+	errc := make(chan error)
+	done := make(chan bool)
+	timeout := time.After(timeoutVal)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovering.. %s", r)
+			return
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				desc, err := DescribeTable(t.Server, t.TableName)
+				if err != nil {
+					log.Printf("AWS Error %s", err)
+					errc <- err
+					return
+				}
+				if desc.TableStatus == status {
+					done <- true
+					return
+				}
+				time.Sleep(idle)
+			}
+		}
+	}()
+	select {
+	case err = <-errc:
+	case <-done:
+		err = nil
+	case <-timeout:
+		err = ErrDynamoDBTimeout
+		close(done)
+	}
+	return
 }
 
 // === Items
@@ -469,7 +536,7 @@ func (t *Table) GetItem(query *ItemRequest) (reply *ItemReply, err error) {
 }
 
 func (t *Table) PutItem(query *ItemRequest) (reply *ItemReply, err error) {
-	return t.ItemAction("PutItem", query)
+	return t.itemAction("PutItem", query)
 }
 
 func (t *Table) query(target string, query *ItemQuery) (reply *QueryResponse, err error) {
@@ -480,7 +547,7 @@ func (t *Table) query(target string, query *ItemQuery) (reply *QueryResponse, er
 	if err != nil {
 		return
 	}
-	resp, err = t.Server.Query("Query", req)
+	resp, err := t.Server.Query("Query", req)
 	if err != nil {
 		return
 	}
@@ -505,7 +572,7 @@ func (t *Table) UpdateItem(query *ItemUpdate) (reply *ItemReply, err error) {
 	if err != nil {
 		return
 	}
-	resp, err = t.Server.Query("UpdateItem", req)
+	resp, err := t.Server.Query("UpdateItem", req)
 	if err != nil {
 		return
 	}
@@ -515,18 +582,18 @@ func (t *Table) UpdateItem(query *ItemUpdate) (reply *ItemReply, err error) {
 }
 
 // === Batch funcs
-func BatchGetItem(server *Server, query *BatchGetQuery) (response []BatchItemReply, err error) {
+func BatchGetItem(server *Server, query *BatchGetQuery) (reply []BatchItemReply, err error) {
 	//TODO: verify
 	req, err := json.Marshal(query)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// send to server
 	resp, err := server.Query("BatchGetItem", req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	err = json.Unmarshal(resp, reply)
+	err = json.Unmarshal(resp, &reply)
 	return
 }
 
@@ -541,7 +608,13 @@ func BatchWriteItem(server *Server, query *BatchWriteQuery) (reply *BatchWriteRe
 	if err != nil {
 		return
 	}
+	reply = &BatchWriteReply{}
 	err = json.Unmarshal(resp, reply)
+	return
+}
+
+func NewAttribute(atype string, attr interface{}) (at Attribute) {
+	at[atype] = attr
 	return
 }
 
@@ -551,16 +624,16 @@ func SetContains(set []string, item string) bool {
 		return false
 	}
 	for _, t := range set {
-		if t == table {
+		if t == item {
 			return true
 		}
 	}
 	return false
 }
 
-func Now(t int64) string {
+func Now(t int64) int64 {
 	if t == 0 {
 		t = time.Now().UTC().Unix()
 	}
-	return strconv.FormatInt(t, 10)
+	return t
 }
