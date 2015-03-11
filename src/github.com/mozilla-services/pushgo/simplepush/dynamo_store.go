@@ -5,9 +5,9 @@
 package simplepush
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +21,8 @@ const (
 	CHID_LABEL = "chid"
 	PING_LABEL = "proprietary_ping"
 	VERS_LABEL = "version"
-	MODD_LABEL = "modified"
+	MODF_LABEL = "modified"
+	CREA_LABEL = "created"
 )
 
 var (
@@ -64,7 +65,7 @@ type DynamoDBStore struct {
 	statusIdle    time.Duration
 }
 
-func (s *DynamoDBStore) createTable() (err error) {
+func (s *DynamoDBStore) createTable(server dynamodb.DynamoServer) (err error) {
 	/* There are three primary fields for each row,
 	   uaid = UserAgentID, all registered items must have one of these
 	   chid = Either the ChannelID or " ". In this case " " fills the
@@ -78,7 +79,7 @@ func (s *DynamoDBStore) createTable() (err error) {
 		AttributeDefinitions: []dynamodb.AttributeDefinition{
 			dynamodb.AttributeDefinition{UAID_LABEL, "S"},
 			dynamodb.AttributeDefinition{CHID_LABEL, "S"},
-			dynamodb.AttributeDefinition{MODD_LABEL, "N"},
+			dynamodb.AttributeDefinition{MODF_LABEL, "N"},
 		},
 		KeySchema: []dynamodb.KeySchema{
 			dynamodb.KeySchema{UAID_LABEL, "HASH"},
@@ -89,7 +90,7 @@ func (s *DynamoDBStore) createTable() (err error) {
 				IndexName: "uaid-modified-index",
 				KeySchema: []dynamodb.KeySchema{
 					dynamodb.KeySchema{UAID_LABEL, "HASH"},
-					dynamodb.KeySchema{MODD_LABEL, "RANGE"},
+					dynamodb.KeySchema{MODF_LABEL, "RANGE"},
 				},
 				Projection: dynamodb.Projection{
 					NonKeyAttributes: []string{},
@@ -105,9 +106,10 @@ func (s *DynamoDBStore) createTable() (err error) {
 			ReadCapacityUnits:  s.readProv,
 			WriteCapacityUnits: s.writeProv,
 		},
+		Server: server,
 	}
 
-	s.table, err = s.table.Create()
+	_, err = s.table.Create()
 	if err != nil {
 		s.logger.Panic(DB_LABEL, "Could not create",
 			LogFields{"error": err.Error()})
@@ -176,11 +178,10 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 		s.logger.Panic("dynamodb", "decribe table",
 			LogFields{"error": err.Error()})
 		// create Table here
-		return
 		if s.logger.ShouldLog(INFO) {
 			s.logger.Info("dynamodb", "creating dynamodb table...", nil)
 		}
-		if err = s.createTable(); err != nil {
+		if err = s.createTable(s.server); err != nil {
 			s.logger.Panic("dynamodb", "Could not create table",
 				LogFields{"error": err.Error()})
 			return
@@ -261,29 +262,31 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 // Store.Register().
 func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 	// try to put the master record
-	now := dynamodb.Now
-	_, err = s.table.PutItem(&dynamodb.ItemRequest{
-		Item: map[string]dynamodb.Attribute{
+	now := dynamodb.Now(0)
+	s.table.UpdateItem(&dynamodb.ItemUpdate{
+		Key: map[string]dynamodb.Attribute{
 			UAID_LABEL: dynamodb.NewAttribute("S", uaid),
 			CHID_LABEL: dynamodb.NewAttribute("S", " "),
-			MODD_LABEL: dynamodb.NewAttribute("N", now),
 		},
-		ConditionExpression: UAID_LABEL + " <> :u and " + CHID_LABEL + " <> :c",
+		ExpressionAttributeNames: map[string]string{
+			"#c": CREA_LABEL,
+			"#m": MODF_LABEL,
+		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
-			":u": dynamodb.NewAttribute("S", uaid),
-			":c": dynamodb.NewAttribute("S", " "),
+			":c": dynamodb.NewAttribute("N", now),
+			":m": dynamodb.NewAttribute("N", now),
 		},
+		ConditionExpression: "attribute_not_exists(#c)",
+		UpdateExpression:    "SET #c=:c, #m=:m",
 	})
-	if err != nil {
-		return
-	}
 	// now add the chid.
 	_, err = s.table.PutItem(&dynamodb.ItemRequest{
 		Item: map[string]dynamodb.Attribute{
 			UAID_LABEL: dynamodb.NewAttribute("S", uaid),
 			CHID_LABEL: dynamodb.NewAttribute("S", chid),
 			VERS_LABEL: dynamodb.NewAttribute("N", version),
-			MODD_LABEL: dynamodb.NewAttribute("N", now),
+			MODF_LABEL: dynamodb.NewAttribute("N", now),
+			CREA_LABEL: dynamodb.NewAttribute("N", now),
 		},
 	})
 	if err != nil {
@@ -303,19 +306,21 @@ func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 			CHID_LABEL: dynamodb.NewAttribute("S", chid),
 		},
 		ExpressionAttributeNames: map[string]string{
-			"#v": VERS_LABEL,
+			"#ver": VERS_LABEL,
+			"#mod": MODF_LABEL,
 		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
-			":v": dynamodb.NewAttribute("N", version),
+			":ver": dynamodb.NewAttribute("N", version),
+			":mod": dynamodb.NewAttribute("N", dynamodb.Now(0)),
 		},
-		ConditionExpression: "#v < :v",
-		UpdateExpression:    "set #v = :v",
+		ConditionExpression: "#ver < :ver",
+		UpdateExpression:    "SET #ver=:ver, #mod=:mod",
 	})
 
 	if err != nil {
 		return
 	}
-	fmt.Printf("Update reply :%+v\n", success)
+	fmt.Printf("#### Update reply :%+v\n", success)
 	return
 }
 
@@ -355,10 +360,10 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 				"GT"},
 		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
-			":mod": dynamodb.NewAttribute("N", MODD_LABEL),
+			":mod": dynamodb.NewAttribute("S", MODF_LABEL),
+			":now": dynamodb.NewAttribute("N", time.Now().Sub(since).Seconds()),
 		},
-		FilterExpression: ":mod > " +
-			strconv.FormatInt(int64((time.Now().Sub(since)).Seconds()), 10),
+		FilterExpression: ":mod > :now",
 	}
 	results, err := s.table.Query(query)
 	if err != nil {
@@ -396,84 +401,7 @@ func (s *DynamoDBStore) DropAll(uaid string) (err error) {
 		},
 	}
 	_, err = s.table.Query(query)
-	if err != nil {
-		return
-	}
-	/*
-		// Need to reflect to prevent testing from causing panics galore.
-		// Damn good thing this method is not on the critical path.
-		testing := reflect.TypeOf(s.table).String() == "*simplepush.testDynamoTable"
-		items := make(map[string][][]dynamodb.Attribute)
-		items["Delete"] = make([][]dynamodb.Attribute, len(result))
-		for n, record := range result {
-			//Use partial names for item labels (e.g. Put or Delete instead of
-			// "PutRequest" or "DeleteRequest")
-			items["Delete"][n] = []dynamodb.Attribute{
-				dynamodb.Attribute{
-					Type:  dynamodb.TYPE_STRING,
-					Name:  UAID_LABEL,
-					Value: record[UAID_LABEL].Value,
-				},
-				dynamodb.Attribute{
-					Type:  dynamodb.TYPE_STRING,
-					Name:  CHID_LABEL,
-					Value: record[CHID_LABEL].Value,
-				}}
-		}
-		defer func() {
-			// unravelling this is.. not simple or well explained.
-			// added bonus that there's no clear example of how to do it.
-			// So this will probably puke or throw exceptions like an angry
-			// monkey.
-			if r := recover(); r != nil {
-				if err, ok := r.(error); ok {
-					if s.logger.ShouldLog(ERROR) {
-						s.logger.Error("dynamodb", "Unhandled exception during dropall",
-							LogFields{"error": err.Error()})
-					}
-				}
-			}
-		}()
-		var i int
-		for i = 0; i < 5; i++ {
-			//AMZ states that it's possible for a BatchWrite to partially fail.
-			// In that case, you're required to retry the "missed" records after
-			// some period, ideally, with an exponential timeout
-			// I'm also arbitrarily giving up after 5 retries to prevent endless
-			// loops if crap has really gone to hell.
-			batch := s.table.BatchWriteItems(items)
-
-			missed := make(map[string]interface{})
-			if !testing {
-				missed, err = batch.Execute()
-			}
-			if err != nil {
-				if s.logger.ShouldLog(ERROR) {
-					s.logger.Error("dynamodb", "Could not complete DropAll",
-						LogFields{"error": err.Error()})
-				}
-				return err
-			}
-			if missActions, ok := missed["DeleteRequest"]; ok {
-
-				// This may throw an index errorfor various reasons.
-				items = missActions.(dynamodb.BatchWriteItem).ItemActions[s.table.(*dynamodb.Table)]
-				if len(items) > 0 {
-					// TODO: replace this with a proper exponential backoff.
-					time.Sleep(time.Duration(rand.Intn(4)+1) * time.Second)
-					continue
-				}
-			}
-			break
-		}
-		if i == 4 {
-			if s.logger.ShouldLog(WARNING) {
-				s.logger.Warn("dynamodb", "Could not drop all records for uaid",
-					LogFields{"uaid": uaid})
-			}
-		}
-	*/
-	return nil
+	return
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
@@ -494,7 +422,7 @@ func (s *DynamoDBStore) FetchPing(uaid string) (pingData []byte, err error) {
 	}
 	if result.Count > 0 {
 		if pp, ok := result.Items[0][PING_LABEL]; ok {
-			pingData = pp.([]byte)
+			pingData, err = base64.StdEncoding.DecodeString(pp.(map[string]interface{})["B"].(string))
 		}
 	}
 	return
@@ -503,16 +431,21 @@ func (s *DynamoDBStore) FetchPing(uaid string) (pingData []byte, err error) {
 // PutPing stores the proprietary ping info blob for the given device ID in
 // storage. Implements Store.PutPing().
 func (s *DynamoDBStore) PutPing(uaid string, pingData []byte) (err error) {
-	// s.table.
 	_, err = s.table.UpdateItem(&dynamodb.ItemUpdate{
 		Key: map[string]dynamodb.Attribute{
 			UAID_LABEL: dynamodb.NewAttribute("S", uaid),
 			CHID_LABEL: dynamodb.NewAttribute("S", " "),
 		},
+		ExpressionAttributeNames: map[string]string{
+			"#ping": PING_LABEL,
+			"#modf": MODF_LABEL,
+		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
 			":ping": dynamodb.NewAttribute("B", pingData),
+			":modf": dynamodb.NewAttribute("N", dynamodb.Now(0)),
 		},
-		UpdateExpression: "set " + PING_LABEL + " = :ping",
+		UpdateExpression: "SET #ping=:ping, #modf=:modf",
+		ReturnValues:     "NONE",
 	})
 	return
 }

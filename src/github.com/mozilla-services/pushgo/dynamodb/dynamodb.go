@@ -7,11 +7,13 @@
 package dynamodb
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +53,6 @@ func (e DError) Error() string {
 }
 
 func buildError(r *http.Response, jsonBody []byte) (err error) {
-	log.Printf("!!!!!! Got Error! %s\n", jsonBody)
 	derr := DError{
 		StatusCode: r.StatusCode,
 		Status:     r.Status,
@@ -73,6 +74,7 @@ func buildError(r *http.Response, jsonBody []byte) (err error) {
 
 func (s *Server) Query(target string, query []byte) ([]byte, error) {
 	data := strings.NewReader(string(query))
+
 	req, err := http.NewRequest("POST", s.Region.DynamoDBEndpoint+"/", data)
 	if err != nil {
 		return nil, err
@@ -92,7 +94,6 @@ func (s *Server) Query(target string, query []byte) ([]byte, error) {
 	resp, err := http.DefaultClient.Do(req)
 
 	if err != nil {
-		log.Printf("AWS Call Failure, %s", err.Error())
 		return nil, err
 	}
 
@@ -100,7 +101,6 @@ func (s *Server) Query(target string, query []byte) ([]byte, error) {
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Could not read response body %s", err.Error())
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
@@ -194,8 +194,8 @@ type KeySchema struct {
 }
 
 type Projection struct {
-	NonKeyAttributes []string
-	ProjectionType   string
+	NonKeyAttributes []string `json:",omitempty"`
+	ProjectionType   string   `json:",omitempty"`
 }
 
 type ProvisionedThroughput struct {
@@ -206,7 +206,7 @@ type ProvisionedThroughput struct {
 type SecondaryIndex struct {
 	IndexName             string
 	KeySchema             []KeySchema
-	Projection            Projection
+	Projection            Projection `json:",omitempty"`
 	ProvisionedThroughput ProvisionedThroughput
 }
 
@@ -231,28 +231,28 @@ type SecondaryUpdates struct {
 }
 
 type Table struct {
-	Server                 DynamoServer `json:-`
+	Server                 DynamoServer `json:"-"`
 	AttributeDefinitions   []AttributeDefinition
-	CreationDateTime       int64 `json:omitempty`
-	GlobalSecondaryIndexes []SecondaryIndex
+	CreationDateTime       float64          `json:",omitempty"` //expressed as exponential
+	GlobalSecondaryIndexes []SecondaryIndex `json:",omitempty"`
 	// Only used for TableUpdates
-	GlobalSecondaryIndexUpdates []SecondaryUpdates `json:omitempty`
-	ItemCount                   int64              `json:omitempty`
-	KeySchema                   []KeySchema
-	LocalSecondaryIndexes       []SecondaryIndex
-	ProvisionedThroughput       ProvisionedThroughput
+	GlobalSecondaryIndexUpdates []SecondaryUpdates    `json:",omitempty"`
+	ItemCount                   int64                 `json:",omitempty"`
+	KeySchema                   []KeySchema           `json:",omitempty"`
+	LocalSecondaryIndexes       []SecondaryIndex      `json:",omitempty"`
+	ProvisionedThroughput       ProvisionedThroughput `json:",omitempty"`
 	TableName                   string
-	TableSizeBytes              int64  `json:omitempty`
-	TableStatus                 string `json:omitempty`
+	TableSizeBytes              int64  `json:",omitempty"`
+	TableStatus                 string `json:",omitempty"`
 }
 
 type Item struct {
-	ConsistentRead           bool
-	ExpressionAttributeNames map[string]string
-	Key                      map[string]Attribute
-	ProjectionExpression     string
-	ReturnConsumedCapacity   string
-	TableName                string
+	ConsistentRead           bool                 `json:",omitempty"`
+	ExpressionAttributeNames map[string]string    `json:",omitempty"`
+	Key                      map[string]Attribute `json:",omitempty"`
+	ProjectionExpression     string               `json:",omitempty"`
+	ReturnConsumedCapacity   string               `json:",omitempty"`
+	TableName                string               `json:",omitempty"`
 }
 
 type BatchGetReply struct {
@@ -281,38 +281,38 @@ type BatchWriteRequestItem struct {
 }
 
 type BatchWriteQuery struct {
-	RequestItems                map[string]BatchWriteRequestItem
-	ReturnConsumedCapacity      string
-	ReturnItemCollectionMetrics string
+	RequestItems                map[string]BatchWriteRequestItem `json:",omitempty"`
+	ReturnConsumedCapacity      string                           `json:",omitempty"`
+	ReturnItemCollectionMetrics string                           `json:",omitempty"`
 }
 
 type ItemCollectionMetrics struct {
-	ItemCollectionKey   Attribute
-	SizeEstimateRangeGB int64
+	ItemCollectionKey   Attribute `json:",omitempty"`
+	SizeEstimateRangeGB int64     `json:",omitempty"`
 }
 
 type BatchWriteReply struct {
-	ConsumedCapacity      ConsumedCapacity
-	ItemCollectionMetrics map[string][]ItemCollectionMetrics
-	UnprocessedItems      map[string][]BatchWriteRequestItem
+	ConsumedCapacity      ConsumedCapacity                   `json:",omitempty"`
+	ItemCollectionMetrics map[string][]ItemCollectionMetrics `json:",omitempty"`
+	UnprocessedItems      map[string][]BatchWriteRequestItem `json:",omitempty"`
 }
 
 type ItemRequest struct {
-	Key                         map[string]Attribute `json:omitempty`
-	Item                        map[string]Attribute `json:omitempty`
+	Key                         map[string]Attribute `json:",omitempty"`
+	Item                        map[string]Attribute `json:",omitempty"`
 	TableName                   string
-	ExpressionAttributeNames    map[string]string
-	ExpressionAttributeValues   map[string]Attribute
-	ReturnConsumedCapacity      string
-	ReturnItemCollectionMetrics string
-	ReturnValues                string
-	ConditionExpression         string
+	ExpressionAttributeNames    map[string]string    `json:",omitempty"`
+	ExpressionAttributeValues   map[string]Attribute `json:",omitempty"`
+	ReturnConsumedCapacity      string               `json:",omitempty"`
+	ReturnItemCollectionMetrics string               `json:",omitempty"`
+	ReturnValues                string               `json:",omitempty"`
+	ConditionExpression         string               `json:",omitempty"`
 }
 
 type ItemReply struct {
-	Attributes            map[string]Attribute
-	ConsumedCapacity      ConsumedCapacity
-	ItemCollectionMetrics ItemCollectionMetrics
+	Attributes            map[string]Attribute  `json:",omitempty"`
+	ConsumedCapacity      ConsumedCapacity      `json:",omitempty"`
+	ItemCollectionMetrics ItemCollectionMetrics `json:",omitempty"`
 }
 
 type KeyCondition struct {
@@ -321,19 +321,19 @@ type KeyCondition struct {
 }
 
 type ItemQuery struct {
-	KeyConditions             map[string]KeyCondition
-	ConditionalOperator       string
-	ConsistentRead            bool                 `json:omitempty`
-	ExclusiveStartKey         map[string]Attribute `json:omitempty`
-	ExpressionAttributeNames  map[string]string    `json:omitempty`
-	ExpressionAttributeValues map[string]Attribute `json:omitempty`
-	FilterExpression          string               `json:omitempty`
-	IndexName                 string               `json:omitempty`
-	Limit                     int64                `json:omitempty`
-	ProjectionExpression      string               `json:omitempty`
-	ReturnConsumedCapacity    string               `json:omitempty`
-	ScanIndexForward          bool                 `json:omitempty`
-	Select                    string               `json:omitempty`
+	KeyConditions             map[string]KeyCondition `json:",omitempty"`
+	ConditionalOperator       string                  `json:",omitempty"`
+	ConsistentRead            bool                    `json:",omitempty"`
+	ExclusiveStartKey         map[string]Attribute    `json:",omitempty"`
+	ExpressionAttributeNames  map[string]string       `json:",omitempty"`
+	ExpressionAttributeValues map[string]Attribute    `json:",omitempty"`
+	FilterExpression          string                  `json:",omitempty"`
+	IndexName                 string                  `json:",omitempty"`
+	Limit                     int64                   `json:",omitempty"`
+	ProjectionExpression      string                  `json:",omitempty"`
+	ReturnConsumedCapacity    string                  `json:",omitempty"`
+	ScanIndexForward          bool                    `json:",omitempty"`
+	Select                    string                  `json:",omitempty"`
 	TableName                 string
 }
 
@@ -346,14 +346,15 @@ type QueryResponse struct {
 }
 
 type ItemUpdate struct {
-	Key                       map[string]Attribute
-	TableName                 string
-	ConditionExpression       string
-	ConditionalOperator       string
-	ExpressionAttributeNames  map[string]string
-	ExpressionAttributeValues map[string]Attribute
-	UpdateExpression          string
-	ReturnValues              string
+	Key                 map[string]Attribute
+	TableName           string
+	ConditionExpression string `json:",omitempty"`
+	// The following isn't omitted, even if empty
+	ConditionalOperator       string               `json:",omitempty"`
+	ExpressionAttributeNames  map[string]string    `json:",omitempty"`
+	ExpressionAttributeValues map[string]Attribute `json:",omitempty"`
+	UpdateExpression          string               `json:",omitempty"`
+	ReturnValues              string               `json:",omitempty"`
 }
 
 // Generic interfaces (used by testing)
@@ -378,7 +379,11 @@ type DynamoServer interface {
 }
 
 // Class method
-func DescribeTable(server DynamoServer, tableName string) (table *Table, err error) {
+func DescribeTable(server DynamoServer, tableName string) (tableAddr *Table, err error) {
+
+	if server == nil {
+		return nil, ErrDynamoDBNoServer
+	}
 	req, err := json.Marshal(struct{ TableName string }{tableName})
 	if err != nil {
 		return
@@ -390,9 +395,14 @@ func DescribeTable(server DynamoServer, tableName string) (table *Table, err err
 		return
 	}
 	// unmarshal to *table
-	table = &Table{}
-	err = json.Unmarshal(resp, table)
-	return
+	rep := make(map[string]Table)
+	err = json.Unmarshal(resp, &rep)
+	if err != nil {
+		return nil, err
+	}
+	table := rep["Table"]
+	table.Server = server
+	return &table, err
 }
 
 func DeleteTable(server *Server, tableName string) (err error) {
@@ -413,7 +423,7 @@ type TableList struct {
 
 func ListTables(server Server, fromTable string, limit int64) (tables []string, lastEvaluatedTableName string, err error) {
 	req, err := json.Marshal(struct {
-		ExclusiveStartTableName string `json:omitempty`
+		ExclusiveStartTableName string `json:",omitempty"`
 		Limit                   int64
 	}{fromTable, limit})
 	target := "ListTables"
@@ -444,6 +454,7 @@ func (t *Table) modTable(target string) (table *Table, err error) {
 	if err == nil {
 		table = &Table{}
 		err = json.Unmarshal(resp, table)
+		table.Server = t.Server
 	}
 	return
 }
@@ -472,20 +483,18 @@ func (t *Table) WaitUntilStatus(status string, idle, timeoutVal time.Duration) (
 	timeout := time.After(timeoutVal)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Recovering.. %s", r)
 			return
 		}
 	}()
 
-	go func() {
+	go func(server DynamoServer, name string) {
 		for {
 			select {
 			case <-done:
 				return
 			default:
-				desc, err := DescribeTable(t.Server, t.TableName)
+				desc, err := DescribeTable(server, name)
 				if err != nil {
-					log.Printf("AWS Error %s", err)
 					errc <- err
 					return
 				}
@@ -496,7 +505,7 @@ func (t *Table) WaitUntilStatus(status string, idle, timeoutVal time.Duration) (
 				time.Sleep(idle)
 			}
 		}
-	}()
+	}(t.Server, t.TableName)
 	select {
 	case err = <-errc:
 	case <-done:
@@ -568,6 +577,9 @@ func (t *Table) UpdateItem(query *ItemUpdate) (reply *ItemReply, err error) {
 	if query.TableName == "" {
 		query.TableName = t.TableName
 	}
+	if query.ReturnValues == "" {
+		query.ReturnValues = "NONE"
+	}
 	req, err := json.Marshal(query)
 	if err != nil {
 		return
@@ -614,7 +626,39 @@ func BatchWriteItem(server *Server, query *BatchWriteQuery) (reply *BatchWriteRe
 }
 
 func NewAttribute(atype string, attr interface{}) (at Attribute) {
-	at[atype] = attr
+	if atype == "" {
+		return
+	}
+	if attr == nil {
+		return
+	}
+	var sattr string
+	at = make(Attribute)
+
+	// TODO: Handle sets & maps
+	// Or use encoding gob?
+	switch atype {
+	case DDB_STRING:
+		sattr = attr.(string)
+	case DDB_NUMBER:
+		switch attr.(type) {
+		case int, int8, int32, int64:
+			sattr = strconv.FormatInt(attr.(int64), 10)
+		case uint, uint8, uint32, uint64:
+			sattr = strconv.FormatUint(attr.(uint64), 10)
+		case float32, float64:
+			sattr = strconv.FormatFloat(attr.(float64), 'e', 16, 64)
+		}
+	case DDB_BOOLEAN:
+		sattr = strconv.FormatBool(attr.(bool))
+	case DDB_BLOB:
+		sattr = base64.StdEncoding.EncodeToString(attr.([]byte))
+	default:
+		atype = DDB_STRING
+		sattr = fmt.Sprintf("%+v", attr)
+	}
+
+	at[atype] = sattr
 	return
 }
 

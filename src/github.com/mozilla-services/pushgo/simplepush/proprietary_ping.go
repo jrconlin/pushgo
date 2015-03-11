@@ -143,11 +143,13 @@ func (r *UDPPing) CanBypassWebsocket() bool {
 
 // Send the version info to the Proprietary ping URL provided
 // by the carrier.
-func (r *UDPPing) Send(string, int64, string) (bool, error) {
+func (r *UDPPing) Send(uaid string, ver int64, data string) (bool, error) {
 	// Obviously, this needs to be filled out with the appropriate
 	// setup and calls to communicate to the remote server.
 	// Since UDP is not actually defined, we're returning this
 	// error.
+	pdata, err := r.app.Store().FetchPing(uaid)
+	fmt.Printf(" #### Ping Data: %s, err: %s", pdata, err)
 	return false, UnsupportedProtocolErr
 }
 
