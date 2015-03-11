@@ -200,15 +200,9 @@ func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, dat
 }
 
 // -- REST
-//TODO BUR BEFORE DEPLOY
+//TODO BURN BEFORE DEPLOY
 func (h *EndpointHandler) Test(resp http.ResponseWriter, req *http.Request) {
-	log.Printf("#####\n")
-	sv := req.FormValue("v")
-	if sv == "" {
-		return
-	}
-	v, _ := strconv.ParseInt(sv, 10, 64)
-	err := h.store.Update("test", "test", v)
+	err := h.store.DropAll("test")
 	if err == nil {
 		writeJSON(resp, 200, []byte(`"OK"`))
 		return

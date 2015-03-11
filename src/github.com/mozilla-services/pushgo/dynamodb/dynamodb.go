@@ -31,6 +31,26 @@ var (
 	ErrDynamoDBNoServer      = errors.New("No Server defined for table object")
 )
 
+// Generic interfaces (used by testing)
+type DynamoTable interface {
+	// Create table from description
+	Create() (DynamoTable, error)
+	// return description from name
+	Update() (DynamoTable, error)
+	GetTableName() string
+	DeleteItem(*ItemRequest) (*ItemReply, error)
+	GetItem(*ItemRequest) (*ItemReply, error)
+	PutItem(*ItemRequest) (*ItemReply, error)
+	Query(*ItemQuery) (*QueryResponse, error)
+	Scan(*ItemQuery) (*QueryResponse, error)
+	UpdateItem(*ItemUpdate) (*ItemReply, error)
+	WaitUntilStatus(string, time.Duration, time.Duration) (err error)
+}
+
+type DynamoServer interface {
+	Query(string, []byte) ([]byte, error)
+}
+
 type Server struct {
 	Auth   aws.Auth
 	Region aws.Region
@@ -73,6 +93,7 @@ func buildError(r *http.Response, jsonBody []byte) (err error) {
 }
 
 func (s *Server) Query(target string, query []byte) ([]byte, error) {
+
 	data := strings.NewReader(string(query))
 
 	req, err := http.NewRequest("POST", s.Region.DynamoDBEndpoint+"/", data)
@@ -268,22 +289,24 @@ type BatchGetQuery struct {
 //batchGet returns BatchItemReply
 
 type BatchDelete struct {
-	Key Attribute
+	Key map[string]Attribute `json:",omitempty"`
 }
 
 type BatchPut struct {
-	Item Attribute
+	Item map[string]Attribute `json:",omitempty"`
 }
 
+//These are pointers because json.Marshal appears to be ignoring the
+// meta info
 type BatchWriteRequestItem struct {
-	DeleteRequest BatchDelete
-	PutRequest    BatchPut
+	DeleteRequest *BatchDelete `json:",omitempty"`
+	PutRequest    *BatchPut    `json:",omitempty"`
 }
 
 type BatchWriteQuery struct {
-	RequestItems                map[string]BatchWriteRequestItem `json:",omitempty"`
-	ReturnConsumedCapacity      string                           `json:",omitempty"`
-	ReturnItemCollectionMetrics string                           `json:",omitempty"`
+	RequestItems                map[string][]BatchWriteRequestItem `json:",omitempty"`
+	ReturnConsumedCapacity      string                             `json:",omitempty"`
+	ReturnItemCollectionMetrics string                             `json:",omitempty"`
 }
 
 type ItemCollectionMetrics struct {
@@ -357,27 +380,7 @@ type ItemUpdate struct {
 	ReturnValues              string               `json:",omitempty"`
 }
 
-// Generic interfaces (used by testing)
-
 // === Tables
-type DynamoTable interface {
-	// Create table from description
-	Create() (*Table, error)
-	// return description from name
-	Update() (*Table, error)
-	DeleteItem(*ItemRequest) (*ItemReply, error)
-	GetItem(*ItemRequest) (*ItemReply, error)
-	PutItem(*ItemRequest) (*ItemReply, error)
-	Query(*ItemQuery) (*QueryResponse, error)
-	Scan(*ItemQuery) (*QueryResponse, error)
-	UpdateItem(*ItemUpdate) (*ItemReply, error)
-	WaitUntilStatus(string, time.Duration, time.Duration) (err error)
-}
-
-type DynamoServer interface {
-	Query(string, []byte) ([]byte, error)
-}
-
 // Class method
 func DescribeTable(server DynamoServer, tableName string) (tableAddr *Table, err error) {
 
@@ -405,7 +408,7 @@ func DescribeTable(server DynamoServer, tableName string) (tableAddr *Table, err
 	return &table, err
 }
 
-func DeleteTable(server *Server, tableName string) (err error) {
+func DeleteTable(server DynamoServer, tableName string) (err error) {
 	req, err := json.Marshal(struct{ TableName string }{tableName})
 	if err != nil {
 		return nil
@@ -421,11 +424,11 @@ type TableList struct {
 	TableNames             []string
 }
 
-func ListTables(server Server, fromTable string, limit int64) (tables []string, lastEvaluatedTableName string, err error) {
+func ListTables(server DynamoServer, fromTable string) (tables []string, lastEvaluatedTableName string, err error) {
+
 	req, err := json.Marshal(struct {
 		ExclusiveStartTableName string `json:",omitempty"`
-		Limit                   int64
-	}{fromTable, limit})
+	}{fromTable})
 	target := "ListTables"
 	// send to server
 	resp, err := server.Query(target, req)
@@ -454,19 +457,20 @@ func (t *Table) modTable(target string) (table *Table, err error) {
 	if err == nil {
 		table = &Table{}
 		err = json.Unmarshal(resp, table)
+		// be sure to copy the server so the table is properly init.
 		table.Server = t.Server
 	}
 	return
 }
 
-func (t *Table) Create() (table *Table, err error) {
+func (t *Table) Create() (table DynamoTable, err error) {
 	//
 	table, err = t.modTable("CreateTable")
 	// TODO query table state until "ACTIVE"
 	return
 }
 
-func (t *Table) Update() (table *Table, err error) {
+func (t *Table) Update() (table DynamoTable, err error) {
 	return t.modTable("UpdateTable")
 }
 
@@ -505,7 +509,7 @@ func (t *Table) WaitUntilStatus(status string, idle, timeoutVal time.Duration) (
 				time.Sleep(idle)
 			}
 		}
-	}(t.Server, t.TableName)
+	}(t.Server, t.GetTableName())
 	select {
 	case err = <-errc:
 	case <-done:
@@ -517,11 +521,15 @@ func (t *Table) WaitUntilStatus(status string, idle, timeoutVal time.Duration) (
 	return
 }
 
+func (t *Table) GetTableName() string {
+	return t.TableName
+}
+
 // === Items
 
 func (t *Table) itemAction(target string, query *ItemRequest) (reply *ItemReply, err error) {
 	if query.TableName == "" {
-		query.TableName = t.TableName
+		query.TableName = t.GetTableName()
 	}
 	req, err := json.Marshal(query)
 	if err != nil {
@@ -550,7 +558,7 @@ func (t *Table) PutItem(query *ItemRequest) (reply *ItemReply, err error) {
 
 func (t *Table) query(target string, query *ItemQuery) (reply *QueryResponse, err error) {
 	if query.TableName == "" {
-		query.TableName = t.TableName
+		query.TableName = t.GetTableName()
 	}
 	req, err := json.Marshal(query)
 	if err != nil {
@@ -575,7 +583,7 @@ func (t *Table) Scan(query *ItemQuery) (reply *QueryResponse, err error) {
 
 func (t *Table) UpdateItem(query *ItemUpdate) (reply *ItemReply, err error) {
 	if query.TableName == "" {
-		query.TableName = t.TableName
+		query.TableName = t.GetTableName()
 	}
 	if query.ReturnValues == "" {
 		query.ReturnValues = "NONE"
@@ -594,7 +602,7 @@ func (t *Table) UpdateItem(query *ItemUpdate) (reply *ItemReply, err error) {
 }
 
 // === Batch funcs
-func BatchGetItem(server *Server, query *BatchGetQuery) (reply []BatchItemReply, err error) {
+func BatchGetItem(server DynamoServer, query *BatchGetQuery) (reply []BatchItemReply, err error) {
 	//TODO: verify
 	req, err := json.Marshal(query)
 	if err != nil {
@@ -609,7 +617,7 @@ func BatchGetItem(server *Server, query *BatchGetQuery) (reply []BatchItemReply,
 	return
 }
 
-func BatchWriteItem(server *Server, query *BatchWriteQuery) (reply *BatchWriteReply, err error) {
+func BatchWriteItem(server DynamoServer, query *BatchWriteQuery) (reply *BatchWriteReply, err error) {
 	//TODO: verify
 	req, err := json.Marshal(query)
 	if err != nil {

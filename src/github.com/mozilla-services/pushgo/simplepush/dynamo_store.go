@@ -7,7 +7,6 @@ package simplepush
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -16,17 +15,19 @@ import (
 )
 
 const (
-	DB_LABEL   = "dynamodb"
-	UAID_LABEL = "uaid"
-	CHID_LABEL = "chid"
-	PING_LABEL = "proprietary_ping"
-	VERS_LABEL = "version"
-	MODF_LABEL = "modified"
-	CREA_LABEL = "created"
+	DB_LABEL      = "dynamodb"
+	UAID_LABEL    = "uaid"
+	CHID_LABEL    = "chid"
+	PING_LABEL    = "proprietary_ping"
+	VERS_LABEL    = "version"
+	MODF_LABEL    = "modified"
+	CREA_LABEL    = "created"
+	AWS_MAX_BATCH = 25
 )
 
 var (
 	ErrDynamoDBInvalidRegion = errors.New("DynamoDB: Invalid region")
+	ErrDynamoDBBatchFailure  = errors.New("DynamoDB: Too many items to batch")
 )
 
 type DynamoDBConf struct {
@@ -56,7 +57,7 @@ type DynamoDBStore struct {
 	auth          aws.Auth
 	server        dynamodb.DynamoServer
 	table         dynamodb.DynamoTable
-	tablename     string
+	tableName     string
 	readProv      int64
 	writeProv     int64
 	closeSignal   chan bool
@@ -75,7 +76,7 @@ func (s *DynamoDBStore) createTable(server dynamodb.DynamoServer) (err error) {
 	   created = UTC().Unix() of the record creation. Used for cleanup.
 	*/
 	s.table = &dynamodb.Table{
-		TableName: s.tablename,
+		TableName: s.tableName,
 		AttributeDefinitions: []dynamodb.AttributeDefinition{
 			dynamodb.AttributeDefinition{UAID_LABEL, "S"},
 			dynamodb.AttributeDefinition{CHID_LABEL, "S"},
@@ -109,6 +110,7 @@ func (s *DynamoDBStore) createTable(server dynamodb.DynamoServer) (err error) {
 		Server: server,
 	}
 
+	// Table creation almost always requires at least two reads
 	_, err = s.table.Create()
 	if err != nil {
 		s.logger.Panic(DB_LABEL, "Could not create",
@@ -172,7 +174,7 @@ func (s *DynamoDBStore) Init(app *Application, config interface{}) (err error) {
 	s.readProv = conf.ReadProv
 	s.writeProv = conf.WriteProv
 	s.maxChannels = conf.MaxChannels
-	s.tablename = conf.TableName
+	s.tableName = conf.TableName
 	s.table, err = dynamodb.DescribeTable(s.server, conf.TableName)
 	if err != nil {
 		s.logger.Panic("dynamodb", "decribe table",
@@ -224,10 +226,18 @@ func (*DynamoDBStore) IDsToKey(uaid, chid string) (string, error) {
 
 // Implements Store.Status().
 func (s *DynamoDBStore) Status() (success bool, err error) {
-	//TODO::
-	// tables, err := s.server.ListTables()
-	// success = err == nil && ddb_containsTable(tables, s.tablename)
-	return true, nil
+	tables, _, err := dynamodb.ListTables(s.server, "")
+	if err != nil {
+		return false, err
+	}
+	if dynamodb.SetContains(tables, s.tableName) {
+		return true, nil
+	}
+	if s.logger.ShouldLog(ERROR) {
+		s.logger.Error(DB_LABEL, "Can't find table in dynamodb store", nil)
+	}
+
+	return false, nil
 }
 
 // Exists returns a Boolean indicating whether a device has previously
@@ -299,8 +309,7 @@ func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 // Implements Store.Update().
 func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 	// Write or update the existing value.
-
-	success, err := s.table.UpdateItem(&dynamodb.ItemUpdate{
+	_, err = s.table.UpdateItem(&dynamodb.ItemUpdate{
 		Key: map[string]dynamodb.Attribute{
 			UAID_LABEL: dynamodb.NewAttribute("S", uaid),
 			CHID_LABEL: dynamodb.NewAttribute("S", chid),
@@ -320,7 +329,6 @@ func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 	if err != nil {
 		return
 	}
-	fmt.Printf("#### Update reply :%+v\n", success)
 	return
 }
 
@@ -359,11 +367,13 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 				[]dynamodb.Attribute{dynamodb.NewAttribute("S", " ")},
 				"GT"},
 		},
-		ExpressionAttributeValues: map[string]dynamodb.Attribute{
-			":mod": dynamodb.NewAttribute("S", MODF_LABEL),
-			":now": dynamodb.NewAttribute("N", time.Now().Sub(since).Seconds()),
-		},
-		FilterExpression: ":mod > :now",
+		/*
+			ExpressionAttributeValues: map[string]dynamodb.Attribute{
+				":mod": dynamodb.NewAttribute("S", MODF_LABEL),
+				":now": dynamodb.NewAttribute("N", time.Now().Sub(since).Seconds()),
+			},
+			FilterExpression: ":mod > :now",
+		*/
 	}
 	results, err := s.table.Query(query)
 	if err != nil {
@@ -372,17 +382,17 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 	for _, r := range results.Items {
 		var vers int64
 		if vera, ok := r[VERS_LABEL]; ok {
-			vers = vera.(int64)
+			vers = vera.(map[string]interface{})["N"].(int64)
 		} else {
 			if vera, ok := r["created"]; ok {
-				vers = vera.(int64)
+				vers = vera.(map[string]interface{})["N"].(int64)
 			} else {
 				vers = dynamodb.Now(0)
 			}
 		}
 		version := uint64(vers)
 		updates = append(updates, Update{
-			ChannelID: r[CHID_LABEL].(string),
+			ChannelID: r[CHID_LABEL].(map[string]interface{})["S"].(string),
 			Version:   version,
 		})
 	}
@@ -393,15 +403,83 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 // Store.DropAll().
 func (s *DynamoDBStore) DropAll(uaid string) (err error) {
 	//TODO: Pass this to a goroutine to make it non blocking.
-	query := &dynamodb.ItemQuery{
-		KeyConditions: map[string]dynamodb.KeyCondition{
-			UAID_LABEL: dynamodb.KeyCondition{
-				[]dynamodb.Attribute{dynamodb.NewAttribute("S", uaid)},
-				"EQ"},
-		},
+	all, _, err := s.FetchAll(uaid, time.Unix(0, 0))
+	if err != nil {
+		return
 	}
-	_, err = s.table.Query(query)
-	return
+
+	// AWS maxes out at 25 records per batch.
+	listMax := AWS_MAX_BATCH
+	if len(all)+1 < listMax {
+		listMax = len(all) + 1
+	}
+	list := make([]dynamodb.BatchWriteRequestItem, listMax)
+	// max 25 records at a go.
+	for {
+		i := 0
+		// add up to 25 of the available records to the purge list.
+		for _, item := range all {
+			if i >= AWS_MAX_BATCH {
+				break
+			}
+			list[i] = dynamodb.BatchWriteRequestItem{
+				DeleteRequest: &dynamodb.BatchDelete{
+					Key: map[string]dynamodb.Attribute{
+						UAID_LABEL: dynamodb.NewAttribute("S", uaid),
+						CHID_LABEL: dynamodb.NewAttribute("S", item.ChannelID),
+					},
+				},
+			}
+			i++
+		}
+		// If we have room, add the master record
+		if i < AWS_MAX_BATCH {
+			list[i] = dynamodb.BatchWriteRequestItem{
+				DeleteRequest: &dynamodb.BatchDelete{
+					Key: map[string]dynamodb.Attribute{
+						UAID_LABEL: dynamodb.NewAttribute("S", uaid),
+						CHID_LABEL: dynamodb.NewAttribute("S", " "),
+					},
+				},
+			}
+		}
+
+		// Handle any unprocessed resubmits.
+		unprocessed := map[string][]dynamodb.BatchWriteRequestItem{
+			s.tableName: list,
+		}
+		loopCount := 5
+		for unprocessed != nil {
+			reply, err := dynamodb.BatchWriteItem(
+				s.server,
+				&dynamodb.BatchWriteQuery{
+					RequestItems: unprocessed,
+				})
+			if err != nil {
+				return err
+			}
+			unprocessed = nil
+			if len(reply.UnprocessedItems) > 0 {
+				_, ok := reply.UnprocessedItems[s.tableName]
+				if !ok {
+					break
+				}
+				unprocessed = reply.UnprocessedItems
+			}
+			loopCount--
+			if loopCount < 0 {
+				break
+			}
+		}
+		// if we have more pending, handle that batch.
+		if len(all) > AWS_MAX_BATCH {
+			all = all[AWS_MAX_BATCH:]
+			continue
+		}
+		// otherwise break out, we're done.
+		break
+	}
+	return nil
 }
 
 // FetchPing retrieves proprietary ping information for the given device ID
