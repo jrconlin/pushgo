@@ -851,8 +851,8 @@ func TestWorkerPinger(t *testing.T) {
 		Convey("Should register with the proprietary pinger", func() {
 			gomock.InOrder(
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckPinger.EXPECT().Register(testID, []byte(`{"regid":123}`)).Return(nil),
 				mckRouter.EXPECT().Register(testID),
+				mckPinger.EXPECT().Register(testID, []byte(`{"regid":123}`)).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
@@ -870,9 +870,9 @@ func TestWorkerPinger(t *testing.T) {
 			gomock.InOrder(
 				mckStore.EXPECT().CanStore(0).Return(true),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckPinger.EXPECT().Register(uaid, []byte(`[123]`)).Return(errors.New(
 					"external system on fire")),
-				mckRouter.EXPECT().Register(uaid).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(uaid, gomock.Any()).Return(nil, nil, nil),
@@ -1043,8 +1043,8 @@ func TestWorkerRun(t *testing.T) {
 					"connect": {"id": 123}
 				}`), nil),
 				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
-				mckPinger.EXPECT().Register(testID, []byte(`{"id":123}`)).Return(nil),
 				mckRouter.EXPECT().Register(testID).Return(nil),
+				mckPinger.EXPECT().Register(testID, []byte(`{"id":123}`)).Return(nil),
 				mckSocket.EXPECT().WriteText(gomock.Any()),
 				mckStat.EXPECT().Increment("updates.client.hello"),
 				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),

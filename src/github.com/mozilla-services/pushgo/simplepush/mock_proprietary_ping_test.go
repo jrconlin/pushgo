@@ -4,8 +4,8 @@
 package simplepush
 
 import (
-	http "net/http"
 	gomock "github.com/rafrombrc/gomock/gomock"
+	http "net/http"
 )
 
 // Mock of PropPinger interface
