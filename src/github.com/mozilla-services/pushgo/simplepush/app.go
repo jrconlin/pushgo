@@ -403,6 +403,12 @@ func (a *Application) close() error {
 			errors = append(errors, err)
 		}
 	}
+	if s := a.Store(); s != nil {
+		// Close database connections.
+		if err := s.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
 	if len(errors) > 0 {
 		return errors
 	}

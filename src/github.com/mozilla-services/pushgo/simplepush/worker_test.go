@@ -1229,12 +1229,25 @@ func TestWorkerHello(t *testing.T) {
 			So(err, ShouldEqual, ErrInvalidParams)
 		})
 
-		Convey("Should reject invalid IDs", func() {
+		Convey("Should issue new IDs if an invalid ID given", func() {
 			wws := NewWorker(app, mckSocket, "test")
+
+			gomock.InOrder(
+				mckBalancer.EXPECT().RedirectURL().Return("", false, nil),
+				mckRouter.EXPECT().Register(testID).Return(nil),
+				mckSocket.EXPECT().WriteText(gomock.Any()),
+				mckStat.EXPECT().Increment("updates.client.hello"),
+				mckStore.EXPECT().FetchAll(testID, gomock.Any()).Return(nil, nil, nil),
+				mckStat.EXPECT().Timer("client.flush", gomock.Any()),
+			)
+
 			err := wws.Hello(&RequestHeader{Type: "hello"}, []byte(
 				`{"uaid":"!@#$","channelIDs":[]}`))
-			So(err, ShouldEqual, ErrInvalidID)
+			So(err, ShouldBeNil)
 			So(app.WorkerExists("!@#$"), ShouldBeFalse)
+			worker, workerConnected := app.GetWorker(testID)
+			So(workerConnected, ShouldBeTrue)
+			So(worker, ShouldEqual, wws)
 		})
 
 		Convey("Should issue new IDs for excessive prior channels", func() {

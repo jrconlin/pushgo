@@ -478,7 +478,7 @@ func (w *WorkerWS) handshake(request *HelloRequest) (
 			w.logger.Warn("worker", "Invalid character in UAID",
 				LogFields{"rid": w.logID})
 		}
-		return "", false, ErrInvalidID
+		goto forceReset
 	}
 	if !w.store.CanStore(len(request.ChannelIDs)) {
 		// are there a suspicious number of channels?
