@@ -28,6 +28,7 @@ const (
 var (
 	ErrDynamoDBInvalidRegion = errors.New("DynamoDB: Invalid region")
 	ErrDynamoDBBatchFailure  = errors.New("DynamoDB: Too many items to batch")
+	Now                      = dynamodb.Now
 )
 
 type DynamoDBConf struct {
@@ -272,7 +273,7 @@ func (s *DynamoDBStore) Exists(uaid string) bool {
 // Store.Register().
 func (s *DynamoDBStore) Register(uaid, chid string, version int64) (err error) {
 	// try to put the master record
-	now := dynamodb.Now(0)
+	now := Now(0)
 	s.table.UpdateItem(&dynamodb.ItemUpdate{
 		Key: map[string]dynamodb.Attribute{
 			UAID_LABEL: dynamodb.NewAttribute("S", uaid),
@@ -320,7 +321,7 @@ func (s *DynamoDBStore) Update(uaid, chid string, version int64) (err error) {
 		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
 			":ver": dynamodb.NewAttribute("N", version),
-			":mod": dynamodb.NewAttribute("N", dynamodb.Now(0)),
+			":mod": dynamodb.NewAttribute("N", Now(0)),
 		},
 		ConditionExpression: "#ver < :ver",
 		UpdateExpression:    "SET #ver=:ver, #mod=:mod",
@@ -387,7 +388,7 @@ func (s *DynamoDBStore) FetchAll(uaid string, since time.Time) (updates []Update
 			if vera, ok := r["created"]; ok {
 				vers = vera.(map[string]interface{})["N"].(int64)
 			} else {
-				vers = dynamodb.Now(0)
+				vers = Now(0)
 			}
 		}
 		version := uint64(vers)
@@ -520,7 +521,7 @@ func (s *DynamoDBStore) PutPing(uaid string, pingData []byte) (err error) {
 		},
 		ExpressionAttributeValues: map[string]dynamodb.Attribute{
 			":ping": dynamodb.NewAttribute("B", pingData),
-			":modf": dynamodb.NewAttribute("N", dynamodb.Now(0)),
+			":modf": dynamodb.NewAttribute("N", Now(0)),
 		},
 		UpdateExpression: "SET #ping=:ping, #modf=:modf",
 		ReturnValues:     "NONE",

@@ -6,17 +6,15 @@ package simplepush
 
 import (
 	"errors"
-	"fmt"
-	//	"strings"
 	"testing"
-	//	"time"
+	"time"
 
-	//	"github.com/mozilla-services/pushgo/dynamodb"
+	"github.com/mozilla-services/pushgo/dynamodb"
 )
 
 type testDynamoServer struct {
-	Target  string
-	Request []byte
+	Target  []string
+	Request [][]byte
 	Reply   [][]byte
 	Err     error
 	CallNum int64
@@ -24,8 +22,16 @@ type testDynamoServer struct {
 
 var tableJson = `{"Table":{"AttributeDefinitions":[{"AttributeName":"chid","AttributeType":"S"},{"AttributeName":"modified","AttributeType":"N"},{"AttributeName":"uaid","AttributeType":"S"}],"CreationDateTime":1.426024966598E9,"GlobalSecondaryIndexes":[{"IndexName":"uaid-modified-index","IndexSizeBytes":286,"IndexStatus":"ACTIVE","ItemCount":4,"KeySchema":[{"AttributeName":"uaid","KeyType":"HASH"},{"AttributeName":"modified","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"},"ProvisionedThroughput":{"NumberOfDecreasesToday":0,"ReadCapacityUnits":1,"WriteCapacityUnits":1}}],"ItemCount":4,"KeySchema":[{"AttributeName":"uaid","KeyType":"HASH"},{"AttributeName":"chid","KeyType":"RANGE"}],"ProvisionedThroughput":{"NumberOfDecreasesToday":0,"ReadCapacityUnits":1,"WriteCapacityUnits":1},"TableName":"test","TableSizeBytes":286,"TableStatus":"ACTIVE"}}`
 
+func FakeNow(int64) int64 {
+	return 1234567890
+}
+
+func init() {
+	Now = FakeNow
+}
+
 func NewTestTable(s *testDynamoServer) (db *DynamoDBStore) {
-	db := NewDynamoDB()
+	db = NewDynamoDB()
 	db.server = s
 	db.tableName = "test"
 	db.table = &dynamodb.Table{
@@ -51,30 +57,30 @@ func NewTestTable(s *testDynamoServer) (db *DynamoDBStore) {
 					ProjectionType:   "ALL",
 				},
 				ProvisionedThroughput: dynamodb.ProvisionedThroughput{
-					ReadCapacityUnits:  s.readProv,
-					WriteCapacityUnits: s.writeProv,
+					ReadCapacityUnits:  1,
+					WriteCapacityUnits: 1,
 				},
 			},
 		},
 		ProvisionedThroughput: dynamodb.ProvisionedThroughput{
-			ReadCapacityUnits:  s.readProv,
-			WriteCapacityUnits: s.writeProv,
+			ReadCapacityUnits:  1,
+			WriteCapacityUnits: 1,
 		},
 		Server: s,
 	}
+	return
 }
 
 func (r *testDynamoServer) Query(target string, query []byte) (resp []byte, err error) {
-	fmt.Printf("\n>>== Query %s\n%s\n", target, string(query))
-	r.Target = target
-	r.Request = query
+	//fmt.Printf("\n>> Query %s\n%s\n", target, string(query))
+	r.Target = append(r.Target, target)
+	r.Request = append(r.Request, query)
 	if r.Err != nil {
 		return nil, r.Err
 	}
 	if r.CallNum >= int64(len(r.Reply)) {
-		return nil, errors.New("crapsticks")
+		return nil, errors.New("Tester: Too few predicted calls!")
 	}
-	fmt.Printf("Query: %d == %d \n", r.CallNum, len(r.Reply))
 	resp = r.Reply[r.CallNum]
 	r.CallNum++
 	return
@@ -144,14 +150,12 @@ func Test_Dynamo_IDsToKey(t *testing.T) {
 
 func Test_Dynamo_Status(t *testing.T) {
 	resp := `{"LastEvaluatedTableName":"", "TableNames":["test"]}`
-	testDb := NewDynamoDB()
-	testDb.tableName = "test"
-	test
-	testDb.server = &testDynamoServer{
+	testServer := &testDynamoServer{
 		Reply: [][]byte{[]byte(resp)},
 	}
+	test := NewTestTable(testServer)
 
-	ok, err := testDb.Status()
+	ok, err := test.Status()
 	if !ok {
 		t.Errorf("Status failed")
 	}
@@ -161,64 +165,159 @@ func Test_Dynamo_Status(t *testing.T) {
 }
 
 func Test_Dynamo_Exists(t *testing.T) {
-	testDb := NewDynamoDB()
-	if !testDb.Exists("test") {
+	resp := `{"Count":1}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	if !test.Exists("test") {
 		t.Errorf("Exists failed to find record")
+	}
+	if string(testServer.Request[0]) != `{"KeyConditions":{"chid":{"AttributeValueList":[{"S":" "}],"ComparisonOperator":"EQ"},"uaid":{"AttributeValueList":[{"S":"test"}],"ComparisonOperator":"EQ"}},"TableName":"test"}` {
+		t.Errorf("Exists: Request may not be correct.")
 	}
 }
 
 func Test_Dynamo_Register(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Register("test", "test", 123)
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp), []byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	err := test.Register("test", "test", 123)
 	if err != nil {
 		t.Errorf("Failed to register %s", err)
 	}
+	if testServer.Target[0] != "UpdateItem" &&
+		string(testServer.Request[0]) != `{"Key":{"chid":{"S":" "},"uaid":{"S":"test"}},"TableName":"test","ConditionExpression":"attribute_not_exists(#c)","ExpressionAttributeNames":{"#c":"created","#m":"modified"},"ExpressionAttributeValues":{":c":{"N":"1234567890"},":m":{"N":"1234567890"}},"UpdateExpression":"SET #c=:c, #m=:m","ReturnValues":"NONE"}` &&
+		testServer.Target[1] != "PutItem" &&
+		string(testServer.Request[1]) != `{"Item":{"chid":{"S":"test"},"created":{"N":"1234567890"},"modified":{"N":"1234567890"},"uaid":{"S":"test"},"version":{"N":"123"}},"TableName":"test"}` {
+		t.Errorf("Register may not have created master and child")
+	}
+
 }
 
 func Test_Dynamo_Update(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Update("test", "test", 123)
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	err := test.Update("test", "test", 123)
 	if err != nil {
 		t.Errorf("Failed to update %s", err)
+	}
+	if testServer.Target[0] != "UpdateItem" &&
+		string(testServer.Request[0]) != `{"Key":{"chid":{"S":"test"},"uaid":{"S":"test"}},"TableName":"test","ConditionExpression":"#ver \u003c :ver","ExpressionAttributeNames":{"#mod":"modified","#ver":"version"},"ExpressionAttributeValues":{":mod":{"N":"1234567890"},":ver":{"N":"123"}},"UpdateExpression":"SET #ver=:ver, #mod=:mod","ReturnValues":"NONE"}` {
+		t.Errorf("Failed to use UpdateItem")
 	}
 }
 
 func Test_Dynamo_Unregister(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Unregister("test", "test")
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	err := test.Unregister("test", "test")
 	if err != nil {
 		t.Errorf("Failed to unregister %s", err)
+	}
+	if testServer.Target[0] != "DeleteItem" {
+		t.Errorf("Failed to use DeleteItem")
+	}
+	if string(testServer.Request[0]) != `{"Key":{"chid":{"S":"test"},"uaid":{"S":"test"}},"TableName":"test"}` {
+		t.Errorf("Request may not be correct")
 	}
 }
 
 func Test_Dynamo_Drop(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Unregister("test", "test")
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	err := test.Drop("test", "test")
 	if err != nil {
 		t.Errorf("Failed to unregister %s", err)
+	}
+	if testServer.Target[0] != "DeleteItem" &&
+		string(testServer.Request[0]) != `{"Key":{"chid":{"S":"test"},"uaid":{"S":"test"}},"TableName":"test"}` {
+		t.Errorf("Failed to use DeleteItem")
 	}
 }
 
 func Test_Dynamo_DropAll(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Unregister("test", "test")
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp), []byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	err := test.DropAll("test")
 	if err != nil {
 		t.Errorf("Failed to unregister %s", err)
+	}
+	if testServer.Target[0] != "Query" &&
+		string(testServer.Request[0]) != `{"KeyConditions":{"chid":{"AttributeValueList":[{"S":" "}],"ComparisonOperator":"GT"},"uaid":{"AttributeValueList":[{"S":"test"}],"ComparisonOperator":"EQ"}},"TableName":"test"}` {
+		t.Errorf("Failed to use Query")
+		t.Errorf("Query may not be correct")
+	}
+	if testServer.Target[1] != "BatchWriteItem" &&
+		string(testServer.Request[1]) != `{"RequestItems":{"test":[{"DeleteRequest":{"Key":{"chid":{"S":" "},"uaid":{"S":"test"}}}}]}}` {
+		t.Errorf("Request may not be correct")
 	}
 }
 
 func Test_Dynamo_FetchAll(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Unregister("test", "test")
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp)},
+	}
+	test := NewTestTable(testServer)
+	data, expired, err := test.FetchAll("test", time.Now().Add(-1*time.Hour))
 	if err != nil {
 		t.Errorf("Failed to unregister %s", err)
 	}
+	if testServer.Target[0] != "Query" &&
+		string(testServer.Request[0]) != `{"KeyConditions":{"chid":{"AttributeValueList":[{"S":" "}],"ComparisonOperator":"GT"},"uaid":{"AttributeValueList":[{"S":"test"}],"ComparisonOperator":"EQ"}},"TableName":"test"}` {
+		t.Errorf("Request may not be correct")
+	}
+	_ = data
+	_ = expired
 }
 
 func Test_Dynamo_Ping(t *testing.T) {
-	testDb := NewDynamoDB()
-	err := testDb.Unregister("test", "test")
-	if err != nil {
-		t.Errorf("Failed to unregister %s", err)
+	resp := `{}`
+	testServer := &testDynamoServer{
+		Reply: [][]byte{[]byte(resp), []byte(resp), []byte(resp)},
 	}
+	test := NewTestTable(testServer)
+	pingData := []byte(`{pingData: test123}`)
+	err := test.PutPing("test", pingData)
+	if err != nil {
+		t.Errorf("Failed to Put ping %s", err)
+	}
+
+	data, err := test.FetchPing("test")
+	if err != nil {
+		t.Errorf("Failed to fetch ping %s", err)
+	}
+
+	err = test.DropPing("test")
+	if err != nil {
+		t.Errorf("Failed to drop ping %s", err)
+	}
+	if testServer.Target[0] != "UpdateItem" &&
+		string(testServer.Request[0]) != `{"Key":{"chid":{"S":" "},"uaid":{"S":"test"}},"TableName":"test","ExpressionAttributeNames":{"#modf":"modified","#ping":"proprietary_ping"},"ExpressionAttributeValues":{":modf":{"N":"1234567890"},":ping":{"B":"e3BpbmdEYXRhOiB0ZXN0MTIzfQ=="}},"UpdateExpression":"SET #ping=:ping, #modf=:modf","ReturnValues":"NONE"}` {
+		t.Errorf("Request may not be correct")
+	}
+	if testServer.Target[1] != "Query" &&
+		string(testServer.Request[1]) != `{"KeyConditions":{"chid":{"AttributeValueList":[{"S":" "}],"ComparisonOperator":"EQ"},"uaid":{"AttributeValueList":[{"S":"test"}],"ComparisonOperator":"EQ"}},"TableName":"test"}` {
+		t.Errorf("Request may not be correct")
+	}
+	if testServer.Target[2] != "UpdateItem" &&
+		string(testServer.Request[2]) != `{"Key":{"chid":{"S":" "},"uaid":{"S":"test"}},"TableName":"test","UpdateExpression":"remove proprietary_ping = :ping","ReturnValues":"NONE"}` {
+		t.Errorf("Request may not be correct")
+	}
+	_ = data
 }
