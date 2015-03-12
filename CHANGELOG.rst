@@ -43,6 +43,11 @@ Features
 - Allow custom prefixes and suffixes for each metric type, with optional
   variable interpolation. The hostname is appended as a suffix to all emitted
   gauges by default. PR #228, Issue #200.
+- Added DynamoDB support using custom dynamodb wrapper. goamz's dynamodb lib
+  is using an older API spec. This is a semi-work around that uses a much
+  thinner wrapper around the API calls. Note: This lib does not support older
+  Attribute based calls to strongly encourage use of the newer conditional
+  models.
 
 Bug Fixes
 ---------
