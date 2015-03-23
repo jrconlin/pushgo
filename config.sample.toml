@@ -67,6 +67,8 @@ addr = ":8080"
 # server but the old connection has yet to time out for the server. (This,
 # sadly, happens a fair bit.)
 #always_route = false
+# Enable CORS support for PUT updates
+#enable_cors = false
 
 [endpoint.listener]
 addr = ":8081"

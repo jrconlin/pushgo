@@ -25,6 +25,7 @@ func NewEndpointHandler() (h *EndpointHandler) {
 type EndpointHandlerConfig struct {
 	MaxDataLen  int  `toml:"max_data_len" env:"max_data_len"`
 	AlwaysRoute bool `toml:"always_route" env:"always_route"`
+	EnableCORS  bool `toml:"enable_cors" env:"enable_cors"`
 	Listener    TCPListenerConfig
 }
 
@@ -46,12 +47,14 @@ type EndpointHandler struct {
 	maxDataLen  int
 	alwaysRoute bool
 	closeOnce   Once
+	enableCors  bool
 }
 
 func (h *EndpointHandler) ConfigStruct() interface{} {
 	return &EndpointHandlerConfig{
 		MaxDataLen:  4096,
 		AlwaysRoute: false,
+		EnableCORS:  false,
 		Listener: TCPListenerConfig{
 			Addr:            ":8081",
 			MaxConns:        1000,
@@ -82,6 +85,7 @@ func (h *EndpointHandler) Init(app *Application, config interface{}) (err error)
 	h.maxConns = conf.Listener.MaxConns
 	h.setMaxDataLen(conf.MaxDataLen)
 	h.alwaysRoute = conf.AlwaysRoute
+	h.enableCors = conf.EnableCORS
 
 	return nil
 }
@@ -198,6 +202,10 @@ func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, dat
 }
 
 // -- REST
+func (h *EndpointHandler) addCorsHeaders(resp http.ResponseWriter) {
+	resp.Header().Add("Access-Control-Request-Method", "*")
+}
+
 func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
 	// Handle the version updates.
 	timer := timeNow()
@@ -231,6 +239,10 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 	if h.logger.ShouldLog(INFO) {
 		h.logger.Info("handlers_endpoint", "Handling Update",
 			LogFields{"rid": requestID})
+	}
+
+	if h.enableCors {
+		h.addCorsHeaders(resp)
 	}
 
 	if req.Method != "PUT" {
