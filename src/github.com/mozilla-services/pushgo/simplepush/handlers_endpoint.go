@@ -203,7 +203,8 @@ func (h *EndpointHandler) getUpdateParams(req *http.Request) (version int64, dat
 
 // -- REST
 func (h *EndpointHandler) addCorsHeaders(resp http.ResponseWriter) {
-	resp.Header().Add("Access-Control-Request-Method", "*")
+	resp.Header().Add("Access-Control-Allow-Origin", "*")
+	resp.Header().Add("Access-Control-Allow-Methods", "PUT, OPTIONS")
 }
 
 func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Request) {
@@ -243,6 +244,10 @@ func (h *EndpointHandler) UpdateHandler(resp http.ResponseWriter, req *http.Requ
 
 	if h.enableCors {
 		h.addCorsHeaders(resp)
+	}
+	if req.Method == "OPTIONS" {
+		resp.WriteHeader(http.StatusOK)
+		return
 	}
 
 	if req.Method != "PUT" {
