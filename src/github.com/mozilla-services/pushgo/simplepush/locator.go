@@ -6,6 +6,15 @@ package simplepush
 
 var AvailableLocators = make(AvailableExtensions)
 
+// ReadyNotifier is an optional interface implemented by Locators that can be
+// used to defer accepting client connections until the Locator has a complete
+// view of the cluster.
+type ReadyNotifier interface {
+	// ReadyNotify returns a channel that is closed when the underlying service
+	// is ready.
+	ReadyNotify() <-chan bool
+}
+
 // Locator describes a contact discovery service.
 type Locator interface {
 	// Close stops and releases any resources associated with the Locator.

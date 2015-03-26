@@ -5,12 +5,12 @@
 package simplepush
 
 type StaticLocatorConf struct {
-	Contacts []string `env:"contacts"`
+	Contacts []string
 }
 
 type StaticLocator struct {
 	logger   *SimpleLogger
-	metrics  *Metrics
+	metrics  Statistician
 	contacts []string
 }
 

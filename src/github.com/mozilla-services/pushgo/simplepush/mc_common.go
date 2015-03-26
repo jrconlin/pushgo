@@ -4,10 +4,6 @@
 
 package simplepush
 
-import (
-	"encoding/base64"
-)
-
 // ChannelState represents the state of a channel record.
 type ChannelState int8
 
@@ -84,29 +80,4 @@ func remove(list []string, pos int) (res []string) {
 		return list
 	}
 	return append(list[:pos], list[pos+1:]...)
-}
-
-// Converts a (device ID, channel ID) tuple to a binary primary key.
-func toBinaryKey(uaid, chid []byte) ([]byte, error) {
-	key := make([]byte, 32)
-	aoff := 16 - len(uaid)
-	if aoff < 0 {
-		aoff = 0
-	}
-	boff := 32 - len(chid)
-	if boff < 16 {
-		boff = 16
-	}
-	copy(key[aoff:], uaid)
-	copy(key[boff:], chid)
-	return key, nil
-}
-
-// Converts a binary primary key into a Base64-encoded string suitable for
-// storage in memcached.
-func encodeKey(key []byte) string {
-	// Sadly, can't use full byte chars for key values, so have to encode
-	// to base64. Ideally, this would just be
-	// return string(key)
-	return base64.StdEncoding.EncodeToString(key)
 }

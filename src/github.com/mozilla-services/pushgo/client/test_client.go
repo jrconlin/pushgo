@@ -7,17 +7,30 @@ package client
 import (
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"github.com/mozilla-services/pushgo/retry"
 )
 
 var (
 	ErrTimedOut   = &ClientError{"Notification test timed out."}
 	ErrChanClosed = &ClientError{"The notification channel was closed by the connection."}
+
+	NotifyClient = &http.Client{}
+	NotifyRetry  = &retry.Helper{
+		CanRetry:  IsTemporaryErr,
+		Retries:   5,
+		Delay:     200 * time.Millisecond,
+		MaxDelay:  5 * time.Second,
+		MaxJitter: 400 * time.Millisecond,
+	}
 )
 
 type Endpoint struct {
@@ -64,25 +77,53 @@ func PushThrough(conn *Conn, channels, updates int) error {
 	return t.Do()
 }
 
-func Notify(endpoint string, version int64) (err error) {
+func isTemporaryNetErr(err error) bool {
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Temporary()
+}
+
+func IsTemporaryErr(err error) bool {
+	if isTemporaryNetErr(err) {
+		return true
+	}
+	urlErr, ok := err.(*url.Error)
+	if !ok {
+		return false
+	}
+	if isTemporaryNetErr(urlErr.Err) {
+		return true
+	}
+	opErr, ok := urlErr.Err.(*net.OpError)
+	if isTemporaryNetErr(opErr.Err) {
+		return true
+	}
+	return ok && (opErr.Err == syscall.EPIPE || opErr.Err == syscall.ECONNRESET)
+}
+
+func Notify(endpoint string, version int64) error {
 	values := make(url.Values)
 	values.Add("version", strconv.FormatInt(version, 10))
-	request, err := http.NewRequest("PUT", endpoint, strings.NewReader(values.Encode()))
-	if err != nil {
-		return
+	notifyOnce := func() (err error) {
+		request, err := http.NewRequest("PUT", endpoint,
+			strings.NewReader(values.Encode()))
+		if err != nil {
+			return err
+		}
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response, err := NotifyClient.Do(request)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		io.Copy(ioutil.Discard, response.Body)
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return &ServerError{"internal", endpoint, "Unexpected status code.",
+				response.StatusCode}
+		}
+		return nil
 	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := new(http.Client)
-	response, err := client.Do(request)
-	if err != nil {
-		return
-	}
-	defer response.Body.Close()
-	io.Copy(ioutil.Discard, response.Body)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &ServerError{"internal", endpoint, "Unexpected status code.", response.StatusCode}
-	}
-	return
+	_, err := NotifyRetry.RetryFunc(notifyOnce)
+	return err
 }
 
 type TestClient struct {

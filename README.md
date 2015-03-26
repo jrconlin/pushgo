@@ -1,5 +1,7 @@
-Simple Push Server in Go v1.4.0
+Simple Push Server in Go v1.5.0
 ===
+
+![PushGo Logo](https://cdn.rawgit.com/mozilla-services/pushgo/dev/logo.jpg)
 
 This server was created to support the [Mozilla Simple Push
 protocol](https://wiki.mozilla.org/WebAPI/SimplePush). The Go language

@@ -7,4 +7,5 @@ struct Routable {
   channelID @0 :Text;
   version @1 :Int64;
   time @2 :Int64;
+  data @3 :Text;
 }

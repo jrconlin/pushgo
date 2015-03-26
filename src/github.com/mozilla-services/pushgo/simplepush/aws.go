@@ -7,10 +7,12 @@ package simplepush
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -21,29 +23,59 @@ var (
 	ErrElastiCacheTimeout StorageError = "ElastiCache query timed out"
 )
 
-/* Get the public AWS hostname for this machine.
- * TODO: Make this a generic utility for getting public info from
- * the aws meta server?
- */
-func GetAWSPublicHostname() (hostname string, err error) {
-	req := &http.Request{Method: "GET",
+// InstanceInfo returns information about the current instance.
+type InstanceInfo interface {
+	InstanceID() (id string, err error)
+	PublicHostname() (hostname string, err error)
+}
+
+// LocalInfo returns static instance info.
+type LocalInfo struct {
+	Hostname string
+}
+
+func (l LocalInfo) InstanceID() (string, error)     { return "", nil }
+func (l LocalInfo) PublicHostname() (string, error) { return l.Hostname, nil }
+
+// EC2Info fetches instance info from the EC2 metadata service. See
+// http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html
+type EC2Info struct {
+	http.Client
+}
+
+func (e *EC2Info) Get(item string) (body string, err error) {
+	resp, err := e.Client.Do(&http.Request{
+		Method: "GET",
 		URL: &url.URL{
 			Scheme: "http",
 			Host:   "169.254.169.254",
-			Path:   "/latest/meta-data/public-hostname"}}
-	client := &http.Client{}
-	resp, err := client.Do(req)
+			Path:   path.Join("/latest/meta-data", item),
+		},
+	})
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(ioutil.Discard, resp.Body)
+		err = fmt.Errorf("Unexpected status code: %d", resp.StatusCode)
 		return
 	}
-	hostBytes, err := ioutil.ReadAll(resp.Body)
+	respBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
-	return string(hostBytes), nil
+	return string(respBytes), nil
+}
+
+// Get the EC2 instance ID for this machine.
+func (e *EC2Info) InstanceID() (id string, err error) {
+	return e.Get("instance-id")
+}
+
+// Get the public AWS hostname for this machine.
+func (e *EC2Info) PublicHostname() (hostname string, err error) {
+	return e.Get("public-hostname")
 }
 
 // GetElastiCacheEndpoints queries the ElastiCache Auto Discovery service

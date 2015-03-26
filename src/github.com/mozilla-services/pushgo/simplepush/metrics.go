@@ -5,36 +5,76 @@
 package simplepush
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/cactus/go-statsd-client/statsd"
 )
+
+// cleanMetricPart is a mapping function passed to strings.Map that replaces
+// reserved characters in a metric key with hyphens.
+func cleanMetricPart(r rune) rune {
+	if r >= 'A' && r <= 'F' {
+		r += 'a' - 'A'
+	}
+	if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+		return r
+	}
+	return '-'
+}
 
 type trec struct {
 	Count uint64
 	Avg   float64
 }
 
-type JsMap map[string]interface{}
-
 type timer map[string]trec
 
+type MetricConfig struct {
+	Prefix string
+	Suffix string
+}
+
 type MetricsConfig struct {
-	StoreSnapshots bool   `toml:"store_snapshots" env:"snapshots"`
-	Prefix         string `env:"prefix"`
-	StatsdServer   string `toml:"statsd_server" env:"statsd_host"`
+	StoreSnapshots bool   `toml:"store_snapshots" env:"store_snapshots"`
+	StatsdServer   string `toml:"statsd_server" env:"statsd_server"`
 	StatsdName     string `toml:"statsd_name" env:"statsd_name"`
+	Counters       MetricConfig
+	Timers         MetricConfig
+	Gauges         MetricConfig
+}
+
+type Statistician interface {
+	Init(*Application, interface{}) error
+	Snapshot() map[string]interface{}
+	IncrementBy(string, int64)
+	Increment(string)
+	Decrement(string)
+	Timer(string, time.Duration)
+	Gauge(string, int64)
+	GaugeDelta(string, int64)
 }
 
 type Metrics struct {
 	sync.RWMutex
-	counter        map[string]int64 // counters
-	timer          timer            // timers
-	gauge          map[string]int64
-	prefix         string // prefix for
+
+	counter       map[string]int64 // Counter snapshots.
+	counterPrefix string           // Optional prefix for counter names.
+	counterSuffix string           // Optional suffix for counter names.
+
+	timer       timer // Timer snapshots.
+	timerPrefix string
+	timerSuffix string
+
+	gauge       map[string]int64 // Gauge snapshots.
+	gaugePrefix string
+	gaugeSuffix string
+
+	app            *Application
 	logger         *SimpleLogger
 	statsd         *statsd.Client
 	born           time.Time
@@ -44,15 +84,13 @@ type Metrics struct {
 func (m *Metrics) ConfigStruct() interface{} {
 	return &MetricsConfig{
 		StoreSnapshots: true,
-		Prefix:         "simplepush",
-		StatsdName:     "undef",
+		Gauges:         MetricConfig{Suffix: "{{.Host}}"},
 	}
 }
 
 func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 	conf := config.(*MetricsConfig)
-
-	m.logger = app.Logger()
+	m.setApp(app)
 
 	if conf.StatsdServer != "" {
 		name := strings.ToLower(conf.StatsdName)
@@ -63,7 +101,24 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 		}
 	}
 
-	m.prefix = conf.Prefix
+	err = m.setCounterAffixes(conf.Counters.Prefix, conf.Counters.Suffix)
+	if err != nil {
+		m.logger.Panic("metrics", "Error setting counter name affixes",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	err = m.setTimerAffixes(conf.Timers.Prefix, conf.Timers.Suffix)
+	if err != nil {
+		m.logger.Panic("metrics", "Error setting timer name affixes",
+			LogFields{"error": err.Error()})
+		return err
+	}
+	err = m.setGaugeAffixes(conf.Gauges.Prefix, conf.Gauges.Suffix)
+	if err != nil {
+		m.logger.Panic("metrics", "Error parsing gauge name affixes",
+			LogFields{"error": err.Error()})
+		return err
+	}
 	m.born = time.Now()
 
 	if m.storeSnapshots = conf.StoreSnapshots; m.storeSnapshots {
@@ -75,35 +130,113 @@ func (m *Metrics) Init(app *Application, config interface{}) (err error) {
 	return nil
 }
 
-func (m *Metrics) Prefix(newPrefix string) {
-	m.prefix = strings.TrimRight(newPrefix, ".")
-	if m.statsd != nil {
-		m.statsd.SetPrefix(newPrefix)
+func (m *Metrics) setApp(app *Application) {
+	m.app = app
+	m.logger = app.Logger()
+}
+
+func (m *Metrics) setCounterAffixes(rawPrefix, rawSuffix string) (err error) {
+	m.counterPrefix, err = m.formatAffix("counterPrefix", rawPrefix)
+	if err != nil {
+		return err
 	}
+	m.counterSuffix, err = m.formatAffix("counterSuffix", rawSuffix)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Metrics) setTimerAffixes(rawPrefix, rawSuffix string) (err error) {
+	if m.timerPrefix, err = m.formatAffix("timerPrefix", rawPrefix); err != nil {
+		return err
+	}
+	if m.timerSuffix, err = m.formatAffix("timerSuffix", rawSuffix); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Metrics) setGaugeAffixes(rawPrefix, rawSuffix string) (err error) {
+	if m.gaugePrefix, err = m.formatAffix("gaugePrefix", rawPrefix); err != nil {
+		return err
+	}
+	if m.gaugeSuffix, err = m.formatAffix("gaugeSuffix", rawSuffix); err != nil {
+		return err
+	}
+	return nil
+}
+
+// formatAffix parses a raw affix as a template, interpolating the hostname
+// and server version into the resulting string.
+func (m *Metrics) formatAffix(name, raw string) (string, error) {
+	tmpl, err := template.New(name).Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	affix := new(bytes.Buffer)
+	host := strings.Map(cleanMetricPart, m.app.Hostname())
+	params := struct {
+		Host    string
+		Version string
+	}{host, VERSION}
+	if err := tmpl.Execute(affix, params); err != nil {
+		return "", err
+	}
+	cleanAffix := bytes.TrimRight(affix.Bytes(), ".")
+	return string(cleanAffix), nil
+}
+
+func (m *Metrics) formatCounter(metric string, tags ...string) string {
+	return m.formatMetric(metric, m.counterPrefix, m.counterSuffix, tags...)
+}
+
+func (m *Metrics) formatTimer(metric string, tags ...string) string {
+	return m.formatMetric(metric, m.timerPrefix, m.timerSuffix, tags...)
+}
+
+func (m *Metrics) formatGauge(metric string, tags ...string) string {
+	return m.formatMetric(metric, m.gaugePrefix, m.gaugeSuffix, tags...)
+}
+
+// formatMetric constructs a statsd key from the given metric name, prefix,
+// and suffix. Additional tags are prepended to the suffix.
+func (m *Metrics) formatMetric(metric string, prefix, suffix string,
+	tags ...string) string {
+
+	var parts []string
+	if len(prefix) > 0 {
+		parts = append(parts, prefix)
+	}
+	if len(tags) > 0 {
+		parts = append(parts, tags...)
+	}
+	parts = append(parts, metric)
+	if len(suffix) > 0 {
+		parts = append(parts, suffix)
+	}
+	return strings.Join(parts, ".")
 }
 
 func (m *Metrics) Snapshot() map[string]interface{} {
 	if !m.storeSnapshots {
 		return nil
 	}
-	var pfx string
-	if len(m.prefix) > 0 {
-		pfx = m.prefix + "."
-	}
 	oldMetrics := make(map[string]interface{})
 	// copy the old metrics
 	m.RLock()
 	for k, v := range m.counter {
-		oldMetrics[pfx+"counter."+k] = v
+		oldMetrics[m.formatCounter(k, "counter")] = v
 	}
 	for k, v := range m.timer {
-		oldMetrics[pfx+"avg."+k] = v.Avg
+		oldMetrics[m.formatTimer(k, "avg")] = v.Avg
 	}
 	for k, v := range m.gauge {
-		oldMetrics[pfx+"gauge."+k] = v
+		oldMetrics[m.formatGauge(k, "gauge")] = v
 	}
 	m.RUnlock()
-	oldMetrics[pfx+"server.age"] = time.Now().Unix() - m.born.Unix()
+	age := time.Now().Unix() - m.born.Unix()
+	oldMetrics[m.formatMetric("server.age", "", "")] = age
 	return oldMetrics
 }
 
@@ -123,9 +256,9 @@ func (m *Metrics) IncrementBy(metric string, count int64) {
 
 	if statsd := m.statsd; statsd != nil {
 		if count >= 0 {
-			statsd.Inc(metric, count, 1.0)
+			statsd.Inc(m.formatCounter(metric), count, 1.0)
 		} else {
-			statsd.Dec(metric, count, 1.0)
+			statsd.Dec(m.formatCounter(metric), count, 1.0)
 		}
 	}
 }
@@ -164,7 +297,7 @@ func (m *Metrics) Timer(metric string, duration time.Duration) {
 				"type": "timer"})
 	}
 	if m.statsd != nil {
-		m.statsd.Timing(metric, value, 1.0)
+		m.statsd.Timing(m.formatTimer(metric), value, 1.0)
 	}
 }
 
@@ -175,23 +308,16 @@ func (m *Metrics) Gauge(metric string, value int64) {
 		m.Unlock()
 	}
 
-	/*
-		    *if m.logger.ShouldLog(DEBUG) {
-			*	m.logger.Debug("metrics", "gauge."+metric,
-			*		LogFields{"value": strconv.FormatInt(value, 10),
-			*			"type": "gauge"})
-			*}
-	*/
 	if statsd := m.statsd; statsd != nil {
 		if value >= 0 {
-			statsd.Gauge(metric, value, 1.0)
+			statsd.Gauge(m.formatGauge(metric), value, 1.0)
 			return
 		}
 		// Gauges cannot be set to negative values; sign prefixes indicate deltas.
-		if err := statsd.Gauge(metric, 0, 1.0); err != nil {
+		if err := statsd.Gauge(m.formatGauge(metric), 0, 1.0); err != nil {
 			return
 		}
-		statsd.GaugeDelta(metric, value, 1.0)
+		statsd.GaugeDelta(m.formatGauge(metric), value, 1.0)
 	}
 }
 
@@ -203,13 +329,50 @@ func (m *Metrics) GaugeDelta(metric string, delta int64) {
 		m.Unlock()
 	}
 
-	if m.logger.ShouldLog(DEBUG) {
-		m.logger.Debug("metrics", "gauge."+metric,
-			LogFields{"delta": strconv.FormatInt(delta, 10),
-				"type": "gauge"})
-	}
-
 	if m.statsd != nil {
-		m.statsd.GaugeDelta(metric, delta, 1.0)
+		m.statsd.GaugeDelta(m.formatGauge(metric), delta, 1.0)
+	}
+}
+
+// == provide just enough metrics for testing.
+type TestMetrics struct {
+	sync.RWMutex
+	Counters map[string]int64
+	Gauges   map[string]int64
+}
+
+func (r *TestMetrics) Init(app *Application, config interface{}) (err error) {
+	r.Counters = make(map[string]int64)
+	r.Gauges = make(map[string]int64)
+	return
+}
+
+func (r *TestMetrics) Snapshot() map[string]interface{} {
+	return make(map[string]interface{})
+}
+func (r *TestMetrics) IncrementBy(metric string, count int64) {
+	r.Lock()
+	defer r.Unlock()
+	r.Counters[metric] = r.Counters[metric] + count
+}
+func (r *TestMetrics) Increment(metric string) {
+	r.IncrementBy(metric, 1)
+}
+func (r *TestMetrics) Decrement(metric string) {
+	r.IncrementBy(metric, -1)
+}
+func (r *TestMetrics) Timer(metric string, duration time.Duration) {}
+func (r *TestMetrics) Gauge(metric string, val int64) {
+	r.Lock()
+	defer r.Unlock()
+	r.Gauges[metric] = val
+}
+func (r *TestMetrics) GaugeDelta(metric string, delta int64) {
+	r.Lock()
+	defer r.Unlock()
+	if m, ok := r.Gauges[metric]; ok {
+		r.Gauges[metric] = m + delta
+	} else {
+		r.Gauges[metric] = delta
 	}
 }

@@ -1,4 +1,6 @@
-// +build gomemc_server_test
+// +build smoke
+// +build memcached_server_test
+// +build !cgo !libmemcached
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -12,8 +14,9 @@ import (
 	"github.com/kitcambridge/envconf"
 )
 
-// Server is a test Simple Push server backed by a memcached store.
-var Server = &TestServer{
+// testServer is a memcached-backed test Simple Push server, using the
+// gomemcache driver.
+var testServer = &TestServer{
 	LogLevel: 0,
 	NewStore: func() (store ConfigStore, configStruct interface{}, err error) {
 		store = NewGomemc()

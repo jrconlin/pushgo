@@ -18,14 +18,19 @@ var configSource = `
 [default]
 current_host = "push.services.mozilla.com"
 use_aws_host = true
-origins = ["https://push.services.mozilla.com",
-           "https://loop.services.mozilla.com"]
 
-    [default.websocket]
+[websocket]
+    origins = ["https://push.services.mozilla.com",
+               "https://loop.services.mozilla.com"]
+
+    [websocket.listener]
     addr = ":8080"
     max_connections = 25000
 
-    [default.endpoint]
+[endpoint]
+    max_data_len = 256
+
+    [endpoint.listener]
     addr = ":8081"
     max_connections = 3000
 
@@ -42,32 +47,35 @@ filter = 7
 
 [router]
 bucket_size = 15
-pool_size = 250
 
     [router.listener]
     addr = ":3000"
     max_connections = 6000
 
 [discovery]
+
+[balancer]
+type = "static"
 `
 
 var env = envconf.New([]string{
 	"PUSHGO_DEFAULT_CURRENT_HOST=push.services.mozilla.com",
-	"pushgo_default_use_aws=0",
-	"PushGo_Default_Origins=https://push.services.mozilla.com",
-	"PUSHGO_DEFAULT_WS_ADDR=",
-	"PUSHGO_DEFAULT_WS_MAX_CONNS=25000",
-	"pushgo_default_endpoint_addr=",
-	"pushgo_default_endpoint_max_conns=6000",
+	"pushgo_default_use_aws_host=0",
+	"PushGo_WebSocket_Origins=https://push.services.mozilla.com",
+	"PUSHGO_WEBSOCKET_LISTENER_ADDR=",
+	"PUSHGO_WEBSOCKET_LISTENER_MAX_CONNECTIONS=25000",
+	"pushgo_endpoint_listener_addr=",
+	"pushgo_endpoint_listener_max_connections=6000",
 	"PUSHGO_logging_TYPE=stdout",
 	"pushgo_LOGGING_FORMAT=text",
 	"pushgo_logging_FILTER=0",
 	"PUSHGO_PROPPING_TYPE=udp",
 	"PUSHGO_PROPPING_URL=http://push.services.mozilla.com/ping",
 	"PushGo_Router_Bucket_Size=15",
-	"PushGo_Router_Pool_Size=250",
 	"PUSHGO_ROUTER_LISTENER_ADDR=",
-	"PUSHGO_ROUTER_LISTENER_MAX_CONNS=12000",
+	"PUSHGO_ROUTER_LISTENER_MAX_CONNECTIONS=12000",
+	"PUSHGO_ENDPOINT_MAX_DATA_LEN=512",
+	"PUSHGO_BALANCER_TYPE=none",
 })
 
 func TestConfigFile(t *testing.T) {
@@ -79,15 +87,22 @@ func TestConfigFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing app: %s", err)
 	}
-	defer app.Stop()
+	defer app.Close()
 	hostname := "push.services.mozilla.com"
-	if app.hostname != hostname {
-		t.Errorf("Mismatched hostname: got %#v; want %#v", app.hostname, hostname)
+	if app.Hostname() != hostname {
+		t.Errorf("Mismatched hostname: got %#v; want %#v", app.Hostname(), hostname)
 	}
 	origin, _ := url.ParseRequestURI("https://push.services.mozilla.com")
 	origins := []*url.URL{origin}
-	if !reflect.DeepEqual(origins, app.origins) {
-		t.Errorf("Mismatched origins: got %#v; want %#v", app.origins, origins)
+	socketHandler := app.SocketHandler()
+	if sh, ok := socketHandler.(*SocketHandler); ok {
+		if !reflect.DeepEqual(origins, sh.origins) {
+			t.Errorf("Mismatched origins: got %#v; want %#v",
+				sh.origins, origins)
+		}
+	} else {
+		t.Errorf("WebSocket handler type assertion failed: %#v",
+			app.SocketHandler())
 	}
 	logger := app.Logger()
 	if stdOutLogger, ok := logger.Logger.(*StdOutLogger); ok {
@@ -125,13 +140,27 @@ func TestConfigFile(t *testing.T) {
 	} else {
 		t.Errorf("Pinger type assertion failed: %#v", pinger)
 	}
+	endpointHandler := app.EndpointHandler()
+	if eh, ok := endpointHandler.(*EndpointHandler); ok {
+		if eh.maxDataLen != 512 {
+			t.Errorf("Wrong maximum data size: got %d; want 512", eh.maxDataLen)
+		}
+	} else {
+		t.Errorf("Update handler type assertion failed: %#v",
+			endpointHandler)
+	}
+	balancer := app.Balancer()
+	if _, ok := balancer.(*NoBalancer); !ok {
+		t.Errorf("Balancer type assertion failed: %#v", balancer)
+	}
 }
 
 func TestLoad(t *testing.T) {
 	var (
-		appInst                                                 *Application
-		mockApp, mockMetrics, mockRouter, mockServ, mockHandler *mockPlugin
-		mockLogger, mockStore, mockPing, mockLocator            *mockPlugin
+		appInst                                                    *Application
+		mockApp, mockMetrics, mockRouter                           *mockPlugin
+		mockSocket, mockEndpoint, mockHealth, mockProfile          *mockPlugin
+		mockLogger, mockStore, mockPing, mockLocator, mockBalancer *mockPlugin
 	)
 	loader := PluginLoaders{
 		PluginApp: func(app *Application) (HasConfigStruct, error) {
@@ -187,7 +216,7 @@ func TestLoad(t *testing.T) {
 			if err := isReady(mockLogger, mockMetrics); err != nil {
 				return nil, err
 			}
-			router := NewRouter()
+			router := NewBroadcastRouter()
 			mockRouter = newMockPlugin(PluginRouter, router)
 			if err := loadEnvConfig(env, "router", app, mockRouter); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)
@@ -205,25 +234,60 @@ func TestLoad(t *testing.T) {
 			}
 			return locator, nil
 		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
 			if err := isReady(mockLogger, mockMetrics); err != nil {
 				return nil, err
 			}
-			srv := NewServer()
-			mockServ = newMockPlugin(PluginServer, srv)
-			if err := loadEnvConfig(env, "server", app, mockServ); err != nil {
+			balancer := &NoBalancer{}
+			mockBalancer = newMockPlugin(PluginBalancer, balancer)
+			if err := loadEnvConfig(env, "balancer", app, mockBalancer); err != nil {
 				return nil, fmt.Errorf("Error initializing server: %#v", err)
 			}
-			return srv, nil
+			return balancer, nil
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			if err := isReady(mockLogger, mockMetrics); err != nil {
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger, mockMetrics, mockStore); err != nil {
 				return nil, err
 			}
-			h := &Handler{}
-			mockHandler = newMockPlugin(PluginHandlers, h)
-			if err := loadEnvConfig(env, "handlers", app, mockHandler); err != nil {
-				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
+			h := NewSocketHandler()
+			mockSocket = newMockPlugin(PluginSocket, h)
+			if err := loadEnvConfig(env, "websocket", app, mockSocket); err != nil {
+				return nil, fmt.Errorf("Error initializing WebSocket handler: %s", err)
+			}
+			return h, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger, mockMetrics, mockStore, mockRouter,
+				mockPing, mockBalancer); err != nil {
+
+				return nil, err
+			}
+			h := NewEndpointHandler()
+			mockEndpoint = newMockPlugin(PluginSocket, h)
+			if err := loadEnvConfig(env, "endpoint", app, mockEndpoint); err != nil {
+				return nil, fmt.Errorf("Error initializing update handler: %s", err)
+			}
+			return h, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockSocket, mockEndpoint); err != nil {
+				return nil, err
+			}
+			h := NewHealthHandlers()
+			mockHealth = newMockPlugin(PluginHealth, h)
+			if err := mockHealth.Init(app, mockHealth.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (HasConfigStruct, error) {
+			if err := isReady(mockLogger); err != nil {
+				return nil, err
+			}
+			h := new(ProfileHandlers)
+			mockProfile = newMockPlugin(PluginProfile, h)
+			if err := mockProfile.Init(app, mockProfile.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing profiling handlers: %s", err)
 			}
 			return h, nil
 		},
@@ -232,7 +296,10 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.Stop()
+	if err := isReady(mockHealth); err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
 	if app != appInst {
 		t.Errorf("Mismatched app instances: got %#v; want %#v", app, appInst)
 	}
@@ -242,9 +309,11 @@ func loadEnvConfig(env envconf.Environment, section string,
 	app *Application, configable HasConfigStruct) (err error) {
 
 	confStruct := configable.ConfigStruct()
-	if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
-		return fmt.Errorf("Error decoding config for section %q: %s",
-			section, err)
+	if confStruct != nil {
+		if err = env.Decode(toEnvName(section), EnvSep, confStruct); err != nil {
+			return fmt.Errorf("Error decoding config for section %q: %s",
+				section, err)
+		}
 	}
 	return configable.Init(app, confStruct)
 }
@@ -267,7 +336,6 @@ type mockPlugin struct {
 	typ               PluginType
 	configStructCalls int
 	initCalls         int
-	ready             bool
 }
 
 func (mp *mockPlugin) ConfigStruct() interface{} {
@@ -291,12 +359,12 @@ func (mp *mockPlugin) Ready() (err error) {
 		return fmt.Errorf("Uninitialized plugin")
 	}
 	if mp.configStructCalls != 1 {
-		return fmt.Errorf("Mismatched ConfigStruct() calls: want 1; got %d",
-			mp.configStructCalls)
+		return fmt.Errorf("Mismatched ConfigStruct() calls for %s: want 1; got %d",
+			mp.typ, mp.configStructCalls)
 	}
 	if mp.initCalls != 1 {
-		return fmt.Errorf("Mismatched Init() calls: want 1; got %d",
-			mp.initCalls)
+		return fmt.Errorf("Mismatched Init() calls for %s: want 1; got %d",
+			mp.typ, mp.initCalls)
 	}
 	return nil
 }

@@ -11,10 +11,6 @@
 #use_aws_host = false
 # Specifies whether the hostname should be resolved to an IP address.
 #resolve_host = false
-# A list of allowed WebSocket origins. An empty list allows all origins;
-# otherwise, the scheme, hostname, and port specified in the client's
-# `Origin` header must match at least one allowed origin.
-#origins = []
 
 # This defines what endpoint to use for updates.
 # {{.CurrentHost}} = the current host to connect to.
@@ -40,8 +36,17 @@
 #client_min_ping_interval = "20s"
 ## Timeout socket if not recv'd hello
 #client_hello_timeout = "30s"
+# Client Pong Interval is the period for when the server should send a text
+# ping frame. Set to "0" for no server pings
+#client_pong_interval = "0"
 
-[default.websocket]
+[websocket]
+# A list of allowed WebSocket origins. An empty list allows all origins;
+# otherwise, the scheme, hostname, and port specified in the client's
+# `Origin` header must match at least one allowed origin.
+#origins = []
+
+[websocket.listener]
 # The WebSocket listener address and port. 0.0.0.0 = all interfaces
 addr = ":8080"
 # The maximum number of concurrent connections that this listener can
@@ -53,7 +58,19 @@ addr = ":8080"
 #cert_file = "certs/test.crt"
 #key_file = "certs/test.key"
 
-[default.endpoint]
+[endpoint]
+# Maximum allowed data segment (in bytes)
+#max_data_len = 4096
+# Always route. This will force a server to always send a message out for
+# routing, even if the server believes that the client is connected. This
+# is useful in cases where a client may have reconnected to a different
+# server but the old connection has yet to time out for the server. (This,
+# sadly, happens a fair bit.)
+#always_route = false
+# Enable CORS support for PUT updates
+#enable_cors = false
+
+[endpoint.listener]
 addr = ":8081"
 #max_connections = 1000
 #tcp_keep_alive = "3m"
@@ -73,6 +90,7 @@ type = "noop"
 #dry_run = false
 #api_key = "YOUR_API_KEY"
 #url = "https://android.googleapis.com/gcm/send"
+#idle_conns = 50
 
 # Carrier-specific UDP pings
 #[propping]
@@ -174,6 +192,9 @@ type = "none"
 #prop_prefix = "_pc-"
 
 [router]
+# Default router to use, the rest of the options assume the broadcast
+# router
+# type = "broadcast"
 # Default host to shard users to, defaults to global hostname above
 #default_host = "localhost"
 # Fail a route connection attempt after timeout seconds
@@ -186,8 +207,10 @@ type = "none"
 # means 16 buckets. Have fun with probability tables to figure out the
 # size that works best for you.)
 #bucket_size = 10
-# Number of goroutines to spawn for routing messages.
-#pool_size = 30
+# Maximum allowed data segment (in bytes)
+#max_data_len = 4096
+# Number of idle connections to maintain per host.
+#idle_conns = 50
 
 [router.listener]
 # Default interface and port for shard routing
@@ -211,13 +234,62 @@ type = "static"
 # list of absolute etcd server URLs
 #servers = ["http://localhost:4001"]
 # Simple Push nodes should be considered "valid" for this period
-#defaultTTL = "24h"
+#defaultTTL = "1m"
 # The polling interval for new nodes.
-#refresh_interval = "5m"
+#refresh_interval = "10s"
+# Time to wait after starting the locator and registering with etcd. Should
+# be 1-2 times the refresh_interval.
+#start_delay = "10s"
+# Time to wait after removing the host from etcd during shutdown. Should
+# be 1-2 times the refresh_interval.
+#close_delay = "20s"
+
+#[discovery.retry]
+#retries = 5
+#delay = "200ms"
+#max_delay = "5s"
+#max_jitter = "400ms"
 
 [metrics]
 # The statsd client name, prepended to all metric names.
-#statsd_name = "undef"
-# Optional prefix for metric names, appended to the client name.
-#prefix = "myhostname.simplepush"
 #statsd_server = "heka_statsdinput_host:1234"
+
+# Optional metric name affixes for counters, timers, and gauges. May contain
+# the following substitutions:
+# {{.Host}} - The current hostname, as set by default.current_host.
+# {{.Version}} - The server version.
+#[metrics.counters]
+#prefix = ""
+#suffix = ""
+
+#[metrics.timers]
+#prefix = ""
+#suffix = ""
+
+#[metrics.gauges]
+#prefix = ""
+#suffix = "{{.Host}}"
+
+[balancer]
+type = "none"
+
+#[balancer]
+#type = "etcd"
+#servers = ["http://localhost:4001"]
+# The maximum amount of time that published client counts will be
+# considered valid.
+#ttl = "1m"
+# The connected client threshold. Once exceeded, connecting clients will be
+# redirected to hosts with the fewest connections.
+#threshold = 0.95
+# The client count publication interval.
+#update_interval = "10s"
+# Time to wait after removing client counts from etcd during shutdown. Should
+# be 1-2 times the update_interval.
+#close_delay = "20s"
+
+#[balancer.retry]
+#retries = 5
+#delay = "200ms"
+#max_delay = "5s"
+#max_jitter = "400ms"
