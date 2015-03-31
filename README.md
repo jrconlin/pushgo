@@ -100,9 +100,29 @@ explaining things.
 
 ## Testing
 
-`make test` runs the accompanying smoke tests. You can also use the
-[stand alone test suite](https://github.com/mozilla-services/simplepush_test)
-to test this or any other SimplePush server.
+To run the unit tests:
+
+    make test
+
+To run the integration tests with the libmemcached adapter (`memcache_gomc`;
+requires a running memcached instance. memcached listens on port 11211
+by default):
+
+    PUSHGO_TEST_STORAGE_MEMCACHE_SERVER={host:port} make test-gomc
+
+To run the tests with the `memcache_memcachego` adapter:
+
+    PUSHGO_TEST_STORAGE_MEMCACHE_SERVER={host:port} make test-gomemcache
+
+You can also use the Python-based
+[stand-alone test suite](https://github.com/mozilla-services/simplepush_test)
+to test this or any other SimplePush server:
+
+    git clone https://github.com/mozilla-services/simplepush_test.git
+    cd simplepush_test
+    make
+    PUSH_SERVER=ws://{host:port}/ make test
+    PUSH_SERVER=ws://{host:port}/ ./bin/nosetests test_simple test_loop
 
 ## Docker
 
