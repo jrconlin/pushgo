@@ -1,3 +1,6 @@
+*Please note*
+*This version of the push server is now obsolete. Please see https://github.com/mozilla-services/autopush for the latest Production Push server used by Mozilla*
+
 Simple Push Server in Go v1.5.0
 ===
 
@@ -26,22 +29,53 @@ You will need to have Go 1.3 or higher installed on your system, and the
 GOROOT and PATH should be set appropriately for 'go' to be found.
 
 ## Compiling
-To compile this server:
+Check out a working copy of the source code with Git:
 
-1. extract this directory into target directory
-2. Run: make
-3. Run: make simplepush
-4. Copy config.sample.toml to config.toml, and edit appropriately
+    git clone https://github.com/mozilla-services/pushgo.git
+    cd pushgo
 
-Step 3 should be re-run whenever code has been changed and the server
-should be recompiled.
+The server includes three adapters for offline storage: `memcache_gomc` and
+`memcache_memcachego`, which persist to memcached, and `dynamodb`, which
+persists to DynamoDB.
 
-If you would like to use an existing go on your system:
-1. Create a bin directory in the target directory
-2. Symlink your go binary into the bin directory you made
-3. Run the make commands starting at step 2 from above
+### memcached persistence
 
-This will build "simplepush" as an executable.
+The `memcache_gomc` adapter (`emcee_store.go`) binds to libmemcached via
+[gomc](http://godoc.org/github.com/varstr/gomc). This library provides a great
+deal of control over how the server communicates and uses memcache, however it
+does require compiling a local version of libmemcache, which can add difficulty.
+
+The `memcache_memcachego` adapter (`gomemc_store.go`) uses a golang based
+memcache client. While fully functional, we've not tested this under full load.
+
+### Custom compilers
+
+If you would like to build with a specific version of `go`, `protoc`,
+or `capnpc` on your system:
+
+1. Create a `bin` directory in the target directory
+2. Symlink the desired binary into the `bin` directory you made
+
+### Building
+
+To build the server with all storage adapters, run:
+
+    make
+    make simplepush
+
+To build the server **without the libmemcached adapter** (`memcache_gomc`),
+run:
+
+    make
+    make simplepush-no-gomc
+
+This will build a `simplepush` or `simplepush-no-gomc` executable, which you
+can run like so:
+
+    cp config.sample.toml config.toml
+    # Edit config.toml appropriately
+    ./simplepush -config=config.toml
+    # Or ./simplepush-no-gomc -config=config.toml
 
 ## Execution
  The server is built to run behind a SSL capable load balancer (e.g.
@@ -54,20 +88,6 @@ This server currently has no facility for UDP pings. This is a
 proprietary function (which, unsurprisingly, works remarkably poorly
 with non-local networks). There is currently no "dashboard" for
 element management.
-
-This server currently uses one of two methods to connect to memcache.
-memcache_gomc uses the store_emcee.go file, and ties to libmemcache.
-This library provides a great deal of control over how the server
-communicates and uses memcache, however it does require compiling
-a local version of libmemcache, which can add difficulty. The
-alternate method "memcache_memcachego", uses store_gomemc.go, and uses
-a golang based memcache client. While fully functional, we've not
-tested this under full load.
-
-If you wish, you can prevent either of these libraries from being
-compiled into your executable by changing the extension for either of
-these files from ".go" to ".go.skip". This may help you get a demo
-server running quickly.
 
 ## Use
 That's neat and all, but what does this do?
@@ -83,9 +103,29 @@ explaining things.
 
 ## Testing
 
-`make test` runs the accompanying smoke tests. You can also use the
-[stand alone test suite](https://github.com/mozilla-services/simplepush_test)
-to test this or any other SimplePush server.
+To run the unit tests:
+
+    make test
+
+To run the integration tests with the libmemcached adapter (`memcache_gomc`;
+requires a running memcached instance. memcached listens on port 11211
+by default):
+
+    PUSHGO_TEST_STORAGE_MEMCACHE_SERVER={host:port} make test-gomc
+
+To run the tests with the `memcache_memcachego` adapter:
+
+    PUSHGO_TEST_STORAGE_MEMCACHE_SERVER={host:port} make test-gomemcache
+
+You can also use the Python-based
+[stand-alone test suite](https://github.com/mozilla-services/simplepush_test)
+to test this or any other SimplePush server:
+
+    git clone https://github.com/mozilla-services/simplepush_test.git
+    cd simplepush_test
+    make
+    PUSH_SERVER=ws://{host:port}/ make test
+    PUSH_SERVER=ws://{host:port}/ ./bin/nosetests test_simple test_loop
 
 ## Docker
 
