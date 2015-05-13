@@ -1,3 +1,6 @@
+*Please note*
+*This version of the push server is now obsolete. Please see https://github.com/mozilla-services/autopush for the latest Production Push server used by Mozilla*
+
 Simple Push Server in Go v1.5.0
 ===
 
