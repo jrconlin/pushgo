@@ -1,13 +1,21 @@
 language: go
 go:
 - 1.3
+- 1.4
+- tip
+env:
+  global:
+    - secure: "aTmOO1+7Jgp57/CfTOka1tu+yLXfKQtnbKyuSJZ692KaAyo7ebJJW7yXGrDshD/2Dk2r5REehBBQEnLoWhBxrs91XZ3RVQM16w9AzDuIZ4JMC04RMgMcXy9CBI769AA1ueT3e1V+4H8B6yCpVKwNUXSEXdx2aEvOs7RYSFjfhv4="
 services:
 - memcached
+before_install:
+- "(echo $TRAVIS_GO_VERSION | grep '^go1\\.[0-3]\\(\\.\\|$\\)') && go get -u code.google.com/p/go.tools/cmd/cover || go get -u golang.org/x/tools/cmd/cover"
 install:
 - make
 script:
 - make test
-- PUSHGO_TEST_STORAGE_MC_HOSTS=localhost:11211 make test-memcached
+- make travis-cov
+- PUSHGO_TEST_STORAGE_MEMCACHE_SERVER=localhost:11211 make test-gomemcache
 before_deploy:
 - sudo apt-get -qq remove -y libmemcached-dev
 - sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu/ utopic main"

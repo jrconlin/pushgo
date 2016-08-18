@@ -52,9 +52,14 @@ type ConfigFile map[string]toml.Primitive
 
 // Interface for something that needs a set of config options
 type HasConfigStruct interface {
+	HasInit
 	// Returns a default-value-populated configuration structure into which
 	// the plugin's TOML configuration will be deserialized.
 	ConfigStruct() interface{}
+}
+
+// Interface for something that can be initialized
+type HasInit interface {
 	// The configuration loaded after ConfigStruct will be passed in
 	// Throwing an error here will cause the application to stop loading
 	Init(app *Application, config interface{}) error
@@ -79,8 +84,11 @@ const (
 	PluginStore
 	PluginRouter
 	PluginLocator
-	PluginServer
-	PluginHandlers
+	PluginBalancer
+	PluginSocket
+	PluginEndpoint
+	PluginHealth
+	PluginProfile
 )
 
 var pluginNames = map[PluginType]string{
@@ -89,9 +97,13 @@ var pluginNames = map[PluginType]string{
 	PluginPinger:   "pinger",
 	PluginMetrics:  "metrics",
 	PluginStore:    "store",
+	PluginRouter:   "router",
 	PluginLocator:  "locator",
-	PluginServer:   "server",
-	PluginHandlers: "handlers",
+	PluginBalancer: "balancer",
+	PluginSocket:   "socket",
+	PluginEndpoint: "endpoint",
+	PluginHealth:   "health",
+	PluginProfile:  "profile",
 }
 
 func (t PluginType) String() string {
@@ -118,7 +130,7 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 	// available on the Application at each stage of application setup
 
 	// Setup the base application first
-	app := new(Application)
+	app := NewApplication()
 	if _, err = l.loadPlugin(PluginApp, app); err != nil {
 		return nil, err
 	}
@@ -137,16 +149,18 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Next, metrics, Deps: Logger
+	// Next, metrics.
+	// Deps: PluginLogger.
 	if obj, err = l.loadPlugin(PluginMetrics, app); err != nil {
 		return nil, err
 	}
-	metrics := obj.(*Metrics)
+	metrics := obj.(Statistician)
 	if err = app.SetMetrics(metrics); err != nil {
 		return nil, err
 	}
 
-	// Next, storage, Deps: Logger, Metrics
+	// Next, storage.
+	// Deps: PluginLogger.
 	if obj, err = l.loadPlugin(PluginStore, app); err != nil {
 		return nil, err
 	}
@@ -155,7 +169,8 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Load the Proprietary Ping element. Deps: Logger, Metrics, Storage
+	// Load the Proprietary Ping element.
+	// Deps: PluginLogger, PluginMetrics, PluginStore.
 	if obj, err = l.loadPlugin(PluginPinger, app); err != nil {
 		return nil, err
 	}
@@ -164,35 +179,66 @@ func (l PluginLoaders) Load(logging int) (*Application, error) {
 		return nil, err
 	}
 
-	// Next, setup the router, Deps: Logger, Metrics
+	// Next, setup the router.
+	// Deps: PluginLogger, PluginMetrics.
 	if obj, err = l.loadPlugin(PluginRouter, app); err != nil {
 		return nil, err
 	}
-	router := obj.(*Router)
+	router := obj.(Router)
 	if err = app.SetRouter(router); err != nil {
 		return nil, err
 	}
 
-	// Set up the node discovery mechanism. Deps: Logger, Metrics, Router.
+	// Set up the node discovery mechanism.
+	// Deps: PluginLogger, PluginMetrics, PluginRouter.
 	if obj, err = l.loadPlugin(PluginLocator, app); err != nil {
 		return nil, err
 	}
 	locator := obj.(Locator)
-	if err = router.SetLocator(locator); err != nil {
+	if err = app.SetLocator(locator); err != nil {
 		return nil, err
 	}
 
-	// Finally, setup the handlers, Deps: Logger, Metrics
-	if obj, err = l.loadPlugin(PluginServer, app); err != nil {
+	// Set up the WebSocket handler.
+	// Deps: PluginLogger, PluginMetrics, PluginStore.
+	if obj, err = l.loadPlugin(PluginSocket, app); err != nil {
 		return nil, err
 	}
-	serv := obj.(*Serv)
-	app.SetServer(serv)
-	if obj, err = l.loadPlugin(PluginHandlers, app); err != nil {
+	sh := obj.(Handler)
+	app.SetSocketHandler(sh)
+
+	// Set up the balancer.
+	// Deps: PluginLogger, PluginMetrics.
+	if obj, err = l.loadPlugin(PluginBalancer, app); err != nil {
 		return nil, err
 	}
-	handlers := obj.(*Handler)
-	app.SetHandlers(handlers)
+	balancer := obj.(Balancer)
+	if err = app.SetBalancer(balancer); err != nil {
+		return nil, err
+	}
+
+	// Set up the HTTP update handler.
+	// Deps: PluginLogger, PluginMetrics, PluginStore, PluginRouter,
+	// PluginPinger, PluginBalancer, PluginServer.
+	if obj, err = l.loadPlugin(PluginEndpoint, app); err != nil {
+		return nil, err
+	}
+	eh := obj.(Handler)
+	app.SetEndpointHandler(eh)
+
+	// Attach the health handlers to PluginSocket and PluginEndpoint.
+	// Loaded for side effects only.
+	if _, err = l.loadPlugin(PluginHealth, app); err != nil {
+		return nil, err
+	}
+
+	// Set up the performance profiling handlers.
+	// Deps: PluginLogger.
+	if obj, err = l.loadPlugin(PluginProfile, app); err != nil {
+		return nil, err
+	}
+	ph := obj.(Handler)
+	app.SetProfileHandlers(ph)
 
 	return app, nil
 }
@@ -246,6 +292,20 @@ func LoadConfigStruct(sectionName string, env envconf.Environment,
 	return configStruct, nil
 }
 
+// Applies environment variable overrides to confStruct and initializes obj
+func LoadConfigFromEnvironment(app *Application, sectionName string,
+	obj HasInit, env envconf.Environment, confStruct interface{}) (err error) {
+
+	if confStruct == nil {
+		return nil
+	}
+	if err = env.Decode(toEnvName(sectionName), EnvSep, confStruct); err != nil {
+		return fmt.Errorf("Invalid environment variable for section '%s': %s",
+			sectionName, err)
+	}
+	return obj.Init(app, confStruct)
+}
+
 // Loads the config for a section supplied, configures the supplied object, and initializes
 func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStruct,
 	env envconf.Environment, configFile ConfigFile) (err error) {
@@ -264,13 +324,7 @@ func LoadConfigForSection(app *Application, sectionName string, obj HasConfigStr
 			sectionName, err)
 	}
 
-	if err = env.Decode(toEnvName(sectionName), EnvSep, confStruct); err != nil {
-		return fmt.Errorf("Invalid environment variable for section '%s': %s",
-			sectionName, err)
-	}
-
-	err = obj.Init(app, confStruct)
-	return
+	return LoadConfigFromEnvironment(app, sectionName, obj, env, confStruct)
 }
 
 // Load an extensible section that has a type keyword
@@ -345,28 +399,49 @@ func LoadApplication(configFile ConfigFile, env envconf.Environment,
 			return LoadExtensibleSection(app, "storage", AvailableStores, env, configFile)
 		},
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
-			router := NewRouter()
-			if err := LoadConfigForSection(app, "router", router, env, configFile); err != nil {
-				return nil, err
-			}
-			return router, nil
+			return LoadExtensibleSection(app, "router", AvailableRouters, env, configFile)
 		},
 		PluginLocator: func(app *Application) (HasConfigStruct, error) {
 			return LoadExtensibleSection(app, "discovery", AvailableLocators, env, configFile)
 		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := NewServer()
-			if err := LoadConfigForSection(app, "default", serv, env, configFile); err != nil {
-				return nil, err
-			}
-			return serv, nil
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			return LoadExtensibleSection(app, "balancer", AvailableBalancers, env, configFile)
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			handlers := new(Handler)
-			if err := handlers.Init(app, nil); err != nil {
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			h := NewSocketHandler()
+			if err := LoadConfigForSection(app, "websocket", h, env, configFile); err != nil {
 				return nil, err
 			}
-			return handlers, nil
+			return h, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			h := NewEndpointHandler()
+			if err := LoadConfigForSection(app, "endpoint", h, env, configFile); err != nil {
+				return nil, err
+			}
+			return h, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			h := NewHealthHandlers()
+			if err := h.Init(app, h.ConfigStruct()); err != nil {
+				return nil, err
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (plugin HasConfigStruct, err error) {
+			h := new(ProfileHandlers)
+			sectionName := "profile"
+			if _, ok := configFile[sectionName]; ok {
+				// Performance profiling is optional and disabled by default.
+				err = LoadConfigForSection(app, sectionName, h, env, configFile)
+			} else {
+				confStruct := h.ConfigStruct()
+				err = LoadConfigFromEnvironment(app, sectionName, h, env, confStruct)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return h, nil
 		},
 	}
 

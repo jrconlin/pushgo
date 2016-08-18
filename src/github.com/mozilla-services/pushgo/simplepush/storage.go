@@ -6,6 +6,7 @@ package simplepush
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,24 +59,25 @@ func (err StorageError) Error() string {
 type Update struct {
 	ChannelID string `json:"channelID"`
 	Version   uint64 `json:"version"`
+	Data      string `json:"data"`
 }
 
 // DbConf specifies generic database adapter options.
 type DbConf struct {
 	// TimeoutLive is the active channel record timeout. Defaults to 3 days.
-	TimeoutLive int64 `toml:"timeout_live" env:"live_timeout"`
+	TimeoutLive int64 `toml:"timeout_live" env:"timeout_live"`
 
 	// TimeoutReg is the registered channel record timeout. Defaults to 3 hours;
 	// an app server should send a notification on a registered channel before
 	// this timeout.
-	TimeoutReg int64 `toml:"timeout_reg" env:"reg_timeout"`
+	TimeoutReg int64 `toml:"timeout_reg" env:"timeout_reg"`
 
 	// TimeoutDel is the deleted channel record timeout. Defaults to 1 day;
 	// deleted records will be pruned after this timeout.
-	TimeoutDel int64 `toml:"timeout_del" env:"del_timeout"`
+	TimeoutDel int64 `toml:"timeout_del" env:"timeout_del"`
 
-	// HandleTimeout is the maximum time to wait when acquiring a connection from
-	// the pool. Defaults to 5 seconds.
+	// HandleTimeout is the socket connection timeout. Supports second precision;
+	// disabled if set to "" or "0". Defaults to 5 seconds.
 	HandleTimeout string `toml:"handle_timeout" env:"handle_timeout"`
 
 	// PingPrefix is the key prefix for proprietary (GCM, etc.) pings. Defaults to
@@ -95,10 +97,10 @@ type Store interface {
 	Close() error
 
 	// KeyToIDs extracts the device and channel IDs from a storage key.
-	KeyToIDs(key string) (suaid, schid string, ok bool)
+	KeyToIDs(key string) (suaid, schid string, err error)
 
 	// IDsToKey encodes the device and channel IDs into a composite key.
-	IDsToKey(suaid, schid string) (key string, ok bool)
+	IDsToKey(suaid, schid string) (key string, err error)
 
 	// Status indicates whether the adapter's backing store is healthy.
 	Status() (bool, error)
@@ -111,7 +113,7 @@ type Store interface {
 	Register(suaid, schid string, version int64) error
 
 	// Update updates the channel record version.
-	Update(key string, version int64) error
+	Update(suaid, schid string, version int64) error
 
 	// Unregister marks a channel record as inactive.
 	Unregister(suaid, schid string) error
@@ -137,4 +139,33 @@ type Store interface {
 
 	// DropPing removes all proprietary ping info for the given device.
 	DropPing(suaid string) error
+}
+
+// keySep is the primary key separator.
+var keySep = "."
+
+// joinIDs constructs a primary key from the device ID uaid and
+// channel ID chid.
+func joinIDs(uaid, chid string) string {
+	return uaid + keySep + chid
+}
+
+// splitIDs extracts the device ID uaid and channel ID chid from key.
+func splitIDs(key string) (uaid, chid string, err error) {
+	items := strings.SplitN(key, keySep, 2)
+	if len(items) == 0 {
+		return "", "", ErrNoID
+	}
+	uaid = items[0]
+	if len(uaid) == 0 {
+		return "", "", ErrNoID
+	}
+	if len(items) == 1 {
+		return "", "", ErrNoChannel
+	}
+	chid = items[1]
+	if len(chid) == 0 {
+		return "", "", ErrNoChannel
+	}
+	return
 }

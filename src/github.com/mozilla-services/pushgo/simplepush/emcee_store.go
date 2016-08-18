@@ -16,16 +16,29 @@ import (
 	"sync"
 	"time"
 
-	mc "github.com/ianoshen/gomc"
+	mc "github.com/varstr/gomc"
 
 	"github.com/mozilla-services/pushgo/id"
 )
 
-// Wraps a memcached client with a flag to signal whether the connection is
-// bad and should not be returned to the pool.
-type release struct {
-	mc.Client
-	isFailed bool
+// parseTimeout parses a duration string and ensures the value is within the
+// given precision. Returns a uint64 for use with mc.Client.SetBehavior.
+func parseTimeout(s string, precision time.Duration) (uint64, error) {
+	if len(s) == 0 {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d == 0 {
+		return 0, nil
+	}
+	if d < precision {
+		return 0, fmt.Errorf("Timeout %s too short; must be at least %s",
+			d, precision)
+	}
+	return uint64(d / precision), nil
 }
 
 // Determines whether the given error is a connection-level error. Connections
@@ -51,74 +64,71 @@ func isMissing(err error) bool {
 }
 
 // NewEmcee creates an unconfigured memcached adapter.
-func NewEmcee() *EmceeStore {
-	s := &EmceeStore{
-		closeSignal:  make(chan bool),
-		releases:     make(chan release),
-		acquisitions: make(chan chan mc.Client),
+func NewEmcee() (s *EmceeStore) {
+	s = &EmceeStore{
+		clients: list.New(),
 	}
-	s.closeWait.Add(1)
-	go s.run()
+	s.cond.L = new(sync.Mutex)
 	return s
 }
 
 // EmceeDriverConf specifies memcached driver options.
 type EmceeDriverConf struct {
 	// Hosts is a list of memcached nodes.
-	Hosts []string `toml:"server"`
+	Hosts []string `toml:"server" env:"server"`
 
 	// MaxConns is the maximum number of open connections managed by the pool.
 	// All returned connections that exceed this limit will be closed. Defaults
-	// to 400.
-	MaxConns int `toml:"max_connections" env:"max_conns"`
+	// to 100.
+	MaxConns int `toml:"max_connections" env:"max_connections"`
 
 	// RecvTimeout is the socket receive timeout (SO_RCVTIMEO) used by the
-	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
+	// memcached driver. Supports microsecond precision; disabled if set to
+	// "" or "0". Defaults to 5 seconds.
 	RecvTimeout string `toml:"recv_timeout" env:"recv_timeout"`
 
 	// SendTimeout is the socket send timeout (SO_SNDTIMEO) used by the
-	// memcached driver. Supports microsecond granularity; defaults to 5 seconds.
+	// memcached driver. Supports microsecond precision; disabled if set to
+	// "" or "0". Defaults to 5 seconds.
 	SendTimeout string `toml:"send_timeout" env:"send_timeout"`
 
 	// PollTimeout is the poll(2) timeout used by the memcached driver. Supports
-	// millisecond granularity; defaults to 5 seconds.
+	// millisecond precision; disabled if set to "" or "0". No default timeout.
 	PollTimeout string `toml:"poll_timeout" env:"poll_timeout"`
 
 	// RetryTimeout is the time to wait before retrying a request on an unhealthy
-	// memcached node. Supports second granularity; defaults to 5 seconds.
+	// memcached node. Supports second precision; disabled if set to "" or "0".
+	// Defaults to 5 seconds.
 	RetryTimeout string `toml:"retry_timeout" env:"retry_timeout"`
 }
 
 // EmceeStore is a memcached adapter.
 type EmceeStore struct {
-	Hosts         []string
-	MaxConns      int
-	PingPrefix    string
-	recvTimeout   uint64
-	sendTimeout   uint64
-	pollTimeout   uint64
-	retryTimeout  uint64
-	TimeoutLive   time.Duration
-	TimeoutReg    time.Duration
-	TimeoutDel    time.Duration
-	HandleTimeout time.Duration
-	maxChannels   int
-	defaultHost   string
-	logger        *SimpleLogger
-	closeWait     sync.WaitGroup
-	closeSignal   chan bool
-	closeLock     sync.Mutex
-	isClosing     bool
-	releases      chan release
-	acquisitions  chan chan mc.Client
-	lastErr       error
+	Hosts          []string
+	MaxConns       int
+	PingPrefix     string
+	connectTimeout uint64
+	recvTimeout    uint64
+	sendTimeout    uint64
+	pollTimeout    uint64
+	retryTimeout   uint64
+	TimeoutLive    time.Duration
+	TimeoutReg     time.Duration
+	TimeoutDel     time.Duration
+	maxChannels    int
+	defaultHost    string
+	logger         *SimpleLogger
+	cond           sync.Cond
+	clients        *list.List
+	capacity       int
+	isClosed       bool
 }
 
 // EmceeConf specifies memcached adapter options.
 type EmceeConf struct {
-	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_discovery"`
+	ElastiCacheConfigEndpoint string          `toml:"elasticache_config_endpoint" env:"elasticache_config_endpoint"`
 	MaxChannels               int             `toml:"max_channels" env:"max_channels"`
-	Driver                    EmceeDriverConf `toml:"memcache" env:"mc"`
+	Driver                    EmceeDriverConf `toml:"memcache" env:"memcache"`
 	Db                        DbConf
 }
 
@@ -129,11 +139,10 @@ func (*EmceeStore) ConfigStruct() interface{} {
 		MaxChannels: 200,
 		Driver: EmceeDriverConf{
 			Hosts:        []string{"127.0.0.1:11211"},
-			MaxConns:     400,
-			RecvTimeout:  "1s",
-			SendTimeout:  "1s",
-			PollTimeout:  "10ms",
-			RetryTimeout: "1s",
+			MaxConns:     100,
+			RecvTimeout:  "5s",
+			SendTimeout:  "5s",
+			RetryTimeout: "5s",
 		},
 		Db: DbConf{
 			TimeoutLive:   3 * 24 * 60 * 60,
@@ -170,57 +179,43 @@ func (s *EmceeStore) Init(app *Application, config interface{}) (err error) {
 	s.MaxConns = conf.Driver.MaxConns
 	s.PingPrefix = conf.Db.PingPrefix
 
-	if s.HandleTimeout, err = time.ParseDuration(conf.Db.HandleTimeout); err != nil {
+	// The socket connection timeout in milliseconds.
+	if s.connectTimeout, err = parseTimeout(conf.Db.HandleTimeout, time.Millisecond); err != nil {
 		s.logger.Panic("emcee", "Db.HandleTimeout must be a valid duration",
-			LogFields{"error": err.Error()})
+			LogFields{"error": err.Error(), "connectTimeout": conf.Db.HandleTimeout})
 		return err
 	}
 
-	// The send and receive timeouts are expressed in microseconds.
-	var recvTimeout, sendTimeout time.Duration
-	if recvTimeout, err = time.ParseDuration(conf.Driver.RecvTimeout); err != nil {
+	// The socket read timeout in microseconds.
+	if s.recvTimeout, err = parseTimeout(conf.Driver.RecvTimeout, time.Microsecond); err != nil {
 		s.logger.Panic("emcee", "Driver.RecvTimeout must be a valid duration",
-			LogFields{"error": err.Error()})
+			LogFields{"error": err.Error(), "recvTimeout": conf.Driver.RecvTimeout})
 		return err
 	}
-	if sendTimeout, err = time.ParseDuration(conf.Driver.SendTimeout); err != nil {
+
+	// The socket write timeout in microseconds.
+	if s.sendTimeout, err = parseTimeout(conf.Driver.SendTimeout, time.Microsecond); err != nil {
 		s.logger.Panic("emcee", "Driver.SendTimeout must be a valid duration",
-			LogFields{"error": err.Error()})
+			LogFields{"error": err.Error(), "sendTimeout": conf.Driver.SendTimeout})
 		return err
 	}
-	s.recvTimeout = uint64(recvTimeout / time.Microsecond)
-	s.sendTimeout = uint64(sendTimeout / time.Microsecond)
 
-	// `poll(2)` accepts a millisecond timeout.
-	var pollTimeout time.Duration
-	if pollTimeout, err = time.ParseDuration(conf.Driver.PollTimeout); err != nil {
+	// The poll(2) timeout in milliseconds.
+	if s.pollTimeout, err = parseTimeout(conf.Driver.PollTimeout, time.Millisecond); err != nil {
 		s.logger.Panic("emcee", "Driver.PollTimeout must be a valid duration",
-			LogFields{"error": err.Error()})
+			LogFields{"error": err.Error(), "pollTimeout": conf.Driver.PollTimeout})
 		return err
 	}
-	s.pollTimeout = uint64(pollTimeout / time.Millisecond)
 
-	// The memcached retry timeout is expressed in seconds.
-	var retryTimeout time.Duration
-	if retryTimeout, err = time.ParseDuration(conf.Driver.RetryTimeout); err != nil {
+	// The retry timeout in seconds.
+	if s.retryTimeout, err = parseTimeout(conf.Driver.RetryTimeout, time.Second); err != nil {
 		s.logger.Panic("emcee", "Driver.RetryTimeout must be a valid duration",
-			LogFields{"error": err.Error()})
-		return err
+			LogFields{"error": err.Error(), "retryTimeout": conf.Driver.RetryTimeout})
 	}
-	s.retryTimeout = uint64(retryTimeout / time.Second)
 
 	s.TimeoutLive = time.Duration(conf.Db.TimeoutLive) * time.Second
 	s.TimeoutReg = time.Duration(conf.Db.TimeoutReg) * time.Second
 	s.TimeoutDel = time.Duration(conf.Db.TimeoutReg) * time.Second
-
-	// Open a connection to ensure the settings are valid. If the connection
-	// succeeds, add it to the pool.
-	client, err := s.newClient()
-	if err != nil {
-		s.fatal(err)
-		return err
-	}
-	defer s.releaseWithout(client, &err)
 
 	return nil
 }
@@ -233,33 +228,53 @@ func (s *EmceeStore) CanStore(channels int) bool {
 
 // Close closes the connection pool and unblocks all pending operations with
 // errors. Safe to call multiple times. Implements Store.Close().
-func (s *EmceeStore) Close() (err error) {
-	err, ok := s.stop()
-	if !ok {
-		return err
+func (s *EmceeStore) Close() error {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	defer s.cond.Broadcast()
+	// Shut down all connections in the pool.
+	for element := s.clients.Front(); element != nil; element = element.Next() {
+		element.Value.(mc.Client).Close()
 	}
-	s.closeWait.Wait()
-	return
+	// Clear the list and notify waiting goroutines.
+	s.clients.Init()
+	s.isClosed = true
+	return nil
 }
 
 // KeyToIDs extracts the hex-encoded device and channel IDs from a user-
 // readable primary key. Implements Store.KeyToIDs().
-func (*EmceeStore) KeyToIDs(key string) (uaid, chid string, ok bool) {
-	items := strings.SplitN(key, ".", 2)
-	if len(items) < 2 {
-		return "", "", false
+func (s *EmceeStore) KeyToIDs(key string) (uaid, chid string, err error) {
+	if uaid, chid, err = splitIDs(key); err != nil {
+		if s.logger.ShouldLog(WARNING) {
+			s.logger.Warn("emcee", "Invalid key",
+				LogFields{"error": err.Error(), "key": key})
+		}
+		return "", "", ErrInvalidKey
 	}
-	return items[0], items[1], true
+	return
 }
 
 // IDsToKey generates a user-readable primary key from a (device ID, channel
 // ID) tuple. The primary key is encoded in the push endpoint URI. Implements
 // Store.IDsToKey().
-func (*EmceeStore) IDsToKey(uaid, chid string) (string, bool) {
-	if len(uaid) == 0 || len(chid) == 0 {
-		return "", false
+func (s *EmceeStore) IDsToKey(uaid, chid string) (string, error) {
+	logWarning := s.logger.ShouldLog(WARNING)
+	if len(uaid) == 0 {
+		if logWarning {
+			s.logger.Warn("emcee", "Missing device ID",
+				LogFields{"uaid": uaid, "chid": chid})
+		}
+		return "", ErrInvalidKey
 	}
-	return fmt.Sprintf("%s.%s", uaid, chid), true
+	if len(chid) == 0 {
+		if logWarning {
+			s.logger.Warn("emcee", "Missing channel ID",
+				LogFields{"uaid": uaid, "chid": chid})
+		}
+		return "", ErrInvalidKey
+	}
+	return joinIDs(uaid, chid), nil
 }
 
 // Status queries whether memcached is available for reading and writing.
@@ -271,10 +286,10 @@ func (s *EmceeStore) Status() (success bool, err error) {
 	}
 	key, expected := "status_"+fakeID, "test"
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return false, err
 	}
-	defer s.releaseWithout(client, &err)
 	if err = client.Set(key, expected, 6*time.Second); err != nil {
 		if s.logger.ShouldLog(ERROR) {
 			s.logger.Error("emcee", "Error storing health check key",
@@ -340,10 +355,7 @@ func (s *EmceeStore) storeRegister(uaid, chid string, version int64) error {
 		rec.State = StateLive
 		rec.Version = uint64(version)
 	}
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
-	}
+	key := joinIDs(uaid, chid)
 	if err = s.storeRec(key, rec); err != nil {
 		return err
 	}
@@ -371,10 +383,7 @@ func (s *EmceeStore) Register(uaid, chid string, version int64) (err error) {
 
 // Updates a channel record in memcached.
 func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
-	}
+	key := joinIDs(uaid, chid)
 	cRec, err := s.fetchRec(key)
 	if err != nil && !isMissing(err) {
 		if s.logger.ShouldLog(ERROR) {
@@ -421,11 +430,7 @@ func (s *EmceeStore) storeUpdate(uaid, chid string, version int64) error {
 
 // Update updates the version for the given device ID and channel ID.
 // Implements Store.Update().
-func (s *EmceeStore) Update(key string, version int64) (err error) {
-	uaid, chid, ok := s.KeyToIDs(key)
-	if !ok {
-		return ErrInvalidKey
-	}
+func (s *EmceeStore) Update(uaid, chid string, version int64) (err error) {
 	if len(uaid) == 0 {
 		return ErrNoID
 	}
@@ -452,10 +457,7 @@ func (s *EmceeStore) storeUnregister(uaid, chid string) error {
 	if pos < 0 {
 		return ErrNonexistentChannel
 	}
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
-	}
+	key := joinIDs(uaid, chid)
 	if err := s.storeAppIDArray(uaid, remove(chids, pos)); err != nil {
 		return err
 	}
@@ -514,14 +516,11 @@ func (s *EmceeStore) Drop(uaid, chid string) (err error) {
 		return ErrInvalidChannel
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
-	key, ok := s.IDsToKey(uaid, chid)
-	if !ok {
-		return ErrInvalidKey
-	}
+	key := joinIDs(uaid, chid)
 	if err = client.Delete(key, 0); err == nil || isMissing(err) {
 		return nil
 	}
@@ -545,11 +544,10 @@ func (s *EmceeStore) FetchAll(uaid string, since time.Time) ([]Update, []string,
 
 	updates := make([]Update, 0, 20)
 	expired := make([]string, 0, 20)
-	keys := make([]string, 0, 20)
 
-	for _, chid := range chids {
-		key, _ := s.IDsToKey(uaid, chid)
-		keys = append(keys, key)
+	keys := make([]string, len(chids))
+	for i, chid := range chids {
+		keys[i] = joinIDs(uaid, chid)
 	}
 	if s.logger.ShouldLog(INFO) {
 		s.logger.Info("emcee", "Fetching items", LogFields{
@@ -558,10 +556,10 @@ func (s *EmceeStore) FetchAll(uaid string, since time.Time) ([]Update, []string,
 		})
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.releaseWithout(client, &err)
 
 	sinceUnix := since.Unix()
 	for index, key := range keys {
@@ -630,7 +628,7 @@ func (s *EmceeStore) FetchAll(uaid string, since time.Time) ([]Update, []string,
 
 // DropAll removes all channel records for the given device ID. Implements
 // Store.DropAll().
-func (s *EmceeStore) DropAll(uaid string) error {
+func (s *EmceeStore) DropAll(uaid string) (err error) {
 	if !id.Valid(uaid) {
 		return ErrInvalidID
 	}
@@ -639,15 +637,12 @@ func (s *EmceeStore) DropAll(uaid string) error {
 		return err
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
 	for _, chid := range chids {
-		key, ok := s.IDsToKey(uaid, chid)
-		if !ok {
-			return ErrInvalidKey
-		}
+		key := joinIDs(uaid, chid)
 		client.Delete(key, 0)
 	}
 	if err = client.Delete(uaid, 0); err != nil && !isMissing(err) {
@@ -666,31 +661,31 @@ func (s *EmceeStore) FetchPing(uaid string) (pingData []byte, err error) {
 		return nil, ErrInvalidID
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return
 	}
-	defer s.releaseWithout(client, &err)
 	err = client.Get(s.PingPrefix+uaid, &pingData)
 	return
 }
 
 // PutPing stores the proprietary ping info blob for the given device ID in
 // memcached. Implements Store.PutPing().
-func (s *EmceeStore) PutPing(uaid string, pingData []byte) error {
+func (s *EmceeStore) PutPing(uaid string, pingData []byte) (err error) {
 	if !id.Valid(uaid) {
 		return ErrInvalidID
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
 	return client.Set(s.PingPrefix+uaid, pingData, 0)
 }
 
 // DropPing removes all proprietary ping info for the given device ID.
 // Implements Store.DropPing().
-func (s *EmceeStore) DropPing(uaid string) error {
+func (s *EmceeStore) DropPing(uaid string) (err error) {
 	if len(uaid) == 0 {
 		return ErrNoID
 	}
@@ -698,10 +693,10 @@ func (s *EmceeStore) DropPing(uaid string) error {
 		return ErrInvalidID
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
 	return client.Delete(s.PingPrefix+uaid, 0)
 }
 
@@ -712,10 +707,10 @@ func (s *EmceeStore) fetchChannelIDs(uaid string) (result ChannelIDs, err error)
 		return nil, nil
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseWithout(client, &err)
 	if err = client.Get(uaid, &result); err != nil {
 		return nil, err
 	}
@@ -739,31 +734,29 @@ func (s *EmceeStore) fetchAppIDArray(uaid string) (result ChannelIDs, err error)
 
 // Writes an updated subscription list for the given device ID to memcached.
 // The channel IDs are sorted in-place.
-func (s *EmceeStore) storeAppIDArray(uaid string, chids ChannelIDs) error {
+func (s *EmceeStore) storeAppIDArray(uaid string, chids ChannelIDs) (err error) {
 	if len(uaid) == 0 {
 		return ErrNoID
 	}
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
 	// sort the array
 	sort.Sort(chids)
 	return client.Set(uaid, chids, 0)
 }
 
-// Retrieves a channel record from memcached.
-func (s *EmceeStore) fetchRec(pk string) (*ChannelRecord, error) {
-	if len(pk) == 0 {
-		return nil, ErrNoKey
-	}
+// Retrieves a channel record from memcached. Returns an empty record if the
+// channel does not exist.
+func (s *EmceeStore) fetchRec(pk string) (result *ChannelRecord, err error) {
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releaseWithout(client, &err)
-	result := new(ChannelRecord)
+	result = new(ChannelRecord)
 	if err = client.Get(pk, result); err != nil && !isMissing(err) {
 		if s.logger.ShouldLog(ERROR) {
 			s.logger.Error("emcee", "Get Failed", LogFields{
@@ -775,21 +768,16 @@ func (s *EmceeStore) fetchRec(pk string) (*ChannelRecord, error) {
 	}
 	if s.logger.ShouldLog(DEBUG) {
 		s.logger.Debug("emcee", "Fetched", LogFields{
-			"pk":     pk,
-			"result": fmt.Sprintf("state: %s, vers: %d, last: %d", result.State, result.Version, result.LastTouched),
+			"pk": pk,
+			"result": fmt.Sprintf("state: %s, vers: %d, last: %d",
+				result.State, result.Version, result.LastTouched),
 		})
 	}
 	return result, nil
 }
 
 // Stores an updated channel record in memcached.
-func (s *EmceeStore) storeRec(pk string, rec *ChannelRecord) error {
-	if len(pk) == 0 {
-		return ErrNoKey
-	}
-	if rec == nil {
-		return ErrNoData
-	}
+func (s *EmceeStore) storeRec(pk string, rec *ChannelRecord) (err error) {
 	var ttl time.Duration
 	switch rec.State {
 	case StateDeleted:
@@ -801,10 +789,10 @@ func (s *EmceeStore) storeRec(pk string, rec *ChannelRecord) error {
 	}
 	rec.LastTouched = time.Now().UTC().Unix()
 	client, err := s.getClient()
+	defer s.releaseWithout(client, &err)
 	if err != nil {
 		return err
 	}
-	defer s.releaseWithout(client, &err)
 	if err = client.Set(pk, rec, ttl); err != nil {
 		if s.logger.ShouldLog(ERROR) {
 			s.logger.Error("emcee", "Failure to set item", LogFields{
@@ -818,25 +806,52 @@ func (s *EmceeStore) storeRec(pk string, rec *ChannelRecord) error {
 
 // Releases an acquired memcached connection.
 func (s *EmceeStore) releaseWithout(client mc.Client, err *error) {
-	if client == nil {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	defer s.cond.Signal()
+	if err != nil {
+		if isFatalError(*err) {
+			s.capacity--
+			if client != nil {
+				client.Close()
+			}
+			return
+		}
+	}
+	if s.capacity > s.MaxConns {
+		// Maximum pool size exceeded.
+		if client != nil {
+			client.Close()
+		}
 		return
 	}
-	s.releases <- release{client, err != nil && isFatalError(*err)}
+	s.clients.PushBack(client)
 }
 
 // Acquires a memcached connection from the connection pool.
-func (s *EmceeStore) getClient() (mc.Client, error) {
-	clients := make(chan mc.Client)
-	select {
-	case <-s.closeSignal:
-		return nil, io.EOF
-	case s.acquisitions <- clients:
-		if client := <-clients; client != nil {
-			return client, nil
+func (s *EmceeStore) getClient() (client mc.Client, err error) {
+	s.cond.L.Lock()
+	for {
+		if s.isClosed || s.clients.Len() > 0 || s.capacity < s.MaxConns {
+			break
 		}
-	case <-time.After(s.HandleTimeout):
+		s.cond.Wait()
 	}
-	return nil, ErrPoolSaturated
+	if s.isClosed {
+		s.cond.L.Unlock()
+		return nil, io.EOF
+	}
+	if s.clients.Len() > 0 {
+		// Return the first available connection from the pool.
+		client = s.clients.Remove(s.clients.Front()).(mc.Client)
+		s.cond.L.Unlock()
+		return client, nil
+	}
+	// All connections are in use, but the pool has not reached its maximum
+	// capacity.
+	s.capacity++
+	s.cond.L.Unlock()
+	return s.newClient()
 }
 
 // Creates and configures a memcached client connection.
@@ -849,123 +864,26 @@ func (s *EmceeStore) newClient() (mc.Client, error) {
 		return nil, err
 	}
 	// internally hash key using MD5 (for key distribution)
-	if err := client.SetBehavior(mc.BEHAVIOR_KETAMA_HASH, 1); err != nil {
-		client.Close()
-		return nil, err
-	}
+	client.SetBehavior(mc.BEHAVIOR_KETAMA_HASH, 1)
 	// Use the binary protocol, which allows us faster data xfer
 	// and better data storage (can use full UTF-8 char space)
-	if err := client.SetBehavior(mc.BEHAVIOR_BINARY_PROTOCOL, 1); err != nil {
-		client.Close()
-		return nil, err
+	client.SetBehavior(mc.BEHAVIOR_BINARY_PROTOCOL, 1)
+	if s.connectTimeout > 0 {
+		client.SetBehavior(mc.BEHAVIOR_CONNECT_TIMEOUT, s.connectTimeout)
 	}
-	// `SetBehavior()` wraps libmemcached's `memcached_behavior_set()` call.
-	if err := client.SetBehavior(mc.BEHAVIOR_SND_TIMEOUT, s.sendTimeout); err != nil {
-		client.Close()
-		return nil, err
+	if s.sendTimeout > 0 {
+		client.SetBehavior(mc.BEHAVIOR_SND_TIMEOUT, s.sendTimeout)
 	}
-	if err := client.SetBehavior(mc.BEHAVIOR_RCV_TIMEOUT, s.recvTimeout); err != nil {
-		client.Close()
-		return nil, err
+	if s.recvTimeout > 0 {
+		client.SetBehavior(mc.BEHAVIOR_RCV_TIMEOUT, s.recvTimeout)
 	}
-	if err := client.SetBehavior(mc.BEHAVIOR_POLL_TIMEOUT, s.pollTimeout); err != nil {
-		client.Close()
-		return nil, err
+	if s.pollTimeout > 0 {
+		client.SetBehavior(mc.BEHAVIOR_POLL_TIMEOUT, s.pollTimeout)
 	}
-	if err = client.SetBehavior(mc.BEHAVIOR_RETRY_TIMEOUT, s.retryTimeout); err != nil {
-		client.Close()
-		return nil, err
+	if s.retryTimeout > 0 {
+		client.SetBehavior(mc.BEHAVIOR_RETRY_TIMEOUT, s.retryTimeout)
 	}
 	return client, nil
-}
-
-// The store run loop.
-func (s *EmceeStore) run() {
-	defer s.closeWait.Done()
-	clients := list.New()
-	capacity := 0
-	for ok := true; ok; {
-		select {
-		case ok = <-s.closeSignal:
-		case release := <-s.releases:
-			if release.isFailed || capacity >= s.MaxConns {
-				// Maximum pool size exceeded (e.g., connection manually added to the pool
-				// via `newClient()` and `releaseClient()`).
-				release.Close()
-				if release.isFailed {
-					capacity--
-				}
-				break
-			}
-			clients.PushBack(release.Client)
-
-		case acquisition := <-s.acquisitions:
-			if clients.Len() > 0 {
-				// Return the first available connection from the pool.
-				if client, ok := clients.Remove(clients.Front()).(mc.Client); ok {
-					acquisition <- client
-				}
-				close(acquisition)
-				break
-			}
-			if capacity < s.MaxConns {
-				// All connections are in use, but the pool has not reached its maximum
-				// capacity.
-				client, err := s.newClient()
-				if err != nil {
-					s.fatal(err)
-					close(acquisition)
-					break
-				}
-				acquisition <- client
-				capacity++
-				close(acquisition)
-				break
-			}
-			// Pool saturated.
-			close(acquisition)
-		}
-	}
-	// Shut down all connections in the pool.
-	for element := clients.Front(); element != nil; element = element.Next() {
-		if client, ok := element.Value.(mc.Client); ok {
-			client.Close()
-		}
-	}
-}
-
-// Acquires s.closeLock, closes the pool, and releases the lock, reporting
-// any errors to the caller. ok indicates whether the caller should wait
-// for the pool to close before returning.
-func (s *EmceeStore) stop() (err error, ok bool) {
-	defer s.closeLock.Unlock()
-	s.closeLock.Lock()
-	if s.isClosing {
-		return s.lastErr, false
-	}
-	return s.signalClose(), true
-}
-
-// Acquires s.closeLock, closes the connection pool, and releases the lock,
-// storing the given error in s.lastErr.
-func (s *EmceeStore) fatal(err error) {
-	defer s.closeLock.Unlock()
-	s.closeLock.Lock()
-	s.signalClose()
-	if s.lastErr == nil {
-		s.lastErr = err
-	}
-}
-
-// Closes the pool and exits the run loop. Assumes the caller holds
-// s.closeLock.
-func (s *EmceeStore) signalClose() (err error) {
-	if s.isClosing {
-		return
-	}
-	close(s.closeSignal)
-	s.isClosing = true
-	return nil
 }
 
 func init() {

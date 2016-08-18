@@ -1,3 +1,5 @@
+// +build smoke
+
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -6,8 +8,9 @@ package simplepush
 
 import (
 	"fmt"
-	"net/url"
 	"sync"
+
+	"github.com/mozilla-services/pushgo/client"
 )
 
 const (
@@ -28,22 +31,37 @@ type ConfigStore interface {
 
 type TestServer struct {
 	sync.Mutex
+	Name         string
 	ClientAddr   string
 	EndpointAddr string
 	RouterAddr   string
 	LogLevel     int32
 	Contacts     []string
+	Redirects    []string
+	Threshold    float64
 	NewStore     func() (store ConfigStore, configStruct interface{}, err error)
 	app          *Application
 	lastErr      error
 	isStopping   bool
 }
 
+func (t *TestServer) Stop() {
+	defer t.Unlock()
+	t.Lock()
+	if t.isStopping {
+		return
+	}
+	t.isStopping = true
+	if t.app != nil {
+		t.app.Close()
+	}
+}
+
 func (t *TestServer) fatal(err error) {
 	defer t.Unlock()
 	t.Lock()
 	if !t.isStopping {
-		t.app.Stop()
+		t.app.Close()
 		t.isStopping = true
 	}
 	if t.lastErr == nil {
@@ -114,8 +132,8 @@ func (t *TestServer) load() (*Application, error) {
 			return store, nil
 		},
 		PluginRouter: func(app *Application) (HasConfigStruct, error) {
-			router := NewRouter()
-			routerConf := router.ConfigStruct().(*RouterConfig)
+			router := NewBroadcastRouter()
+			routerConf := router.ConfigStruct().(*BroadcastRouterConfig)
 			routerConf.Listener.Addr = t.RouterAddr
 			if err := router.Init(app, routerConf); err != nil {
 				return nil, fmt.Errorf("Error initializing router: %#v", err)
@@ -131,23 +149,49 @@ func (t *TestServer) load() (*Application, error) {
 			}
 			return locator, nil
 		},
-		PluginServer: func(app *Application) (HasConfigStruct, error) {
-			serv := NewServer()
-			servConf := serv.ConfigStruct().(*ServerConfig)
-			// Listen on a random port for testing.
-			servConf.Client.Addr = t.ClientAddr
-			servConf.Endpoint.Addr = t.EndpointAddr
-			if err := serv.Init(app, servConf); err != nil {
-				return nil, fmt.Errorf("Error initializing server: %#v", err)
+		PluginBalancer: func(app *Application) (HasConfigStruct, error) {
+			balancer := new(StaticBalancer)
+			balancerConf := balancer.ConfigStruct().(*StaticBalancerConf)
+			balancerConf.Redirects = t.Redirects
+			balancerConf.Threshold = t.Threshold
+			if err := balancer.Init(app, balancerConf); err != nil {
+				return nil, fmt.Errorf("Error initializing balancer: %#v", err)
 			}
-			return serv, nil
+			return balancer, nil
 		},
-		PluginHandlers: func(app *Application) (HasConfigStruct, error) {
-			handlers := new(Handler)
-			if err := handlers.Init(app, handlers.ConfigStruct()); err != nil {
-				return nil, fmt.Errorf("Error initializing handlers: %#v", err)
+		PluginSocket: func(app *Application) (HasConfigStruct, error) {
+			sh := NewSocketHandler()
+			shConf := sh.ConfigStruct().(*SocketHandlerConfig)
+			shConf.Listener.Addr = t.ClientAddr
+			if err := sh.Init(app, shConf); err != nil {
+				return nil, fmt.Errorf("Error initializing WebSocket handlers: %s", err)
 			}
-			return handlers, nil
+			return sh, nil
+		},
+		PluginEndpoint: func(app *Application) (HasConfigStruct, error) {
+			eh := NewEndpointHandler()
+			ehConf := eh.ConfigStruct().(*EndpointHandlerConfig)
+			ehConf.Listener.Addr = t.EndpointAddr
+			if err := eh.Init(app, ehConf); err != nil {
+				return nil, fmt.Errorf("Error initializing update handlers: %s", err)
+			}
+			return eh, nil
+		},
+		PluginHealth: func(app *Application) (HasConfigStruct, error) {
+			h := NewHealthHandlers()
+			if err := h.Init(app, h.ConfigStruct()); err != nil {
+				return nil, fmt.Errorf("Error initializing health handlers: %s", err)
+			}
+			return h, nil
+		},
+		PluginProfile: func(app *Application) (HasConfigStruct, error) {
+			ph := new(ProfileHandlers)
+			phConf := ph.ConfigStruct().(*ProfileHandlersConfig)
+			phConf.Enabled = false
+			if err := ph.Init(app, phConf); err != nil {
+				return nil, fmt.Errorf("Error initializing profiling handlers: %s", err)
+			}
+			return ph, nil
 		},
 	}
 	return loaders.Load(int(t.LogLevel))
@@ -175,17 +219,21 @@ func (t *TestServer) Origin() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	server := app.Server()
-	if server == nil {
-		return "", nil
-	}
-	origin, err := url.Parse(server.ClientURL())
-	switch origin.Scheme {
-	case "http":
-		origin.Scheme = "ws"
+	return app.SocketHandler().URL(), nil
+}
 
-	case "https":
-		origin.Scheme = "wss"
+func (t *TestServer) Dial(channelIds ...string) (
+	app *Application, conn *client.Conn, err error) {
+
+	if app, err = t.Listen(); err != nil {
+		return
 	}
-	return origin.String(), nil
+	origin, err := t.Origin()
+	if err != nil {
+		return
+	}
+	if conn, _, err = client.Dial(origin, channelIds...); err != nil {
+		return
+	}
+	return
 }

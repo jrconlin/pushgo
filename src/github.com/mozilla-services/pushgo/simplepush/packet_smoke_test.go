@@ -1,3 +1,5 @@
+// +build smoke
+
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,7 +17,7 @@ import (
 	"github.com/mozilla-services/pushgo/id"
 )
 
-var ErrInvalidCaseTest = &client.ClientError{"Invalid case test type."}
+var ErrInvalidCaseTest = &client.ClientError{Message: "Invalid case test type."}
 
 // CaseTestType is used by Case{ClientPing, ACK}.MarshalJSON() to generate
 // different JSON representations of the underlying ping or ACK packet. If
@@ -56,14 +58,24 @@ func (t CaseTestType) String() string {
 
 func decodePing(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &client.ServerError{"ping", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{
+			MessageType: "ping",
+			Origin:      c.Origin(),
+			Message:     errorText,
+			StatusCode:  statusCode,
+		}
 	}
 	return ServerPing{statusCode}, nil
 }
 
 func decodeCaseACK(c *client.Conn, fields client.Fields, statusCode int, errorText string) (client.Packet, error) {
 	if len(errorText) > 0 {
-		return nil, &client.ServerError{"ack", c.Origin(), errorText, statusCode}
+		return nil, &client.ServerError{
+			MessageType: "ack",
+			Origin:      c.Origin(),
+			Message:     errorText,
+			StatusCode:  statusCode,
+		}
 	}
 	return nil, nil
 }
@@ -75,7 +87,7 @@ type caseTest struct {
 }
 
 func (t caseTest) TestPing() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}
@@ -98,7 +110,7 @@ func (t caseTest) TestPing() error {
 }
 
 func (t caseTest) TestACK() error {
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}
@@ -142,7 +154,7 @@ func (t caseTest) TestHelo() error {
 	if err != nil {
 		return fmt.Errorf("On test %v, error generating channel ID: %#v", t.CaseTestType, err)
 	}
-	origin, err := Server.Origin()
+	origin, err := testServer.Origin()
 	if err != nil {
 		return fmt.Errorf("On test %v, error initializing test server: %#v", t.CaseTestType, err)
 	}
